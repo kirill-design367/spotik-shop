@@ -40,7 +40,12 @@ export default function Nav() {
         </button>
       </div>
 
-        <button type="button" className="btn btn--sm" onClick={() => scrollToId('pricing')}>
+        {/*
+          На десктопе кнопки в шапке нет: к тарифам ведёт пункт меню.
+          Ниже 900 px меню спрятано, и тогда кнопка — единственный путь,
+          поэтому она скрывается не разметкой, амедиазапросом.
+        */}
+        <button type="button" className="btn btn--sm nav__cta" onClick={() => scrollToId('pricing')}>
           Выбрать тариф
         </button>
       </div>

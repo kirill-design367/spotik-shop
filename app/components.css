@@ -1,71 +1,117 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    ВОРДМАРК-СКОБКИ
 
-   Слово живёт в собственном слое. contain оставлен БЕЗ составляющей paint,
-   и это принципиально: paint режет содержимое по границе блока ровно как
-   overflow: hidden. Именно это срезало низ S и O прямой горизонталью.
-   Изоляция лейаута нужна, обрезка содержимого — нет.
+   Слой стоит В ПОТОКЕ: в хиро сразу после навигации, в футере первым.
+   Отсюда две вещи даром. Верхняя кромка слова — это низ навигации, без
+   единого чтения геометрии из JS. И высота задаётся здесь же, долей
+   высоты блока: --wm-h. Условие «слово занимает 70 % высоты хиро»
+   сформулировано про ЧЕРНИЛА, а слой выше их на поле для подскока,
+   поэтому компонент домножает --wm-h на отношение рамки к чернилам.
 
-   Края экрана слово больше НЕ обрезают: третья итерация вписала его
-   в экран с отступом около 0.65 % ширины с каждой стороны, первая
-   и последняя литеры видны целиком. Позиция по горизонтали задаётся
-   слою в долях вьюпорта, поэтому центрирующего трансформа здесь нет —
-   и трансформ остаётся свободен для футера.
+   contain оставлен БЕЗ составляющей paint: paint режет содержимое ровно
+   как overflow: hidden, и именно это срезало низ S и O (CLAUDE.md, Р-16).
+   Обрезки краями экрана нет с третьей итерации — слово вписано целиком.
    ═══════════════════════════════════════════════════════════════════════════ */
 .wm {
-  position: absolute;
-  left: 0;
-  right: 0;
   contain: layout style;
   pointer-events: none;
+  position: relative;
   z-index: 1;
+  flex: 0 0 auto;
 }
 
 .wm__svg {
-  position: absolute;
   display: block;
+  /* без явной высоты SVG берёт пропорцию из viewBox и игнорирует слой */
+  height: 100%;
 }
-/* В хиро слой не двигается вообще: верх чернил обязан стоять на месте.
-   will-change висит только на футере, где трансформ действительно есть. */
+/* Трансформ есть только у футера: там слой прижимает низ чернил. */
 .wm--footer .wm__svg {
   will-change: transform;
 }
-.wm__svg path {
+.wm__letter path {
   fill: currentColor;
   /* контуры приходят из шрифта как есть: заливка по ненулевому правилу,
      иначе внутренние контуры O, P и других литер зальются вместе с внешним */
   fill-rule: nonzero;
 }
 
-/* Пропорция знака: высота рамки в долях его ширины. Это композиция,
-   а не механика, поэтому решение живёт в CSS рядом с отступом сверху.
-   На узком экране знак вытянутый и держит верх страницы, на широком
-   приплюснутый — иначе он наезжает на текст.
-   Все шесть условий геометрии переживают любое значение: обе формы тянутся
-   одним и тем же вертикальным масштабом. */
-.wm {
-  --wm-box: 0.46;
-}
+/* ВЫСОТА ЧЕРНИЛ. Правило арт-директора — 70 % высоты блока хиро.
+   Буквально его применить нельзя: на узком портретном экране 70 % от 844
+   при ширине слова 385 дают пропорцию 1.53, литеры превращаются
+   в волосяные линии и выталкивают текст за экран.
 
-/* Верхняя скобка: зелёный на почти чёрном */
+   Поэтому сверху стоит потолок: высота чернил не больше их же ширины.
+   На 1920 и 2560 он не срабатывает и правило выполняется буквально
+   (ровно 70.0 %), на 390 он ограничивает слово до 45.6 % — там
+   решает уже пропорция знака, а не доля экрана.
+
+   Менять высоту МОЖНО: шесть условий задают отношения между двумя
+   состояниями, обе формы живут в одном viewBox и тянутся одним
+   и тем же вертикальным масштабом. */
 .wm--hero {
-  top: 0;
   color: var(--green);
-  --wm-top: 76px;
+  --wm-h: min(70svh, 98.7vw);
 }
 /* Нижняя скобка: инверсия — чёрный на сплошном зелёном */
 .wm--footer {
-  bottom: 0;
   color: var(--ink);
-  --wm-top: 0px;
+  --wm-h: min(62svh, 92vw);
 }
-@media (min-width: 768px) {
-  .wm { --wm-box: 0.34; }
-  .wm--hero { --wm-top: 104px; }
+
+/* ─────────────────────────────────────────────────────── ВХОД БУКВ: ПИАНИНО
+   Литеры выскакивают снизу по очереди, перелетают выше конечного положения
+   и садятся на место. Анимация на CSS, а не на JS, по трём причинам:
+   она играет и без JavaScript, её не надо синхронизировать с кадром,
+   и она не мешает морфу — морф пишет d, вход двигает трансформ.
+
+   Величины --wm-drop и --wm-over приходят из данных контура (единицы
+   рамки), поэтому перелёт задан ровно в долях высоты прописной,
+   а не в случайных пикселях.
+
+   Конец входа помечает data-entered на сцене. Тогда правило перестаёт
+   применяться, и трансформы литер становятся ТОЖДЕСТВЕННЫМИ —
+   не «нулевыми, но всё ещё анимированными», а никакими. Остаточный
+   сдвиг сместил бы литеры и сломал условие 3.                            */
+.hero__stage {
+  --wm-enter-step: 0.5s;   /* ход одной литеры */
+  --wm-enter-gap: 0.07s;   /* задержка между литерами */
+  --wm-enter-total: 0.92;  /* 0.07 × 5 + 0.5 + запас, в секундах, для JS */
 }
-@media (min-width: 1440px) {
-  .wm { --wm-box: 0.27; }
-  .wm--hero { --wm-top: 124px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .hero__stage:not([data-entered]) .wm__letter {
+    animation: wm-key var(--wm-enter-step) both;
+    animation-delay: calc(var(--i) * var(--wm-enter-gap));
+  }
+  /* Навигация и тексты доезжают после слова, друг за другом через 0.05 с. */
+  .hero__stage:not([data-entered]) .nav {
+    animation: wm-rise 0.5s var(--ease) 0.78s both;
+  }
+  .hero__stage:not([data-entered]) .hero__foot {
+    animation: wm-rise 0.5s var(--ease) 0.83s both;
+  }
+}
+
+@keyframes wm-key {
+  0% {
+    transform: translateY(var(--wm-drop));
+    /* резкая атака: трогается быстро и тормозит к перелёту */
+    animation-timing-function: cubic-bezier(0.1, 0.78, 0.26, 1);
+  }
+  58% {
+    transform: translateY(calc(0px - var(--wm-over)));
+    /* мягкий возврат */
+    animation-timing-function: cubic-bezier(0.38, 0, 0.22, 1);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+@keyframes wm-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════ ХИРО */
@@ -86,6 +132,8 @@
   isolation: isolate;
 }
 
+/* Тексты прижаты к низу блока и набраны мелко: крупного абзаца в хиро
+   больше нет, весь вес первого экрана держит слово. */
 .hero__foot {
   position: relative;
   z-index: 2;
@@ -93,35 +141,44 @@
   padding-bottom: calc(20px + env(safe-area-inset-bottom));
   display: grid;
   gap: 18px;
+  align-items: start;
 }
 
-.hero__offer {
-  font-size: clamp(1.0625rem, 4.5vw, 1.5rem);
-  line-height: 1.34;
-  letter-spacing: -0.012em;
-  color: var(--white);
-  font-variation-settings: 'wght' 420;
+.hero__kicker {
   margin: 0;
-  max-width: 32ch;
+  font-size: 11px;
+  line-height: 1.5;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-variation-settings: 'wght' 700;
+  max-width: 24ch;
+}
+
+.hero__note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  letter-spacing: 0.02em;
+  color: var(--dim);
+  font-variation-settings: 'wght' 440;
+  max-width: 46ch;
   text-wrap: pretty;
 }
 
-.hero__cta-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
+/* Кнопка в хиро живёт только там, где спрятано меню. */
+.hero__cta { justify-self: start; }
 @media (min-width: 900px) {
+  /* .btn объявлен ниже по файлу и при равной специфичности побеждал,
+     поэтому здесь селектор длиннее на один класс */
+  .hero__foot .hero__cta { display: none; }
+  .nav__inner .nav__cta { display: none; }
   .hero__foot {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 24ch) minmax(0, 46ch);
+    gap: 32px 56px;
     align-items: end;
-    gap: 32px 48px;
-    padding-bottom: 40px;
+    padding-bottom: 32px;
   }
-  .hero__foot > h1 { grid-column: 1 / -1; }
-  .hero__cta-row { justify-content: flex-end; }
 }
 
 /* ═══════════════════════════════════════════════════════════════ НАВИГАЦИЯ */
@@ -296,37 +353,54 @@
   isolation: isolate;
 }
 
+/* Реквизиты идут ПОД словом и держат низ экрана: слово разрастается
+   вверх от собственной нижней кромки, а эта колонка не двигается. */
 .footer__body {
   position: relative;
   z-index: 2;
-  padding-top: clamp(48px, 10vw, 96px);
+  margin-top: auto;
+  padding-top: clamp(24px, 5vw, 48px);
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
   display: grid;
-  gap: 40px;
+  gap: 24px;
+}
+@media (min-width: 640px) {
+  .footer__body { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 32px; }
 }
 @media (min-width: 900px) {
-  .footer__body { grid-template-columns: repeat(12, 1fr); gap: 32px; }
+  .footer__body { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 32px; }
+}
+
+.footer__head {
+  margin: 0 0 10px;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-variation-settings: 'wght' 700;
+  color: var(--on-green-dim);
 }
 
 .footer__req {
-  font-size: 14px;
-  line-height: 1.7;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
   font-variation-settings: 'wght' 480;
 }
+.footer__note { max-width: 30ch; }
 .footer__req dt {
-  font-size: 11px;
+  font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   font-variation-settings: 'wght' 700;
   /* без прозрачности: на зелёном она роняет контраст ниже нормы */
   color: var(--on-green-dim);
-  margin-top: 18px;
+  margin-top: 12px;
 }
 .footer__req dt:first-child { margin-top: 0; }
-.footer__req dd { margin: 2px 0 0; }
+.footer__req dd { margin: 1px 0 0; }
 .footer__req a { color: inherit; text-decoration: none; border-bottom: 1px solid rgba(18, 18, 18, 0.45); }
 .footer__req a:hover { border-bottom-color: currentColor; }
 
-.footer__spacer { flex: 1 1 auto; }
 
 /* ═══════════════════════════════════════════════════════════ ВСПОМОГАТЕЛЬНОЕ */
 .sr-only {

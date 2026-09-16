@@ -44,6 +44,7 @@ import {
   WM_BOX_HEIGHT,
   WM_BOTTOM_OPEN,
   WM_BOTTOM_TIGHT,
+  WM_LETTER_CONTOURS,
 } from './wordmark.data';
 
 export { WM_WIDTH, WM_CAP_OPEN, WM_CAP_TIGHT, WM_BOX_HEIGHT };
@@ -61,25 +62,33 @@ export const WM_INSET = 0.0065;
 export const LAYER_WIDTH_VW = 1 - WM_INSET * 2;
 
 /**
- * Натуральная пропорция рамки чернил: высота в долях ширины слова.
- * Это нижняя, самая приплюснутая форма знака.
+ * Поле над словом, в долях высоты прописной.
+ *
+ * Нужно входу букв: литера перелетает выше конечного положения, и если
+ * над ней нет запаса, перелёт срежется собственной рамкой SVG, а то,
+ * что выше, закроет непрозрачная навигация. Поле берёт запас больше
+ * перелёта, поэтому подскок виден целиком.
+ *
+ * Заодно это просто воздух между навигацией и словом.
  */
-export const BOX_RATIO_NATURAL = WM_BOX_HEIGHT / WM_WIDTH;
+export const PAD_RATIO = 0.05;
+export const WM_PAD = WM_CAP_OPEN * PAD_RATIO;
+
+/** Высота перелёта при входе, в долях высоты прописной (задание: 2…4 %). */
+export const ENTER_OVERSHOOT_RATIO = 0.03;
+export const WM_OVERSHOOT = WM_CAP_OPEN * ENTER_OVERSHOOT_RATIO;
+
+/** Полная высота рамки: поле сверху плюс чернила. */
+export const WM_VIEW_HEIGHT = WM_PAD + WM_BOX_HEIGHT;
 
 /**
- * Предел вытягивания на случай, если CSS его не задал: слой занимает всю
- * свободную высоту секции, но не больше этой доли от своей ширины.
+ * Во сколько раз слой выше своих чернил.
  *
- * Живое значение приходит из CSS — свойство --wm-box рядом с --wm-top,
- * потому что это решение про композицию, а не про механику: на узком экране
- * знак вытянутый, на широком приплюснутый. Менять пропорцию слоя МОЖНО
- * и это ничего не ломает — обе формы живут в одном viewBox и тянутся одним
- * и тем же вертикальным масштабом, поэтому все шесть условий её переживают.
+ * Высоту слоя задаёт CSS долей высоты хиро, но условие сформулировано
+ * про ЧЕРНИЛА («слово занимает 70 % высоты блока»), а слой выше их на поле
+ * для подскока. Поэтому CSS умножает свою долю на это число.
  */
-export const BOX_RATIO_MAX = 0.46;
-
-/** Высота слоя в долях ширины вьюпорта — стартовая, до раскладки. */
-export const LAYER_HEIGHT_VW = LAYER_WIDTH_VW * BOX_RATIO_NATURAL;
+export const VIEW_OVER_INK = WM_VIEW_HEIGHT / WM_BOX_HEIGHT;
 
 /** Смягчение прогресса: сжатие начинается спокойно и доходит до края решительно. */
 export function ease(t: number): number {
@@ -103,36 +112,49 @@ export function bottomAt(t: number): number {
 const N = WM_OPEN.length;
 /** Буфер точек выделяется один раз: в кадре ни одной аллокации. */
 const cur = new Float32Array(N);
+/** Буфер строк по литерам — тоже один раз. */
+const out: string[] = WM_LETTER_CONTOURS.map(() => '');
 
 function num(v: number): string {
   return String(Math.round(v * 1000) / 1000);
 }
 
-/** Контур слова на прогрессе t как значение атрибута d. */
-export function buildPath(t: number): string {
+/**
+ * Контуры слова на прогрессе t — по одной строке d на литеру.
+ *
+ * Слово разрезано на шесть групп, потому что вход двигает каждую литеру
+ * своим трансформом. На саму форму это не влияет: точки те же и в том же
+ * порядке, просто команды разложены по шести путям вместо одного.
+ */
+export function buildPaths(t: number): readonly string[] {
   const e = ease(t);
   for (let i = 0; i < N; i += 1) cur[i] = WM_OPEN[i] + (WM_TIGHT[i] - WM_OPEN[i]) * e;
-  let d = '';
   let o = 0;
   let p = 0;
-  for (let c = 0; c < WM_CONTOURS.length; c += 1) {
-    const n = WM_CONTOURS[c];
-    d += `M${num(cur[p])} ${num(cur[p + 1])}`;
-    p += 2;
-    for (let i = 0; i < n; i += 1) {
-      if (WM_OPS[o] === 1) {
-        d += `L${num(cur[p])} ${num(cur[p + 1])}`;
-        p += 2;
-      } else {
-        d += `Q${num(cur[p])} ${num(cur[p + 1])} ${num(cur[p + 2])} ${num(cur[p + 3])}`;
-        p += 4;
+  let c = 0;
+  for (let L = 0; L < WM_LETTER_CONTOURS.length; L += 1) {
+    let d = '';
+    for (let k = 0; k < WM_LETTER_CONTOURS[L]; k += 1) {
+      const n = WM_CONTOURS[c];
+      c += 1;
+      d += `M${num(cur[p])} ${num(cur[p + 1])}`;
+      p += 2;
+      for (let i = 0; i < n; i += 1) {
+        if (WM_OPS[o] === 1) {
+          d += `L${num(cur[p])} ${num(cur[p + 1])}`;
+          p += 2;
+        } else {
+          d += `Q${num(cur[p])} ${num(cur[p + 1])} ${num(cur[p + 2])} ${num(cur[p + 3])}`;
+          p += 4;
+        }
+        o += 1;
       }
-      o += 1;
+      d += 'Z';
     }
-    d += 'Z';
+    out[L] = d;
   }
-  return d;
+  return out;
 }
 
-/** Рамка для viewBox: верх чернил на нуле, низ — самое высокое состояние. */
-export const VIEW_BOX = `0 0 ${WM_WIDTH} ${WM_BOX_HEIGHT}`;
+/** Рамка для viewBox: поле сверху, верх чернил на нуле, низ — раскрытое состояние. */
+export const VIEW_BOX = `0 ${-WM_PAD} ${WM_WIDTH} ${WM_VIEW_HEIGHT}`;

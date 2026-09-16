@@ -69,6 +69,7 @@ jobs:
         run: |
           node scripts/verify-morph.mjs
           node scripts/verify-clip.mjs
+          node scripts/verify-enter.mjs
 
       # Закон проекта: three.js не попадает в бандл первого экрана.
       # Сторож у этого закона один, и он должен стоять в CI, а не в голове.

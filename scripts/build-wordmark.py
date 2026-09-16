@@ -60,13 +60,18 @@ from fontTools.varLib import instancer
 
 SRC = 'node_modules/@fontsource-variable/unbounded/files/unbounded-latin-wght-normal.woff2'
 WORD = 'SPOTIK'
-OUT = 'lib/wordmark.data.ts'
+OUT = os.environ.get('WM_OUT', 'lib/wordmark.data.ts')
 
 R_CAP = 1.712   # во сколько раз падает высота прописной
 R_HOR = 2.833   # во сколько раз худеет горизонтальный штрих
 R_VER = 1.000   # вертикальный штрих не меняется
 
-W_OPEN = 900.0          # раскрытое состояние — самое жирное начертание
+# Вес раскрытого состояния. Ось wght у Unbounded идёт 200…900, и пара весов
+# связана уравнением ниже: чем светлее раскрытое, тем светлее должно быть
+# сжатое. Самый светлый раскрытый вес, для которого сжатое ещё попадает
+# на ось, — 299.21 (там сжатое садится ровно на 200). Ниже решения нет.
+W_OPEN = float(os.environ.get('WM_WEIGHT', '440'))
+W_AXIS_MIN = 200.0
 NORM_WIDTH = 1000.0     # нормированная ширина чернил слова
 CAP_HEIGHT_UNITS = 750.0
 
@@ -161,9 +166,29 @@ def horizontal_stroke(w):
 
 
 def solve_light_weight():
-    """Вес светлого: единственное, что задаёт отношение cap к горизонтали."""
+    """
+    Вес светлого: единственное, что задаёт отношение cap к горизонтали.
+
+    Если требуемая горизонталь тоньше, чем на краю оси, решения НЕТ —
+    и подгонять молча нельзя: это сломало бы условие 4 или 5. Вместо
+    подгонки скрипт падает и называет предельный вес.
+    """
     target = horizontal_stroke(W_OPEN) / (R_HOR / R_CAP)
-    lo, hi = 200.0, W_OPEN
+    floor = horizontal_stroke(W_AXIS_MIN)
+    if target < floor:
+        lo, hi = W_AXIS_MIN, 900.0
+        for _ in range(60):
+            m = (lo + hi) / 2
+            if horizontal_stroke(m) > floor * (R_HOR / R_CAP):
+                hi = m
+            else:
+                lo = m
+        raise SystemExit(
+            'РЕШЕНИЯ НЕТ. При раскрытом весе %.2f сжатому нужна горизонталь %.2f,\n'
+            'а тоньше %.2f ось wght не даёт (её край %g).\n'
+            'Самый светлый раскрытый вес, который ещё решается: %.2f.'
+            % (W_OPEN, target, floor, W_AXIS_MIN, (lo + hi) / 2))
+    lo, hi = W_AXIS_MIN, W_OPEN
     for _ in range(50):
         mid = (lo + hi) / 2
         if horizontal_stroke(mid) > target:
@@ -229,7 +254,8 @@ def main():
         for x, y in zip(sa, sb):
             assert x['ops'] == y['ops'], f'{ch}: разная последовательность команд'
             assert len(x['coords']) == len(y['coords']), f'{ch}: разное число точек'
-        per_letter.append({'ch': ch, 'heavy': sa, 'light': sb, 'shift': adv + idx * 0.0})
+        per_letter.append({'ch': ch, 'heavy': sa, 'light': sb,
+                           'shift': adv + idx * 0.0, 'n': len(sa)})
         adv += a
 
     # горизонтальный масштаб: чернила слова ровно NORM_WIDTH
@@ -424,6 +450,7 @@ def main():
     print('чернила по y: раскрытое 0 … %.3f, сжатое 0 … %.3f' % (bax[3], bbx[3]))
     print('контуров %d, команд %d, точек %d — совпадает в обоих состояниях'
           % (n_contours, n_cmds, n_points))
+    print('контуров на литеру: %s' % ', '.join('%s %d' % (L['ch'], L['n']) for L in per_letter))
 
     box_h = max(bax[3], bbx[3])
 
@@ -479,6 +506,13 @@ export const WM_TIGHT = new Float32Array([
 %s
 ]);
 
+/**
+ * Сколько контуров приходится на каждую литеру, по порядку S P O T I K.
+ * Рантайм режет по этим числам слово на шесть групп: вход «пианино»
+ * двигает каждую литеру отдельным трансформом.
+ */
+export const WM_LETTER_CONTOURS = [%s] as const;
+
 /** Ширина чернил слова в этих координатах. */
 export const WM_WIDTH = %g;
 
@@ -498,6 +532,7 @@ export const WM_BOTTOM_OPEN = %.3f;
 export const WM_BOTTOM_TIGHT = %.3f;
 ''' % (NORM_WIDTH, n_contours, n_cmds, n_points, W_OPEN, w_light, cap_a,
        arr(lens), arr(ops_flat), arr(ca), arr(cb),
+       ', '.join(str(L['n']) for L in per_letter),
        NORM_WIDTH, cap_A, cap_B, box_h, bottom_a, bottom_b)
 
     with open(OUT, 'w', encoding='utf-8') as fh:

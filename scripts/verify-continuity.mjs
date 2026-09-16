@@ -28,13 +28,13 @@ window.__rec = { rows: [], long: [], on: false, prev: 0, gaps: [] };
 (() => {
   const tick = (now) => {
     if (window.__rec.on) {
-      const p = document.querySelector('.wm--hero path');
+      const ps = document.querySelectorAll('.wm--hero .wm__letter path');
       if (window.__rec.prev) window.__rec.gaps.push(now - window.__rec.prev);
       window.__rec.prev = now;
       window.__rec.rows.push({
         t: now,
         y: window.scrollY,
-        d: p ? p.getAttribute('d') : '',
+        d: ps.length ? [...ps].map((e) => e.getAttribute('d')).join('') : '',
       });
     }
     requestAnimationFrame(tick);
@@ -92,7 +92,8 @@ for (const dev of [
   await page.addInitScript(PROBE);
   await page.goto(`http://localhost:${PORT}${PREFIX}/`, { waitUntil: 'networkidle' });
   await page.evaluate(() => document.fonts.ready);
-  await page.waitForTimeout(900);
+  await page.waitForSelector('.hero__stage[data-entered]');
+  await page.waitForTimeout(400);
 
   await page.evaluate(() => { window.__rec.rows.length = 0; window.__rec.long.length = 0; window.__rec.gaps.length = 0; window.__rec.on = true; });
   const need = dev.height * 1.08;

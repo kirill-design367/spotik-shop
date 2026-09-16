@@ -43,38 +43,20 @@ for (const s of SIZES) {
   });
   await page.goto(`http://localhost:${PORT}${PREFIX}/`, { waitUntil: 'networkidle' });
   await page.evaluate(() => document.fonts.ready);
-  await page.waitForTimeout(700);
+  await page.waitForSelector('.hero__stage[data-entered]');
+  await page.waitForTimeout(300);
 
   const info = await page.evaluate(() => {
+    // литеры уже разложены по группам, искать их в строке d не нужно
     const wrap = document.querySelector('.wm--hero');
     const svg = wrap.querySelector('.wm__svg');
-    const d = svg.querySelector('path').getAttribute('d');
-    const parts = d.split('M').slice(1).map((p) => 'M' + p);
-    const boxes = parts
-      .map((p) => {
-        const n = p.match(/-?\d[\d.]*/g).map(Number);
-        let x0 = Infinity, x1 = -Infinity;
-        for (let i = 0; i < n.length; i += 2) { if (n[i] < x0) x0 = n[i]; if (n[i] > x1) x1 = n[i]; }
-        return { x0, x1, p };
-      })
-      .sort((a, b) => a.x0 - b.x0);
-    const g = [];
-    for (const b of boxes) {
-      const last = g[g.length - 1];
-      if (last && b.x0 <= last.x1) { last.x1 = Math.max(last.x1, b.x1); last.d += b.p; }
-      else g.push({ x0: b.x0, x1: b.x1, d: b.p });
-    }
-    const rect = (dd) => {
-      const el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      el.setAttribute('d', dd);
-      svg.appendChild(el);
-      const r = el.getBoundingClientRect();
-      el.remove();
+    const letters = [...wrap.querySelectorAll('.wm__letter')].map((g) => {
+      const r = g.getBoundingClientRect();
       return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
-    };
+    });
     const sr = svg.getBoundingClientRect();
     return {
-      letters: g.map((x) => rect(x.d)),
+      letters,
       svgTop: sr.top,
       svgBottom: sr.bottom,
       svgHeight: sr.height,

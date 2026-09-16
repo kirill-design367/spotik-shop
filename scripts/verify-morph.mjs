@@ -95,7 +95,10 @@ for (const dev of [
   });
   await page.goto(`http://localhost:${PORT}${PREFIX}/`, { waitUntil: 'networkidle' });
   await page.evaluate(() => document.fonts.ready);
-  await page.waitForTimeout(700);
+  // вход двигает литеры трансформом — замерять положение можно только
+  // после него, иначе поймаем кадр полёта
+  await page.waitForSelector('.hero__stage[data-entered]');
+  await page.waitForTimeout(400);
 
   const steps = 11;
   const tops = [];
@@ -154,7 +157,12 @@ const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 await page.goto(`http://localhost:${PORT}${PREFIX}/`, { waitUntil: 'networkidle' });
 await page.evaluate(() => document.fonts.ready);
 await page.waitForTimeout(600);
-const read = () => page.evaluate(() => document.querySelector('.wm--hero path').getAttribute('d'));
+// слово лежит в шести группах (вход двигает литеры по одной), поэтому
+// «строка контуров слова» — это склейка шести путей в их же порядке
+const read = () => page.evaluate(() =>
+  [...document.querySelectorAll('.wm--hero .wm__letter path')]
+    .map((el) => el.getAttribute('d'))
+    .join(''));
 const dOpen = await read();
 await page.evaluate(() => window.scrollTo(0, window.innerHeight * 1.2));
 await page.waitForTimeout(1500);

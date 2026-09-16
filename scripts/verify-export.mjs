@@ -79,7 +79,7 @@ for (const [pname, path] of PAGES) {
 
     const d = await page.evaluate(() => {
       const t = document.querySelector('.wm--hero .wm__svg');
-      const p = t?.querySelector('path');
+      const ps = t ? [...t.querySelectorAll('.wm__letter path')] : [];
       return {
         dw: document.documentElement.scrollWidth,
         ww: window.innerWidth,
@@ -87,7 +87,7 @@ for (const [pname, path] of PAGES) {
         fonts: [...document.fonts].map((f) => `${f.family}:${f.status}`),
         wmWidth: t ? +t.getBoundingClientRect().width.toFixed(1) : null,
         wmSize: t ? `слой ${t.getBoundingClientRect().height.toFixed(0)}px` : null,
-        dLen: p ? (p.getAttribute('d') || '').length : 0,
+        dLen: ps.reduce((n, e) => n + (e.getAttribute('d') || '').length, 0),
       };
     });
 

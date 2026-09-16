@@ -27,17 +27,22 @@ for (const [w, h, mob] of [[390, 844, true], [1920, 1080, false]]) {
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(800);
 
-  const before = await page.evaluate(() => ({
-    hero: document.querySelector('.wm--hero path').getAttribute('d'),
-    footer: document.querySelector('.wm--footer path')?.getAttribute('d') ?? null,
-  }));
+  const word = (sel) =>
+    [...document.querySelectorAll(`${sel} .wm__letter path`)]
+      .map((e) => e.getAttribute('d'))
+      .join('');
+  const before = await page.evaluate(() => {
+    const w = (sel) => [...document.querySelectorAll(`${sel} .wm__letter path`)]
+      .map((e) => e.getAttribute('d')).join('');
+    return { hero: w('.wm--hero'), footer: w('.wm--footer') };
+  });
   for (let i = 0; i < 40; i += 1) { await page.mouse.wheel(0, h / 20); await page.waitForTimeout(25); }
   await page.waitForTimeout(900);
-  const after = await page.evaluate(() => ({
-    hero: document.querySelector('.wm--hero path').getAttribute('d'),
-    footer: document.querySelector('.wm--footer path')?.getAttribute('d') ?? null,
-    y: window.scrollY,
-  }));
+  const after = await page.evaluate(() => {
+    const w = (sel) => [...document.querySelectorAll(`${sel} .wm__letter path`)]
+      .map((e) => e.getAttribute('d')).join('');
+    return { hero: w('.wm--hero'), footer: w('.wm--footer'), y: window.scrollY };
+  });
 
   console.log(
     `  ${w}×${h}  прокручено на ${after.y} px  ` +
