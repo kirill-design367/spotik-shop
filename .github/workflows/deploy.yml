@@ -2,7 +2,9 @@ name: Публикация на GitHub Pages
 
 on:
   push:
-    branches: [main, claude/festive-curie-7taamu]
+    # Ветка по умолчанию, как бы она ни называлась: репозиторий пока
+    # живёт на рабочей ветке, main появится позже.
+    branches: ['**']
   workflow_dispatch:
 
 permissions:
@@ -12,7 +14,9 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  # false, а не true: отменять уже идущую публикацию значит с заметной
+  # вероятностью оставить Pages с наполовину выложенной выдачей
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -59,6 +63,11 @@ jobs:
         run: |
           npx playwright install --with-deps chromium
           node scripts/verify-export.mjs
+
+      # Закон проекта: three.js не попадает в бандл первого экрана.
+      # Сторож у этого закона один, и он должен стоять в CI, а не в голове.
+      - name: Проверить, что three.js не в первом экране
+        run: node scripts/check-bundle.mjs
 
       - uses: actions/upload-pages-artifact@v3
         with:

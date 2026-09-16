@@ -11,6 +11,9 @@ const nextConfig = {
   images: { unoptimized: true },
   basePath: isProd ? repo : '',
   assetPrefix: isProd ? repo : '',
+  // Тот же префикс уезжает в клиентский код: объявления @font-face
+  // собираются строкой и должны знать его (см. lib/fontface.ts).
+  env: { NEXT_PUBLIC_BASE_PATH: isProd ? repo : '' },
   trailingSlash: true,
   reactStrictMode: true,
   productionBrowserSourceMaps: false,

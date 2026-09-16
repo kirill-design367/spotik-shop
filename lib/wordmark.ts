@@ -204,6 +204,14 @@ export type Calibration = {
   /** Фактически достигнутое отношение кеглей; должно совпасть с SIZE_RATIO. */
   actualSizeRatio: number;
   viewportWidth: number;
+  /**
+   * Влезли ли прописные в отведённую высоту. false означает окно настолько
+   * низкое, что даже предельный wdth не помогает: слово надо обрезать
+   * сверху и снизу, а не пускать его на текст.
+   */
+  capFits: boolean;
+  /** Высота, отведённая композицией. */
+  maxCap: number;
 };
 
 type Probe = { host: HTMLElement; span: HTMLSpanElement; strut: HTMLSpanElement };
@@ -257,15 +265,25 @@ export function calibrate(host: HTMLElement, viewportWidth: number, maxCap: numb
     (target1 / measureEm(p, { ...seed, wdth })) * (seed.YTUC / 1000);
 
   let openWidth = AXIS_RANGE.wdth[0];
+  let capFits = true;
   if (maxCap > 0 && capAt(openWidth) > maxCap) {
-    let a = AXIS_RANGE.wdth[0];
-    let b = AXIS_RANGE.wdth[1];
-    for (let i = 0; i < 26; i += 1) {
-      const mid = (a + b) / 2;
-      if (capAt(mid) > maxCap) a = mid;
-      else b = mid;
+    // Цель достижима не всегда: на очень низком и широком окне даже самый
+    // широкий рез даёт прописные выше, чем отведено. Тогда берём предельный
+    // wdth и сообщаем наружу, что слово не влезло — слой обрежет его сверху
+    // и снизу вместо того, чтобы наехать на текст хиро.
+    if (capAt(AXIS_RANGE.wdth[1]) > maxCap) {
+      openWidth = AXIS_RANGE.wdth[1];
+      capFits = false;
+    } else {
+      let a = AXIS_RANGE.wdth[0];
+      let b = AXIS_RANGE.wdth[1];
+      for (let i = 0; i < 26; i += 1) {
+        const mid = (a + b) / 2;
+        if (capAt(mid) > maxCap) a = mid;
+        else b = mid;
+      }
+      openWidth = b;
     }
-    openWidth = b;
   }
 
   const open: Axes = { ...seed, wdth: openWidth };
@@ -309,6 +327,8 @@ export function calibrate(host: HTMLElement, viewportWidth: number, maxCap: numb
     baselineRatio,
     actualSizeRatio: tightEm / openEm,
     viewportWidth,
+    capFits,
+    maxCap,
   };
 }
 

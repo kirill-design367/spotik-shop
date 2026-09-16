@@ -11,7 +11,7 @@ export default function Page() {
   return (
     <>
       <Playhead />
-      <main>
+      <main id="main" tabIndex={-1}>
         <Hero />
         <Pricing />
         <HowItWorks />

@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import './fonts.css';
 import FontAxisDemo from '@/components/fonts/FontAxisDemo';
 import { candidateFontFaces, BASE_PATH } from '@/lib/fontface';
@@ -99,7 +100,7 @@ const ARCHIVO_NOTE =
 
 export default function FontsPage() {
   return (
-    <main className="fp">
+    <main className="fp" id="main" tabIndex={-1}>
       <style dangerouslySetInnerHTML={{ __html: candidateFontFaces(BASE_PATH) }} />
       <div className="shell">
         <header className="fp__head">
@@ -167,9 +168,9 @@ export default function FontsPage() {
             cmap и fvar напрямую из бинарника, без доверия к описанию на сайте шрифта. Сабсеты
             собираются скриптом <code>scripts/build-fonts.py</code>.
           </p>
-          <a className="btn btn--ghost" href="../">
+          <Link className="btn btn--ghost" href="/">
             К сайту
-          </a>
+          </Link>
         </footer>
       </div>
     </main>

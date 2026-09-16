@@ -127,7 +127,11 @@ export default function Wordmark({ mode, sectionId, reserveSelector, reserveGap 
       // Высота слоя фиксируется под раскрытое состояние и дальше не меняется,
       // поэтому смена кегля физически не может протечь рефлоу наружу.
       const open = frameAt(cal, 0, vw);
-      wrap.style.setProperty('--wm-cap', `${open.capHeight.toFixed(1)}px`);
+      // Если прописные не влезли даже при предельном wdth, слой получает
+      // отведённую высоту, а не фактическую: contain: paint обрежет слово
+      // сверху и снизу. Это честнее, чем наехать на текст хиро.
+      const layerCap = cal.capFits ? open.capHeight : cal.maxCap;
+      wrap.style.setProperty('--wm-cap', `${layerCap.toFixed(1)}px`);
       wrapHeight = wrap.clientHeight;
       paint();
     };

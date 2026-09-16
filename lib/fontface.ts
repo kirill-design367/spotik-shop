@@ -90,5 +90,10 @@ export function candidateFontFaces(base: string): string {
   ].join('');
 }
 
-/** Один и тот же префикс для разметки и для объявлений шрифтов. */
-export const BASE_PATH = process.env.NODE_ENV === 'production' ? '/spotik-shop' : '';
+/**
+ * Один и тот же префикс для разметки и для объявлений шрифтов.
+ * Значение приходит из next.config.mjs через переменную сборки: два
+ * независимых литерала рано или поздно разъедутся, и разъедутся тихо —
+ * страница откроется, а шрифты нет.
+ */
+export const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? '';

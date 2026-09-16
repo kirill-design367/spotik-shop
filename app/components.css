@@ -737,3 +737,11 @@
   .footer__stage { position: static; }
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════ 404 */
+.nf {
+  min-height: 100svh;
+  display: flex;
+  align-items: center;
+  padding-block: 80px;
+}

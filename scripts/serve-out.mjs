@@ -40,7 +40,15 @@ export async function serveOut(port, { gzip = true, dir = 'out' } = {}) {
       res.writeHead(200, head);
       res.end(buf);
     } catch {
-      res.writeHead(404, { 'content-type': 'text/plain' }).end('404');
+      // GitHub Pages на неизвестный путь отдаёт 404.html из выдачи.
+      // Без этого проверка боевой 404-страницы ничего бы не проверяла.
+      try {
+        const nf = await readFile(join(root, '404.html'));
+        res.writeHead(404, { 'content-type': MIME['.html'] });
+        res.end(nf);
+      } catch {
+        res.writeHead(404, { 'content-type': 'text/plain' }).end('404');
+      }
     }
   });
   await new Promise((r) => server.listen(port, r));

@@ -51,8 +51,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body>
-        <a href="#pricing" className="skip-link">
-          Перейти к тарифам
+        {/* Цель скип-ссылки — сам <main>, а не секция: секции есть только
+            на главной, а layout общий и для /fonts, и для 404. */}
+        <a href="#main" className="skip-link">
+          Перейти к содержимому
         </a>
         {children}
         <ScrollProvider />
