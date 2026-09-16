@@ -1,0 +1,198 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ------------------------------------------------------------------ шрифты
+   Две гарнитуры с разными ролями, и они намеренно разные.
+
+   ПРИЁМ — Roboto Flex. Сабсет ровно из шести литер S P O T I K, но со ВСЕМИ
+   13 осями: на них живёт главный механизм страницы. 13 КБ.
+
+   ГОЛОС — Golos Text. Roboto Flex несёт кириллицу адаптированную, а Golos
+   рисовался от кириллицы: шире строчная, спокойнее Ж Ф Щ, ровнее ритм
+   в абзаце. Весь русский текст набран им. Оси срезаны до wght —
+   абзацам тринадцать осей не нужны.
+
+   Каждая гарнитура разложена по unicode-range: браузер тянет только то,
+   что реально встретил в тексте.                                          */
+@font-face {
+  font-family: 'Spotik Wordmark';
+  src: url('/fonts/spotik-wordmark.woff2') format('woff2-variations');
+  font-weight: 100 1000;
+  font-stretch: 25% 151%;
+  font-display: block; /* вордмарк не имеет права мигнуть подменой */
+  unicode-range: U+49, U+4B, U+4F, U+50, U+53, U+54;
+}
+
+@font-face {
+  font-family: 'Spotik Text';
+  src: url('/fonts/golos-cyrillic.woff2') format('woff2-variations');
+  font-weight: 400 900;
+  font-display: swap;
+  unicode-range: U+0400-045F, U+2116;
+}
+@font-face {
+  font-family: 'Spotik Text';
+  src: url('/fonts/golos-latin.woff2') format('woff2-variations');
+  font-weight: 400 900;
+  font-display: swap;
+  unicode-range: U+0020-00FF, U+2013-2014, U+2018-201E, U+2022, U+2026;
+}
+@font-face {
+  font-family: 'Spotik Text';
+  src: url('/fonts/golos-symbols.woff2') format('woff2-variations');
+  font-weight: 400 900;
+  font-display: swap;
+  unicode-range: U+20BD;
+}
+
+/* ------------------------------------------------------------------ токены */
+:root {
+  --green: #1db954;
+  --ink: #121212;
+  --surface: #212121;
+  --line: #2e2e2e;
+  --mid: #535353;
+  --dim: #b3b3b3;
+  /* #535353 даёт 2.4:1 и не проходит нигде, где текст несёт смысл.
+     #8e8e8e — 4.9:1 на #212121: минимум для вторичной подписи. */
+  --dim-2: #8e8e8e;
+  --white: #ffffff;
+
+  --font-wordmark: 'Spotik Wordmark', 'Spotik Text', system-ui, sans-serif;
+  --font-text: 'Spotik Text', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /* поля: мобильный макет — самостоятельная работа, не сжатый десктоп */
+  --gutter: 20px;
+  --rail: 0px;
+
+  --t-fast: 180ms;
+  --t-base: 420ms;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (min-width: 768px) {
+  :root { --gutter: 40px; --rail: 56px; }
+}
+@media (min-width: 1440px) {
+  :root { --gutter: 64px; --rail: 72px; }
+}
+
+/* ------------------------------------------------------------------- сброс */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html {
+  background: var(--ink);
+  -webkit-text-size-adjust: 100%;
+  color-scheme: dark; /* иначе системные контролы и скроллбар приедут светлыми */
+  scroll-padding-top: 96px;
+  /* при плавном скролле без этого на мобильных ловится случайный pull-to-refresh */
+  overscroll-behavior-y: contain;
+}
+
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--white);
+  font-family: var(--font-text);
+  font-variation-settings: 'wght' 400;
+  font-synthesis-weight: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* ни на одном размере не должно быть горизонтального скролла.
+     Именно clip, а не hidden: hidden на body ломает position: sticky. */
+  overflow-x: clip;
+}
+
+/* На зелёном поле футера кольцо переключается на чёрное — состояния должны
+   быть одинаково различимы в обеих инверсиях. */
+.footer :focus-visible { outline-color: var(--ink); }
+
+/* Lenis */
+html.lenis, html.lenis body { height: auto; }
+.lenis.lenis-smooth { scroll-behavior: auto !important; }
+.lenis.lenis-stopped { overflow: hidden; }
+
+::selection { background: var(--green); color: var(--ink); }
+
+/* Кольцо фокуса белое, а не зелёное: рядом много зелёного, и бренд-цвет
+   в роли индикатора терялся бы. Белое на #121212 даёт 18.7:1. */
+:focus-visible {
+  outline: 2px solid var(--white);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* -------------------------------------------------------------- примитивы */
+.shell {
+  width: 100%;
+  max-width: 1680px;
+  margin-inline: auto;
+  padding-inline: var(--gutter);
+}
+
+.rule { height: 1px; background: var(--line); border: 0; margin: 0; }
+
+.eyebrow {
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-variation-settings: 'wght' 600;
+  /* --mid (#535353) на #121212 даёт 2.4:1 и не проходит AA.
+     --dim (#B3B3B3) даёт 9.6:1 — надзаголовок должен читаться. */
+  color: var(--dim);
+}
+@media (min-width: 768px) { .eyebrow { font-size: 12px; } }
+
+/* Заголовки блоков: плотный гротеск, очень крупно, без декора */
+.h-section {
+  font-family: var(--font-text);
+  font-variation-settings: 'wght' 760;
+  font-size: clamp(2.5rem, 11.5vw, 6.5rem);
+  line-height: 0.92;
+  letter-spacing: -0.035em;
+  margin: 0;
+  text-wrap: balance;
+}
+
+.h-card {
+  font-variation-settings: 'wght' 680;
+  font-size: clamp(1.375rem, 5.2vw, 1.75rem);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.body-text {
+  font-size: clamp(1rem, 4.1vw, 1.0625rem);
+  line-height: 1.55;
+  color: var(--dim);
+  margin: 0;
+}
+
+.lead {
+  font-size: clamp(1.0625rem, 4.6vw, 1.375rem);
+  line-height: 1.42;
+  letter-spacing: -0.01em;
+  color: var(--dim);
+  margin: 0;
+  text-wrap: pretty;
+}
+
+/* цифры в ценах и таймкодах — только табличные, иначе прыгают */
+.tnum { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; }
+
+/* ------------------------------------------------- уважение к настройкам ОС */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

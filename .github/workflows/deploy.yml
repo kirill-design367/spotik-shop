@@ -1,0 +1,65 @@
+name: Публикация на GitHub Pages
+
+on:
+  push:
+    branches: [main, claude/festive-curie-7taamu]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Установить зависимости
+        run: npm ci
+
+      - name: Сборка статического экспорта
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      # Без этого файла Pages отдаёт выдачу через Jekyll и выбрасывает
+      # всё, что начинается с подчёркивания, — то есть весь каталог _next
+      # с бандлами и шрифтами.
+      - name: Положить .nojekyll
+        run: touch out/.nojekyll
+
+      - name: Проверить, что ассеты на месте
+        run: |
+          test -f out/index.html
+          test -f out/.nojekyll
+          test -f out/fonts/spotik-wordmark.woff2
+          test -f out/fonts/golos-cyrillic.woff2
+          test -d out/_next/static
+          grep -q '/spotik-shop/_next/static' out/index.html
+          grep -q '/spotik-shop/fonts/spotik-wordmark.woff2' out/index.html
+          echo "выдача собрана, basePath проставлен"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,78 @@
+'use client';
+
+import { useEffect, useRef } from 'react';
+
+/**
+ * Шкала дорожки.
+ *
+ * Страница читается как один трек: тонкая линия слева показывает позицию,
+ * рядом идёт таймкод. Это не абстрактный «индикатор скролла», а предметная
+ * деталь из мира, к которому продукт относится.
+ *
+ * Считается в том же rAF, что и всё остальное, и трогает только transform
+ * и textContent — ни одного чтения геометрии в кадре.
+ */
+const TOTAL_SECONDS = 146; // столько длится дорожка, чья огибающая лежит в волне
+
+export default function Playhead() {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const fillRef = useRef<HTMLDivElement>(null);
+  const timeRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    const fill = fillRef.current;
+    const label = timeRef.current;
+    if (!root || !fill || !label) return;
+
+    let raf = 0;
+    let last = -1;
+    let height = 0;
+    let docH = 1;
+
+    const measure = () => {
+      height = window.innerHeight;
+      docH = Math.max(1, document.documentElement.scrollHeight - height);
+    };
+    measure();
+
+    const fmt = (s: number) => {
+      const m = Math.floor(s / 60);
+      const r = Math.floor(s % 60);
+      return `${m}:${String(r).padStart(2, '0')}`;
+    };
+    const total = fmt(TOTAL_SECONDS);
+
+    const tick = () => {
+      const p = Math.min(1, Math.max(0, window.scrollY / docH));
+      if (Math.abs(p - last) > 0.0008) {
+        last = p;
+        fill.style.transform = `scaleY(${p.toFixed(4)})`;
+        label.textContent = `${fmt(p * TOTAL_SECONDS)} / ${total}`;
+        // в хиро шкала молчит: тонкая линия поперёк вордмарка читается
+        // как царапина, а не как элемент интерфейса
+        const on = window.scrollY > height * 0.6 ? '1' : '0';
+        if (root.dataset.on !== on) root.dataset.on = on;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+
+    window.addEventListener('resize', measure, { passive: true });
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', measure);
+    };
+  }, []);
+
+  return (
+    <div className="playhead" ref={rootRef} data-on="0" aria-hidden="true">
+      <div className="playhead__track">
+        <div className="playhead__fill" ref={fillRef} />
+      </div>
+      <div className="playhead__time" ref={timeRef}>
+        0:00 / 2:26
+      </div>
+    </div>
+  );
+}
