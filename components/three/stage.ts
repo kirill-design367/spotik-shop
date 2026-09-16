@@ -25,6 +25,10 @@ import type { SceneKind } from './types';
 type Stage = {
   renderer: THREE.WebGLRenderer;
   envTexture: THREE.Texture;
+  /** Сам render target: у него своя память, отдельно от текстуры. */
+  envTarget: THREE.WebGLRenderTarget;
+  /** Процедурная комната: её геометрии и материалы тоже надо освободить. */
+  envScene: THREE.Scene;
   pmrem: THREE.PMREMGenerator;
 };
 
@@ -51,9 +55,10 @@ function getStage(): Stage {
 
   const pmrem = new THREE.PMREMGenerator(renderer);
   // Окружение процедурное: ни одной картинки, ни одного сетевого запроса.
-  const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
+  const envScene = new RoomEnvironment();
+  const envRT = pmrem.fromScene(envScene, 0.04);
 
-  stage = { renderer, envTexture: envRT.texture, pmrem };
+  stage = { renderer, envTexture: envRT.texture, envTarget: envRT, envScene, pmrem };
   return stage;
 }
 
@@ -255,7 +260,6 @@ export async function attachSlot(
   { kind, seed }: { kind: SceneKind; seed: number },
 ): Promise<SlotHandle> {
   const st = getStage();
-  users += 1;
 
   const built = kind === 'card' ? buildCard(seed) : buildGift();
   built.scene.environment = st.envTexture;
@@ -269,7 +273,17 @@ export async function attachSlot(
 
   // Компиляция программ занимает десятки миллисекунд синхронно. Прогреваем
   // заранее, иначе рывок придётся ровно на подход скролла к блоку.
-  await st.renderer.compileAsync(built.scene, built.camera);
+  try {
+    await st.renderer.compileAsync(built.scene, built.camera);
+  } catch (e) {
+    // Считаем пользователей ПОСЛЕ последнего await: иначе сорвавшийся
+    // на компиляции слот навсегда удержал бы общий контекст и оставил
+    // мусорный канвас в разметке.
+    built.dispose();
+    canvas.remove();
+    throw e;
+  }
+  users += 1;
 
   let disposed = false;
 
@@ -306,8 +320,14 @@ export async function attachSlot(
       canvas.remove();
       users -= 1;
       if (users <= 0 && stage) {
+        stage.envScene.traverse((o) => {
+          const mesh = o as THREE.Mesh;
+          mesh.geometry?.dispose();
+          const mats = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+          for (const m of mats) m.dispose();
+        });
         stage.pmrem.dispose();
-        stage.envTexture.dispose();
+        stage.envTarget.dispose();
         stage.renderer.dispose();
         stage.renderer.forceContextLoss();
         stage = null;

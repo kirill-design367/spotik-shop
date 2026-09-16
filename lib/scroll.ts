@@ -12,6 +12,7 @@ if (typeof window !== 'undefined') gsap.registerPlugin(ScrollTrigger);
 
 let lenis: Lenis | null = null;
 let booted = false;
+let refreshQueued = false;
 
 /**
  * Связка Lenis + GSAP ScrollTrigger.
@@ -29,6 +30,26 @@ export function bootScroll(): () => void {
   if (booted) return () => {};
   booted = true;
 
+  /**
+   * Пересчёт триггеров при изменении высоты документа.
+   *
+   * ScrollTrigger считает границы один раз и сам за высотой страницы
+   * не следит. А она меняется постоянно и после первого кадра: раскрылся
+   * ответ в блоке вопросов, приехал текстовый шрифт и переверстались
+   * абзацы, встала 3D-сцена. Без пересчёта нижняя скобка отвязывается
+   * от футера и начинает разрастаться не там, где нужно.
+   */
+  const ro = new ResizeObserver(() => {
+    // refresh дорогой, поэтому не чаще кадра и не в самом кадре
+    if (refreshQueued) return;
+    refreshQueued = true;
+    requestAnimationFrame(() => {
+      refreshQueued = false;
+      ScrollTrigger.refresh();
+    });
+  });
+  ro.observe(document.body);
+
   const reduced = prefersReducedMotion();
 
   if (!reduced) {
@@ -45,6 +66,7 @@ export function bootScroll(): () => void {
     gsap.ticker.lagSmoothing(0);
 
     return () => {
+      ro.disconnect();
       gsap.ticker.remove(raf);
       lenis?.destroy();
       lenis = null;
@@ -53,6 +75,7 @@ export function bootScroll(): () => void {
   }
 
   return () => {
+    ro.disconnect();
     booted = false;
   };
 }

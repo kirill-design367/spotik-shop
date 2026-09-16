@@ -25,24 +25,34 @@ export default function Pricing() {
   const [account, setAccount] = useState<Record<string, 'new' | 'renew'>>({});
   const segRef = useRef<HTMLDivElement>(null);
   const statusId = useId();
+  const noteId = useId();
 
-  /** Стрелки внутри radiogroup — требование клавиатурной семантики. */
-  const onSegKey = (e: React.KeyboardEvent) => {
+  /**
+   * Стрелки внутри radiogroup. Без них roving tabindex делает только хуже:
+   * в группу можно войти табом, а переключить выбор уже нечем.
+   */
+  const rove = (e: React.KeyboardEvent, count: number, current: number, apply: (i: number) => void) => {
     const keys = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'];
     if (!keys.includes(e.key)) return;
     e.preventDefault();
-    const i = PERIODS.findIndex((p) => p.key === period);
     const dir = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : -1;
-    const next = PERIODS[(i + dir + PERIODS.length) % PERIODS.length];
-    setPeriod(next.key);
-    const btns = segRef.current?.querySelectorAll<HTMLButtonElement>('.seg__btn');
-    btns?.[PERIODS.findIndex((p) => p.key === next.key)]?.focus();
+    const next = (current + dir + count) % count;
+    apply(next);
+    const group = e.currentTarget as HTMLElement;
+    group.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus();
   };
+
+  const onSegKey = (e: React.KeyboardEvent) =>
+    rove(e, PERIODS.length, PERIODS.findIndex((p) => p.key === period), (i) => setPeriod(PERIODS[i].key));
 
   const announce = (() => {
     const p = PERIODS.find((x) => x.key === period)!;
-    const parts = PLANS.filter((pl) => pl.prices[period]).map(
-      (pl) => `${pl.name} — ${formatPrice(pl.prices[period]!)} рублей`,
+    // про тариф без цены на этот срок тоже надо сказать: иначе он просто
+    // пропадает из объявления, и человек не понимает, куда он делся
+    const parts = PLANS.map((pl) =>
+      pl.prices[period]
+        ? `${pl.name} — ${formatPrice(pl.prices[period]!)} рублей`
+        : `${pl.name} — на этот срок не оформляется`,
     );
     return `${p.label}: ${parts.join(', ')}`;
   })();
@@ -117,7 +127,10 @@ export default function Pricing() {
                         Только на месяц
                       </p>
                       <p className="plan__per">
-                        {formatPrice(plan.prices[1]!)} ₽ за 30 дней. Другие сроки оформляем по запросу.
+                        {plan.prices[1]
+                          ? `${formatPrice(plan.prices[1])} \u20BD за 30 дней. `
+                          : ''}
+                        Другие сроки оформляем по запросу.
                       </p>
                       <p className="plan__save" />
                     </>
@@ -142,7 +155,16 @@ export default function Pricing() {
                   style={{ border: 0, padding: 0, margin: 0 }}
                 >
                   <legend>Аккаунт</legend>
-                  <div role="radiogroup" aria-label={`Аккаунт для тарифа «${plan.name}»`} style={{ display: 'grid', gap: 8 }}>
+                  <div
+                    role="radiogroup"
+                    aria-label={`Аккаунт для тарифа «${plan.name}»`}
+                    style={{ display: 'grid', gap: 8 }}
+                    onKeyDown={(e) =>
+                      rove(e, 2, acc === 'new' ? 0 : 1, (i) =>
+                        setAccount((st) => ({ ...st, [plan.id]: i === 0 ? 'new' : 'renew' })),
+                      )
+                    }
+                  >
                     {(
                       [
                         ['new', 'Новый аккаунт', 'Заведём и передадим логин с паролем'],
@@ -169,7 +191,18 @@ export default function Pricing() {
                   </div>
                 </fieldset>
 
-                <button type="button" className={`btn${plan.hot ? '' : ' btn--ghost'}`} style={{ marginTop: 'auto' }}>
+                {/*
+                  Оплата — следующий этап разработки. Кнопка, которая
+                  фокусируется, объявляется кнопкой и молча ничего не делает,
+                  хуже честно выключенной: человек решает, что сайт сломан.
+                */}
+                <button
+                  type="button"
+                  className={`btn${plan.hot ? '' : ' btn--ghost'}`}
+                  style={{ marginTop: 'auto' }}
+                  disabled
+                  aria-describedby={noteId}
+                >
                   Оформить{unavailable ? ' на месяц' : ''}
                 </button>
               </article>
@@ -177,8 +210,9 @@ export default function Pricing() {
           })}
         </div>
 
-        <p className="body-text" style={{ marginTop: 24, fontSize: 13 }}>
-          Итоговая сумма к оплате показывается до перехода к оплате. Оплата появится на следующем этапе разработки.
+        <p id={noteId} className="body-text" style={{ marginTop: 24, fontSize: 13 }}>
+          Итоговая сумма к оплате показывается до перехода к оплате. Сама оплата появится
+          на следующем этапе разработки, поэтому кнопки оформления пока выключены.
         </p>
       </div>
     </section>

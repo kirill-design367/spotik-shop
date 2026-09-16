@@ -136,17 +136,43 @@ export default function Wordmark({ mode, sectionId, reserveSelector, reserveGap 
     // document.fonts.ready ждал бы и текстовые сабсеты тоже, а они к приёму
     // отношения не имеют и только оттягивают появление главного элемента.
     let ro: ResizeObserver | undefined;
+    let pending = 0;
     const start = () => {
       if (disposed) return;
       recalibrate();
       wrap.dataset.ready = '1';
       let lastW = window.innerWidth;
-      ro = new ResizeObserver(() => {
-        if (window.innerWidth === lastW) return; // игнорируем схлопывание адресной строки на мобильном
-        lastW = window.innerWidth;
-        recalibrate();
-      });
+      let lastReserve = 0;
+
+      /**
+       * Пересчёт откладывается на следующий кадр и склеивается.
+       * Калибровка делает под сотню замеров ширины, то есть столько же
+       * принудительных рефлоу; звать её прямо из ResizeObserver значит
+       * делать это на каждый кадр перетаскивания окна.
+       *
+       * Следим не только за шириной окна, но и за высотой соседнего блока:
+       * текстовый шрифт приезжает позже шрифта вордмарка, абзацы
+       * переверстываются, и доступная слову высота меняется уже после
+       * первой калибровки.
+       */
+      const schedule = () => {
+        if (pending || disposed) return;
+        pending = requestAnimationFrame(() => {
+          pending = 0;
+          const reserve = wrap.parentElement?.querySelector<HTMLElement>(reserveSelector)?.offsetHeight ?? 0;
+          // схлопывание адресной строки на мобильном меняет высоту, но не ширину
+          if (window.innerWidth === lastW && Math.abs(reserve - lastReserve) < 2) return;
+          lastW = window.innerWidth;
+          lastReserve = reserve;
+          recalibrate();
+        });
+      };
+
+      lastReserve = wrap.parentElement?.querySelector<HTMLElement>(reserveSelector)?.offsetHeight ?? 0;
+      ro = new ResizeObserver(schedule);
       ro.observe(document.documentElement);
+      const reserveEl = wrap.parentElement?.querySelector<HTMLElement>(reserveSelector);
+      if (reserveEl) ro.observe(reserveEl);
     };
 
     if (document.fonts?.load) {
@@ -172,6 +198,7 @@ export default function Wordmark({ mode, sectionId, reserveSelector, reserveGap 
       disposed = true;
       offScroll();
       ro?.disconnect();
+      if (pending) cancelAnimationFrame(pending);
       window.clearTimeout(idleTimer);
     };
   }, [mode, sectionId, reserveSelector, reserveGap]);

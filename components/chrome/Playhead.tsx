@@ -26,6 +26,7 @@ export default function Playhead() {
     if (!root || !fill || !label) return;
 
     let raf = 0;
+    let running = false;
     let last = -1;
     let height = 0;
     let docH = 1;
@@ -35,6 +36,12 @@ export default function Playhead() {
       docH = Math.max(1, document.documentElement.scrollHeight - height);
     };
     measure();
+
+    // Высота документа меняется не только на ресайзе: раскрылся ответ
+    // в блоке вопросов, приехал шрифт, встала 3D-сцена. Без пересчёта
+    // таймкод начинает врать. Наблюдатель дешевле, чем мерить в кадре.
+    const ro = new ResizeObserver(measure);
+    ro.observe(document.documentElement);
 
     const fmt = (s: number) => {
       const m = Math.floor(s / 60);
@@ -54,13 +61,31 @@ export default function Playhead() {
         const on = window.scrollY > height * 0.6 ? '1' : '0';
         if (root.dataset.on !== on) root.dataset.on = on;
       }
-      raf = requestAnimationFrame(tick);
+      if (running) raf = requestAnimationFrame(tick);
     };
-    raf = requestAnimationFrame(tick);
+
+    // Шкала скрыта до 768 px и не нужна при «уменьшить движение».
+    // Гонять ради неё кадр там, где её не видно, — чистая трата батареи.
+    const mqWide = window.matchMedia('(min-width: 768px)');
+    const mqMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const sync = () => {
+      const want = mqWide.matches && !mqMotion.matches;
+      if (want === running) return;
+      running = want;
+      if (want) raf = requestAnimationFrame(tick);
+      else cancelAnimationFrame(raf);
+    };
+    sync();
+    mqWide.addEventListener('change', sync);
+    mqMotion.addEventListener('change', sync);
 
     window.addEventListener('resize', measure, { passive: true });
     return () => {
+      running = false;
       cancelAnimationFrame(raf);
+      ro.disconnect();
+      mqWide.removeEventListener('change', sync);
+      mqMotion.removeEventListener('change', sync);
       window.removeEventListener('resize', measure);
     };
   }, []);

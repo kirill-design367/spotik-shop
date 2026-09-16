@@ -110,7 +110,11 @@ export default function WaveCanvas({ className }: { className?: string }) {
     let running = false;
     let visible = true;
     let reduced = prefersReducedMotion();
+    // Отсчёт времени дорожки. Пока цикл стоит (вкладка скрыта, хиро ушло
+    // с экрана), время не идёт: иначе при возврате волна перематывалась бы
+    // скачком на новую позицию, как будто дорожку промотали.
     let t0 = performance.now();
+    let pausedAt = 0;
 
     // предвычисленные x и доли ширины, чтобы в кадре не делить
     let xs = new Float32Array(0);
@@ -219,11 +223,17 @@ export default function WaveCanvas({ className }: { className?: string }) {
 
     const startLoop = () => {
       if (running || reduced || !visible) return;
+      if (pausedAt) {
+        t0 += performance.now() - pausedAt;
+        pausedAt = 0;
+      }
       running = true;
       raf = requestAnimationFrame(loop);
     };
     const stopLoop = () => {
+      if (!running) return;
       running = false;
+      pausedAt = performance.now();
       cancelAnimationFrame(raf);
     };
 

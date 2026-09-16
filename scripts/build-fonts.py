@@ -57,9 +57,12 @@ print("вордмарк (S P O T I K, 13 осей): %-42s %6.1f KB" % (p, sz/102
 # Roboto Flex у Fontsource разложен по скриптам, поэтому нужные знаки лежат
 # в разных файлах: « » — в latin, № в cyrillic, ₽ в latin-ext.
 # Собираем три крошечных сабсета и склеиваем их в CSS через unicode-range.
-PUNCT_LAT = " !\"#%&'()*+,-./0123456789:;=?@[]_{}|~«»—–…“”„‘’•·"
+# U+00A0 обязателен: разряды в ценах «1 490 ₽» разделяются именно им.
+# Тонкую шпацию U+2009 взять не вышло — в поставке Golos её глиф битый
+# (cmap на неё ссылается, самого глифа нет), сабсеттер падает на нём.
+PUNCT_LAT = " \u00a0!\"#%&'()*+,-./0123456789:;=?@[]_{}|~«»—–…“”„‘’•·"
 LAT_TXT = PUNCT_LAT + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-CYR_TXT = "№" + "".join(chr(c) for c in range(0x0410, 0x0450)) + "Ёё"
+CYR_TXT = "\u00a0№" + "".join(chr(c) for c in range(0x0410, 0x0450)) + "Ёё"
 SYM_TXT = "₽"
 
 TEXT_PARTS = (
