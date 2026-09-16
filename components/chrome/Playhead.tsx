@@ -30,6 +30,7 @@ export default function Playhead() {
     let last = -1;
     let height = 0;
     let docH = 1;
+    const footer = document.getElementById('footer');
 
     const measure = () => {
       height = window.innerHeight;
@@ -60,6 +61,11 @@ export default function Playhead() {
         // как царапина, а не как элемент интерфейса
         const on = window.scrollY > height * 0.6 ? '1' : '0';
         if (root.dataset.on !== on) root.dataset.on = on;
+        // На сплошном зелёном подвале шкала переключается на чёрное:
+        // зелёное на зелёном давало 1.02:1, то есть шкалы там просто не было.
+        const f = footer?.getBoundingClientRect();
+        const inv = f && f.top < height * 0.5 ? '1' : '0';
+        if (root.dataset.invert !== inv) root.dataset.invert = inv;
       }
       if (running) raf = requestAnimationFrame(tick);
     };

@@ -144,17 +144,26 @@
 /* ═══════════════════════════════════════════════════════════════ НАВИГАЦИЯ */
 /* Сплошная подложка цвета фона. На первом экране она не видна — фон и есть
    #121212. Но когда вордмарк уезжает вверх и подходит под навигацию,
-   подложка не даёт зелёному съесть ссылки и кнопку. */
+   подложка не даёт зелёному съесть ссылки и кнопку.
+
+   Подложка идёт ВО ВСЮ ШИРИНУ, а содержимое внутри держится колонки:
+   если красить сам .shell, то на экране шире 1680 по краям торчали бы
+   зелёные плечи вокруг чёрного прямоугольника. */
 .nav {
   position: relative;
   z-index: 3;
   background: var(--ink);
+}
+.nav__inner {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding-top: calc(16px + env(safe-area-inset-top));
-  padding-bottom: 16px;
+  padding-top: calc(12px + env(safe-area-inset-top));
+  padding-bottom: 12px;
+}
+@media (min-width: 768px) {
+  .nav__inner { padding-top: calc(16px + env(safe-area-inset-top)); padding-bottom: 16px; }
 }
 
 /*
@@ -249,9 +258,10 @@
 .btn--ghost {
   --btn-bg: transparent;
   --btn-fg: var(--white);
-  box-shadow: inset 0 0 0 1px var(--hair);
+  /* граница интерактивного элемента обязана читаться: 0.09 давало 1.3:1 */
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.34);
 }
-.btn--ghost:hover { --btn-bg: var(--surface); box-shadow: inset 0 0 0 1px var(--mid); }
+.btn--ghost:hover { --btn-bg: var(--surface); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.62); }
 
 .btn--sm { min-height: 44px; padding: 0 18px; font-size: 13px; }
 
@@ -290,7 +300,9 @@
   bottom: 96px;
   width: 1px;
   background: var(--hair);
-  transform: translateX(-50%);
+  /* целые пиксели: при translateX(-50%) однопиксельная линия садилась
+     на полпикселя и растекалась на две колонки по половине яркости */
+  transform: translateX(-0.5px);
 }
 .playhead__fill {
   position: absolute;
@@ -298,11 +310,19 @@
   top: 0;
   width: 100%;
   background: var(--green);
+  transition: background 200ms var(--ease);
   transform-origin: top;
   height: 100%;
   transform: scaleY(0);
   will-change: transform;
 }
+/* На сплошном зелёном подвале зелёная заливка шкалы давала 1.02:1,
+   а таймкод 1.90:1 — то есть шкала просто исчезала там, где страница
+   заканчивается. На зелёном она переключается на чёрное. */
+.playhead[data-invert='1'] .playhead__fill { background: var(--ink); }
+.playhead[data-invert='1'] .playhead__track { background: rgba(18, 18, 18, 0.28); }
+.playhead[data-invert='1'] .playhead__time { color: rgba(18, 18, 18, 0.72); }
+
 .playhead__time {
   position: absolute;
   left: 50%;
@@ -582,16 +602,32 @@
 .step {
   background: var(--ink);
   display: grid;
-  grid-template-columns: 44px 1fr;
-  gap: 16px;
+  /* Детей у шага три, поэтому колонок тоже должно хватать на три.
+     При двух колонках описание сваливалось в 44-пиксельную колонку номера
+     и верстало по одному слову в строку. */
+  grid-template-columns: 30px 1fr;
+  grid-template-areas:
+    'num title'
+    '.   desc';
+  gap: 6px 14px;
   padding: 22px 0;
-  align-items: start;
+  align-items: baseline;
 }
+.step__n { grid-area: num; }
+.step__t { grid-area: title; }
+.step__d { grid-area: desc; }
 @media (min-width: 900px) {
-  .step { grid-template-columns: 72px minmax(0, 5fr) minmax(0, 6fr); gap: 40px; padding: 28px 0; align-items: baseline; }
+  .step {
+    /* колонка номера по ширине самого номера, а не «на глаз»:
+       при 72–88 px между цифрой и заголовком зияло мёртвое поле */
+    grid-template-columns: 34px minmax(0, 5fr) minmax(0, 6fr);
+    grid-template-areas: 'num title desc';
+    gap: 28px;
+    padding: 28px 0;
+  }
 }
 @media (min-width: 1440px) {
-  .step { grid-template-columns: 88px minmax(0, 5fr) minmax(0, 6fr); gap: 56px; }
+  .step { grid-template-columns: 34px minmax(0, 5fr) minmax(0, 6fr); gap: 40px; }
 }
 .step__n {
   font-variation-settings: 'wght' 700;
@@ -601,8 +637,13 @@
   font-variant-numeric: tabular-nums;
 }
 .step__t { font-variation-settings: 'wght' 600; font-size: clamp(1.125rem, 4.6vw, 1.5rem); line-height: 1.16; letter-spacing: -0.018em; margin: 0; }
-.step__d { font-size: 15px; line-height: 1.55; color: var(--dim); margin: 8px 0 0; }
-@media (min-width: 900px) { .step__d { margin: 0; } }
+.step__d {
+  font-size: clamp(0.9375rem, 0.85rem + 0.25vw, 1.0625rem);
+  line-height: 1.55;
+  color: var(--dim);
+  margin: 0;
+  max-width: 54ch;
+}
 
 /* --- развилка ----------------------------------------------------------- */
 .fork { display: grid; gap: 1px; background: rgba(255, 255, 255, 0.09); margin-top: 40px; }
@@ -622,15 +663,21 @@
   border-top: 1px solid rgba(255, 255, 255, 0.09);
 }
 @media (min-width: 900px) {
-  .perk { grid-template-columns: 72px minmax(0, 5fr) minmax(0, 6fr); gap: 40px; align-items: baseline; padding: 30px 0; }
+  .perk { grid-template-columns: 34px minmax(0, 5fr) minmax(0, 6fr); gap: 28px; align-items: baseline; padding: 30px 0; }
 }
 @media (min-width: 1440px) {
-  .perk { grid-template-columns: 88px minmax(0, 5fr) minmax(0, 6fr); gap: 56px; }
+  .perk { grid-template-columns: 34px minmax(0, 5fr) minmax(0, 6fr); gap: 40px; }
 }
 .perk:last-child { border-bottom: 1px solid rgba(255, 255, 255, 0.09); }
 .perk__n { font-size: 12px; color: var(--green); font-variation-settings: 'wght' 700; font-variant-numeric: tabular-nums; letter-spacing: 0.06em; }
 .perk__t { margin: 0; font-variation-settings: 'wght' 650; font-size: clamp(1.125rem, 4.4vw, 1.5rem); line-height: 1.14; letter-spacing: -0.018em; }
-.perk__d { margin: 0; font-size: 15px; line-height: 1.55; color: var(--dim); }
+.perk__d {
+  margin: 0;
+  font-size: clamp(0.9375rem, 0.85rem + 0.25vw, 1.0625rem);
+  line-height: 1.55;
+  color: var(--dim);
+  max-width: 54ch;
+}
 
 /* --- вопросы ------------------------------------------------------------ */
 .faq { display: grid; }
@@ -640,7 +687,10 @@
   width: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  /* знак раскрытия держится у текста, а не у противоположного края:
+     иначе на широком экране между вопросом и его же управляющим
+     элементом остаётся тысяча пикселей пустоты */
+  justify-content: flex-start;
   gap: 20px;
   min-height: 64px;
   padding: 18px 0;
@@ -656,7 +706,9 @@
   cursor: pointer;
   touch-action: manipulation;
 }
-.faq__mark { flex: 0 0 auto; width: 16px; height: 16px; position: relative; }
+.faq__q > span:first-child { flex: 0 1 auto; max-width: 30ch; }
+@media (min-width: 900px) { .faq__q > span:first-child { max-width: 34ch; } }
+.faq__mark { flex: 0 0 auto; width: 16px; height: 16px; position: relative; order: -1; margin-right: 4px; }
 .faq__mark::before,
 .faq__mark::after {
   content: '';
@@ -670,11 +722,23 @@
 .faq__a {
   overflow: hidden;
   color: var(--dim);
-  font-size: 15px;
+  font-size: clamp(0.9375rem, 0.85rem + 0.25vw, 1.0625rem);
   line-height: 1.6;
   inline-size: min(100%, 62ch);
 }
 .faq__a p { margin: 0 0 18px; }
+.faq__draft-mark {
+  display: inline-block;
+  margin-right: 10px;
+  padding: 2px 7px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-variation-settings: 'wght' 700;
+  color: var(--ink);
+  background: var(--dim-2);
+  vertical-align: 2px;
+}
 .faq__note {
   margin-top: 28px;
   display: flex;
@@ -692,7 +756,7 @@
 .gift__list li {
   padding: 14px 0 14px 26px;
   border-top: 1px solid rgba(255, 255, 255, 0.09);
-  font-size: 15px;
+  font-size: clamp(0.9375rem, 0.85rem + 0.25vw, 1.0625rem);
   line-height: 1.5;
   color: var(--dim);
   position: relative;

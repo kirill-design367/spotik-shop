@@ -31,19 +31,19 @@ export default function Hero() {
 
         <div className="hero__foot shell">
           <h1 className="eyebrow">
-            Сервис №1 по оформлению доступа к Spotify Premium из России
+            Сервис №1 по оформлению доступа к Spotify Premium из России
           </h1>
 
           <p className="hero__offer">
-            С помощью Spotik Shop вы можете получить доступ к любимым хитам, недоступным
-            на российских площадках. Без VPN и оплачивая русской картой или СБП.
+            С помощью Spotik Shop вы можете получить доступ к любимым хитам, недоступным
+            на российских площадках. Без VPN и оплачивая русской картой или СБП.
           </p>
 
           <div className="hero__cta-row">
             <button type="button" className="btn btn--wide" onClick={() => scrollToId('pricing')}>
               Выбрать тариф
             </button>
-            <span className="hero__hint">Коснитесь фона — волна отзовётся</span>
+            <span className="hero__hint">Коснитесь фона — волна отзовётся</span>
           </div>
         </div>
       </div>

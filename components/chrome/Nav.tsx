@@ -17,14 +17,15 @@ export default function Nav() {
   };
 
   return (
-    <nav className="nav shell" aria-label="Основная навигация">
-      <div className="logo-slot" data-logo-slot="reserved">
+    <nav className="nav" aria-label="Основная навигация">
+      <div className="nav__inner shell">
+        <div className="logo-slot" data-logo-slot="reserved">
         <a className="logo-slot__text" href="#hero" onClick={go('hero')}>
           SPOTIK
         </a>
       </div>
 
-      <div className="nav__links">
+        <div className="nav__links">
         <button type="button" className="nav__link" onClick={() => scrollToId('pricing')}>
           Тарифы
         </button>
@@ -39,9 +40,10 @@ export default function Nav() {
         </button>
       </div>
 
-      <button type="button" className="btn btn--sm" onClick={() => scrollToId('pricing')}>
-        Выбрать тариф
-      </button>
+        <button type="button" className="btn btn--sm" onClick={() => scrollToId('pricing')}>
+          Выбрать тариф
+        </button>
+      </div>
     </nav>
   );
 }
