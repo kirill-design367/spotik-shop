@@ -38,7 +38,7 @@ export default function Gift() {
 
             <div style={{ marginTop: 32, display: 'flex', gap: 14, flexWrap: 'wrap' }}>
               <ScrollButton to="pricing">Выбрать срок</ScrollButton>
-              <ScrollButton to="faq" variant="ghost">
+              <ScrollButton to="how" variant="ghost">
                 Как это работает
               </ScrollButton>
             </div>

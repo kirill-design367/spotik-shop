@@ -572,7 +572,10 @@
   align-items: start;
 }
 @media (min-width: 900px) {
-  .step { grid-template-columns: 96px minmax(0, 7fr) minmax(0, 5fr); gap: 32px; padding: 28px 0; align-items: baseline; }
+  .step { grid-template-columns: 72px minmax(0, 5fr) minmax(0, 6fr); gap: 40px; padding: 28px 0; align-items: baseline; }
+}
+@media (min-width: 1440px) {
+  .step { grid-template-columns: 88px minmax(0, 5fr) minmax(0, 6fr); gap: 56px; }
 }
 .step__n {
   font-variation-settings: 'wght' 700;
@@ -603,7 +606,10 @@
   border-top: 1px solid rgba(255, 255, 255, 0.09);
 }
 @media (min-width: 900px) {
-  .perk { grid-template-columns: 56px minmax(0, 5fr) minmax(0, 6fr); gap: 32px; align-items: baseline; padding: 30px 0; }
+  .perk { grid-template-columns: 72px minmax(0, 5fr) minmax(0, 6fr); gap: 40px; align-items: baseline; padding: 30px 0; }
+}
+@media (min-width: 1440px) {
+  .perk { grid-template-columns: 88px minmax(0, 5fr) minmax(0, 6fr); gap: 56px; }
 }
 .perk:last-child { border-bottom: 1px solid rgba(255, 255, 255, 0.09); }
 .perk__n { font-size: 12px; color: var(--green); font-variation-settings: 'wght' 700; font-variant-numeric: tabular-nums; letter-spacing: 0.06em; }
@@ -690,6 +696,9 @@
   margin-bottom: clamp(20px, 3.5vw, 36px);
 }
 .shead__meta {
+  /* цифровая сводка — приём десктопной вёрстки: на узком экране она
+     переносится на вторую строку и начинает драться с номером трека */
+  display: none;
   margin: 0;
   font-size: 11px;
   letter-spacing: 0.12em;
@@ -699,3 +708,4 @@
   text-align: right;
 }
 .shead__lead { margin-top: clamp(18px, 2.6vw, 28px); max-width: 52ch; }
+@media (min-width: 640px) { .shead__meta { display: block; } }

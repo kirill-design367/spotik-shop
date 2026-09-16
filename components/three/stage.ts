@@ -73,23 +73,54 @@ type Built = {
 /**
  * Кадрирование под известный бокс.
  *
- * Слот на мобильном 16:9, на десктопе бывает 1:1 — если ставить камеру
- * на фиксированное расстояние, на узком слоте объект вылезет за края,
- * а на широком повиснет в пустоте. Поэтому расстояние считается от радиуса
- * сцены и от МЕНЬШЕГО из двух углов обзора: вертикального и горизонтального.
+ * Слот на мобильном 16:9, на десктопе 5:4 — если ставить камеру на
+ * фиксированное расстояние, на узком слоте объект вылезет за края,
+ * а на широком повиснет в пустоте.
+ *
+ * Считаем НЕ по описанной сфере, а по восьми углам бокса, спроецированным
+ * в систему координат камеры. Сфера вокруг повёрнутой плоской пластины
+ * почти вдвое больше самой пластины, и подгонка по ней оставляет половину
+ * слота пустой — при первом заходе так и вышло.
  */
+const CORNERS = Array.from({ length: 8 }, () => new THREE.Vector3());
+
 function fitCamera(camera: THREE.PerspectiveCamera, focus: THREE.Object3D, margin: number) {
   const box = new THREE.Box3().setFromObject(focus);
-  const sphere = box.getBoundingSphere(new THREE.Sphere());
-  const r = sphere.radius * margin;
+  const center = box.getCenter(new THREE.Vector3());
+  const dir = camera.position.clone().sub(center).normalize();
+  if (!Number.isFinite(dir.x) || dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
+
+  // базис камеры: смотрим из dir на center
+  const forward = dir.clone().negate();
+  const up = new THREE.Vector3(0, 1, 0);
+  const right = new THREE.Vector3().crossVectors(forward, up).normalize();
+  if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
+  up.crossVectors(right, forward).normalize();
+
+  let i = 0;
+  for (const x of [box.min.x, box.max.x])
+    for (const y of [box.min.y, box.max.y])
+      for (const z of [box.min.z, box.max.z]) CORNERS[i++].set(x, y, z).sub(center);
+
   const vFov = (camera.fov * Math.PI) / 180;
-  const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
-  const dist = r / Math.sin(Math.min(vFov, hFov) / 2);
-  const dir = camera.position.clone().sub(sphere.center).normalize();
-  camera.position.copy(sphere.center).addScaledVector(dir, dist);
-  camera.near = Math.max(0.01, dist - r * 2);
-  camera.far = dist + r * 3;
-  camera.lookAt(sphere.center);
+  const tanV = Math.tan(vFov / 2);
+  const tanH = tanV * camera.aspect;
+
+  // для каждого угла — на каком расстоянии он ещё помещается в кадр
+  let dist = 0.001;
+  let depth = 0;
+  for (const c of CORNERS) {
+    const cx = Math.abs(c.dot(right)) * margin;
+    const cy = Math.abs(c.dot(up)) * margin;
+    const cz = c.dot(forward); // вдоль взгляда: ближе к камере — больше
+    dist = Math.max(dist, cx / tanH + cz, cy / tanV + cz);
+    depth = Math.max(depth, Math.abs(cz));
+  }
+
+  camera.position.copy(center).addScaledVector(dir, dist);
+  camera.near = Math.max(0.01, dist - depth * 2);
+  camera.far = dist + depth * 3;
+  camera.lookAt(center);
   camera.updateProjectionMatrix();
 }
 
@@ -142,7 +173,7 @@ function buildCard(seed: number): Built {
     scene,
     camera,
     focus: group,
-    margin: 1.12,
+    margin: 1.06,
     dispose: () => {
       mesh.dispose();
       geo.dispose();
@@ -194,7 +225,7 @@ function buildGift(): Built {
     scene,
     camera,
     focus: group,
-    margin: 1.18,
+    margin: 1.08,
     dispose: () => {
       bars.dispose();
       plate.dispose();

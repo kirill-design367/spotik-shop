@@ -17,11 +17,14 @@
  *       высота чернил = толщина ГОРИЗОНТАЛЬНОГО штриха.
  */
 import { launch } from './browser.mjs';
+import { serveOut } from './serve-out.mjs';
 import { PNG } from 'pngjs';
 import { readFileSync } from 'node:fs';
 
 const font = readFileSync('public/fonts/spotik-wordmark.woff2').toString('base64');
-const URL = process.env.SHOT_URL || 'http://localhost:3000/';
+// Меряем ту же выдачу, что уходит в публикацию, а не сервер разработки.
+const site = await serveOut(4188, { gzip: false });
+const URL = process.env.SHOT_URL || site.url;
 
 const browser = await launch();
 
@@ -147,3 +150,4 @@ console.log(
     `вылет ${(o.width / o.vw).toFixed(3)} → ${(t.width / t.vw).toFixed(3)}, обрезка сохраняется`,
 );
 await browser.close();
+site.close();
