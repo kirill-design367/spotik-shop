@@ -8,7 +8,6 @@ const config: Config = {
         green: '#1DB954',
         ink: '#121212',
         surface: '#212121',
-        line: '#2E2E2E',
         mid: '#535353',
         dim: '#B3B3B3',
       },

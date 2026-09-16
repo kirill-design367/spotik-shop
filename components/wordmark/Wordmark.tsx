@@ -155,15 +155,18 @@ export default function Wordmark({ mode, sectionId, reserveSelector, reserveGap 
       start();
     }
 
-    const offScroll = onScrollProgress(sectionId, mode, (p) => {
-      progress = p;
-      request();
-    });
-
-    // При «уменьшить движение» слово живёт в спокойном состоянии и не дёргается.
-    if (prefersReducedMotion()) {
-      progress = mode === 'hero' ? 0 : 1;
-    }
+    // При «уменьшить движение» слово стоит в раскрытом состоянии и не
+    // реагирует на скролл. Раньше прогресс просто выставлялся числом,
+    // а подписка на скролл тут же его перезатирала — то есть учёт настройки
+    // существовал только на бумаге. Теперь подписки просто нет.
+    const reduced = prefersReducedMotion();
+    if (reduced) progress = mode === 'hero' ? 0 : 1;
+    const offScroll = reduced
+      ? () => {}
+      : onScrollProgress(sectionId, mode, (p) => {
+          progress = p;
+          request();
+        });
 
     return () => {
       disposed = true;

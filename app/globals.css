@@ -7,7 +7,9 @@
   --green: #1db954;
   --ink: #121212;
   --surface: #212121;
-  --line: #2e2e2e;
+  /* Не седьмой цвет палитры, а сама палитра с прозрачностью: сплошной
+     серый разделитель на #121212 даёт 1.16:1 и всё равно не читается. */
+  --hair: rgba(255, 255, 255, 0.09);
   --mid: #535353;
   --dim: #b3b3b3;
   /* #535353 даёт 2.4:1 и не проходит нигде, где текст несёт смысл.
@@ -93,7 +95,7 @@ html.lenis, html.lenis body { height: auto; }
   padding-inline: var(--gutter);
 }
 
-.rule { height: 1px; background: var(--line); border: 0; margin: 0; }
+.rule { height: 1px; background: var(--hair); border: 0; margin: 0; }
 
 .eyebrow {
   font-size: 11px;

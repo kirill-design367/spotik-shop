@@ -235,7 +235,7 @@
     background var(--t-fast) var(--ease);
   -webkit-tap-highlight-color: transparent;
 }
-.btn:hover { transform: translateY(-1px); background: #21d160; }
+.btn:hover { transform: translateY(-1px); background: color-mix(in srgb, var(--green) 88%, #fff); }
 .btn:active { transform: translateY(0); }
 
 .btn--wide { width: 100%; }
@@ -244,7 +244,7 @@
 .btn--ghost {
   --btn-bg: transparent;
   --btn-fg: var(--white);
-  box-shadow: inset 0 0 0 1px var(--line);
+  box-shadow: inset 0 0 0 1px var(--hair);
 }
 .btn--ghost:hover { --btn-bg: var(--surface); box-shadow: inset 0 0 0 1px var(--mid); }
 
@@ -276,7 +276,7 @@
   top: 96px;
   bottom: 96px;
   width: 1px;
-  background: var(--line);
+  background: var(--hair);
   transform: translateX(-50%);
 }
 .playhead__fill {
@@ -307,7 +307,7 @@
   position: relative;
   padding-top: clamp(72px, 14vw, 160px);
   padding-bottom: clamp(72px, 14vw, 160px);
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--hair);
 }
 
 .section__num {
@@ -553,7 +553,8 @@
   inset: 0;
   display: grid;
   place-items: center;
-  color: var(--mid);
+  /* не --mid: он даёт 2.4:1 и годится только для декоративных линий */
+  color: var(--dim-2);
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -709,3 +710,15 @@
 }
 .shead__lead { margin-top: clamp(18px, 2.6vw, 28px); max-width: 52ch; }
 @media (min-width: 640px) { .shead__meta { display: block; } }
+
+/* ═══ УМЕНЬШЕННОЕ ДВИЖЕНИЕ ═══
+   При «уменьшить движение» приём стоит в раскрытом состоянии, и держать
+   ради него двойную высоту секции незачем: получился бы экран мёртвой
+   прокрутки. Секции схлопываются до одного экрана. */
+@media (prefers-reduced-motion: reduce) {
+  .hero { height: 100svh; }
+  .footer { height: 100svh; }
+  .hero__stage,
+  .footer__stage { position: static; }
+}
+
