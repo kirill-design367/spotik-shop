@@ -15,7 +15,7 @@ export default function Footer() {
       <div className="footer__stage">
       <div className="footer__body shell">
         <div style={{ gridColumn: 'span 5' }}>
-          <p className="eyebrow" style={{ color: 'rgba(18,18,18,.55)' }}>
+          <p className="eyebrow" style={{ color: 'var(--on-green-dim)', opacity: 1 }}>
             Реквизиты
           </p>
           <dl className="footer__req">
@@ -29,7 +29,7 @@ export default function Footer() {
         </div>
 
         <div style={{ gridColumn: 'span 4' }}>
-          <p className="eyebrow" style={{ color: 'rgba(18,18,18,.55)' }}>
+          <p className="eyebrow" style={{ color: 'var(--on-green-dim)', opacity: 1 }}>
             Связь
           </p>
           <dl className="footer__req">
@@ -54,7 +54,7 @@ export default function Footer() {
         </div>
 
         <div style={{ gridColumn: 'span 3' }}>
-          <p className="eyebrow" style={{ color: 'rgba(18,18,18,.55)' }}>
+          <p className="eyebrow" style={{ color: 'var(--on-green-dim)', opacity: 1 }}>
             Оговорка
           </p>
           <p className="footer__req" style={{ maxWidth: '28ch' }}>

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './fonts.css';
 import FontAxisDemo from '@/components/fonts/FontAxisDemo';
+import { candidateFontFaces, BASE_PATH } from '@/lib/fontface';
 
 export const metadata: Metadata = {
   title: 'Шрифты — Spotik Shop',
@@ -99,6 +100,7 @@ const ARCHIVO_NOTE =
 export default function FontsPage() {
   return (
     <main className="fp">
+      <style dangerouslySetInnerHTML={{ __html: candidateFontFaces(BASE_PATH) }} />
       <div className="shell">
         <header className="fp__head">
           <p className="eyebrow">Spotik Shop · служебная страница</p>

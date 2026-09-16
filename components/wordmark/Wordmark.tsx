@@ -132,12 +132,14 @@ export default function Wordmark({ mode, sectionId, reserveSelector, reserveGap 
       paint();
     };
 
-    // Шрифт грузится с font-display: block, поэтому калибруем строго после
-    // того, как он действительно готов — иначе замерим fallback.
+    // Калибруем строго после того, как готов ИМЕННО шрифт вордмарка.
+    // document.fonts.ready ждал бы и текстовые сабсеты тоже, а они к приёму
+    // отношения не имеют и только оттягивают появление главного элемента.
     let ro: ResizeObserver | undefined;
     const start = () => {
       if (disposed) return;
       recalibrate();
+      wrap.dataset.ready = '1';
       let lastW = window.innerWidth;
       ro = new ResizeObserver(() => {
         if (window.innerWidth === lastW) return; // игнорируем схлопывание адресной строки на мобильном
@@ -147,8 +149,11 @@ export default function Wordmark({ mode, sectionId, reserveSelector, reserveGap 
       ro.observe(document.documentElement);
     };
 
-    if (document.fonts?.status === 'loaded') start();
-    else document.fonts?.ready.then(start).catch(start);
+    if (document.fonts?.load) {
+      document.fonts.load("1000px 'Spotik Wordmark'", WORD).then(start).catch(start);
+    } else {
+      start();
+    }
 
     const offScroll = onScrollProgress(sectionId, mode, (p) => {
       progress = p;

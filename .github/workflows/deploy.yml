@@ -46,9 +46,19 @@ jobs:
           test -f out/fonts/spotik-wordmark.woff2
           test -f out/fonts/golos-cyrillic.woff2
           test -d out/_next/static
+          test -f out/fonts/index.html
           grep -q '/spotik-shop/_next/static' out/index.html
-          grep -q '/spotik-shop/fonts/spotik-wordmark.woff2' out/index.html
+          grep -q "/spotik-shop/fonts/spotik-wordmark.woff2" out/index.html
           echo "выдача собрана, basePath проставлен"
+
+      # Открывает собранную выдачу по боевому пути /spotik-shop/ в настоящем
+      # браузере: 404 на ассетах, ошибки JS, незагруженные шрифты и
+      # горизонтальный скролл ловятся только так. Проверка с корня такую
+      # поломку не воспроизводит.
+      - name: Открыть выдачу в браузере по боевому пути
+        run: |
+          npx playwright install --with-deps chromium
+          node scripts/verify-export.mjs
 
       - uses: actions/upload-pages-artifact@v3
         with:

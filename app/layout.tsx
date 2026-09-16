@@ -2,8 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import './components.css';
 import ScrollProvider from '@/components/ScrollProvider';
-
-const BASE = process.env.NODE_ENV === 'production' ? '/spotik-shop' : '';
+import { siteFontFaces, BASE_PATH as BASE } from '@/lib/fontface';
 
 export const metadata: Metadata = {
   title: 'Spotik Shop — доступ к Spotify Premium из России',
@@ -32,6 +31,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ru">
       <head>
+        {/* Объявления шрифтов идут инлайном: в CSS нельзя записать путь,
+            который переживёт basePath. Подробности в lib/fontface.ts. */}
+        <style dangerouslySetInnerHTML={{ __html: siteFontFaces(BASE) }} />
         {/* Вордмарк — критический ресурс первого экрана: 13 КБ, все 13 осей */}
         <link
           rel="preload"

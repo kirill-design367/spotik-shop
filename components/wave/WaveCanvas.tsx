@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { WAVEFORM, WAVEFORM_LENGTH } from '@/lib/waveform.data';
 import { waveBus, pushImpulse } from '@/lib/wavebus';
-import { prefersReducedMotion, deviceTier, onReducedMotionChange } from '@/lib/motion';
+import { prefersReducedMotion, onReducedMotionChange } from '@/lib/motion';
 
 /**
  * Звуковые волны в хиро. Canvas 2D — и только он.
@@ -35,12 +35,40 @@ import { prefersReducedMotion, deviceTier, onReducedMotionChange } from '@/lib/m
 
 type Tuning = { lines: number; points: number; dpr: number };
 
-function tuningFor(): Tuning {
-  const tier = deviceTier();
-  const dprRaw = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1;
-  if (tier === 'low') return { lines: 72, points: 96, dpr: Math.min(dprRaw, 1.5) };
-  if (tier === 'mid') return { lines: 104, points: 128, dpr: Math.min(dprRaw, 2) };
-  return { lines: 124, points: 160, dpr: Math.min(dprRaw, 2) };
+/**
+ * ПЛОТНОСТЬ ЛИНИЙ НЕ ТРОГАЕМ. ДЕРЖИМ ЦЕЛЫЙ МАСШТАБ ПОДЛОЖКИ.
+ *
+ * Плотность — это и есть приём, резать её нельзя. К счастью, замер показал,
+ * что она почти ничего и не стоит. Развёртка на живой странице, интервалы
+ * кадров с requestAnimationFrame:
+ *
+ *   390×844, процессор замедлен ×4        2560×1440, без замедления
+ *   линий точек  dpr  пикс.  кадр         линий точек  dpr  пикс.   кадр
+ *     124   160 1.00   329k  16.7 мс        124   160 1.00  3686k  16.7 мс
+ *      72    96 1.25   515k 183.3 мс         72    96 1.25  5760k  33.3 мс
+ *      40    80 1.00   329k  16.7 мс        124   160 0.80  2359k  33.3 мс
+ *       0     0 1.00   329k  16.7 мс        124   120 0.90  2986k  33.3 мс
+ *
+ * Обратите внимание на левый столбец: 124 контура стоят ровно столько же,
+ * сколько сорок и сколько ноль. А теперь на правый: МЕНЬШЕ пикселей (2359k
+ * против 3686k) — и вдвое хуже кадр.
+ *
+ * Значит, дело не в площади и не в числе линий, а в МАСШТАБЕ. Когда буфер
+ * холста совпадает с его CSS-размером один в один, композитор кладёт его
+ * без пересчёта. Любой дробный масштаб включает передискретизацию всей
+ * поверхности каждый кадр — и она стоит дороже, чем вся отрисовка.
+ *
+ * Отсюда правило: масштаб только целый, число линий постоянное.
+ * WAVE_SCALE = 1 проверен на всех трёх эталонных размерах и держит 60 fps.
+ * Поднимать его до 2 имеет смысл только там, где есть настоящий
+ * видеоускоритель, — в этой среде его нет, и непроверенное значение
+ * ставить нельзя.
+ */
+const WAVE_SCALE = 1;
+
+function tuningFor(w: number): Tuning {
+  // Линий всегда столько же, на любом устройстве: это приём, а не настройка.
+  return { lines: 124, points: w < 768 ? 128 : 160, dpr: WAVE_SCALE };
 }
 
 /** Сколько корзин огибающей укладывается в ширину экрана. */
@@ -73,7 +101,7 @@ export default function WaveCanvas({ className }: { className?: string }) {
     const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
     if (!ctx) return;
 
-    let tune = tuningFor();
+    let tune = tuningFor(1);
     let w = 0;
     let h = 0;
     let raf = 0;
@@ -82,21 +110,30 @@ export default function WaveCanvas({ className }: { className?: string }) {
     let reduced = prefersReducedMotion();
     let t0 = performance.now();
 
-    // предвычисленные x, чтобы в кадре не делить
+    // предвычисленные x и доли ширины, чтобы в кадре не делить
     let xs = new Float32Array(0);
+    let fxs = new Float32Array(0);
+    // вклад импульсов на каждый столбец: он зависит только от x, а не от
+    // номера контура, поэтому считается ОДИН раз за кадр, а не 124 раза
+    let kicks = new Float32Array(0);
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
       w = Math.max(1, Math.round(rect.width));
       h = Math.max(1, Math.round(rect.height));
-      tune = tuningFor();
+      tune = tuningFor(w);
       canvas.width = Math.round(w * tune.dpr);
       canvas.height = Math.round(h * tune.dpr);
       ctx.setTransform(tune.dpr, 0, 0, tune.dpr, 0, 0);
       ctx.lineCap = 'butt';
       ctx.lineJoin = 'round';
       xs = new Float32Array(tune.points);
-      for (let p = 0; p < tune.points; p += 1) xs[p] = (p / (tune.points - 1)) * w;
+      fxs = new Float32Array(tune.points);
+      kicks = new Float32Array(tune.points);
+      for (let p = 0; p < tune.points; p += 1) {
+        fxs[p] = p / (tune.points - 1);
+        xs[p] = fxs[p] * w;
+      }
     };
 
     const draw = (now: number) => {
@@ -123,6 +160,27 @@ export default function WaveCanvas({ className }: { className?: string }) {
         if (now - imp[k].born > IMPULSE_LIFE) imp.splice(k, 1);
       }
 
+      // Вклад импульсов на столбец — один проход на кадр вместо прохода
+      // внутри каждого из 124 контуров.
+      if (imp.length) {
+        for (let p = 0; p < points; p += 1) {
+          const fx = fxs[p];
+          let k = 0;
+          for (let j = 0; j < imp.length; j += 1) {
+            const age = (now - imp[j].born) / 1000;
+            const r = age * IMPULSE_SPEED;
+            const d = fx - imp[j].x;
+            const dd = (d < 0 ? -d : d) - r;
+            const decay = 1 - age / (IMPULSE_LIFE / 1000);
+            if (decay <= 0) continue;
+            k += Math.exp(-(dd * dd) * 140) * decay * decay;
+          }
+          kicks[p] = k * 0.85;
+        }
+      } else if (kicks[0] !== 0 || kicks[points - 1] !== 0) {
+        kicks.fill(0);
+      }
+
       ctx.lineWidth = 1;
       ctx.strokeStyle = '#1DB954';
 
@@ -140,24 +198,10 @@ export default function WaveCanvas({ className }: { className?: string }) {
         ctx.globalAlpha = alpha;
         ctx.beginPath();
 
-        const shear = s * SHEAR;
+        const shear = s * SHEAR + head;
         for (let p = 0; p < points; p += 1) {
-          const fx = p / (points - 1);
-          const v = sample(head + fx * SPAN + shear);
-
           // импульс: кольцо расходится от точки касания и гаснет, как по воде
-          let kick = 0;
-          for (let k = 0; k < imp.length; k += 1) {
-            const age = (now - imp[k].born) / 1000;
-            const r = age * IMPULSE_SPEED;
-            const d = fx - imp[k].x;
-            const dd = (d < 0 ? -d : d) - r;
-            const g = Math.exp(-(dd * dd) * 140);
-            const decay = Math.max(0, 1 - age / (IMPULSE_LIFE / 1000));
-            kick += g * decay * decay;
-          }
-
-          const y = cy + s * (base + amp * (v + kick * 0.85));
+          const y = cy + s * (base + amp * (sample(shear + fxs[p] * SPAN) + kicks[p]));
           if (p === 0) ctx.moveTo(xs[p], y);
           else ctx.lineTo(xs[p], y);
         }

@@ -27,10 +27,18 @@
   font-family: var(--font-wordmark);
   font-synthesis: none;
   line-height: 1;
-  font-size: 1px; /* до калибровки — чтобы не мигнуть гигантским fallback */
+  font-size: 1px;
+  /* До калибровки слово скрыто. Дело не в эстетике: если показать его
+     кеглем по умолчанию, а потом выставить настоящий, браузер засчитает
+     это как сдвиг макета — на десктопе это давало CLS 0.42. Элемент,
+     который был visibility: hidden, в сдвиг не попадает вовсе. */
+  visibility: hidden;
   will-change: font-size, transform;
   backface-visibility: hidden;
+  transition: opacity 220ms var(--ease);
+  opacity: 0;
 }
+.wm[data-ready='1'] .wm__text { visibility: visible; opacity: 1; }
 
 /* Верхняя скобка: зелёный на почти чёрном */
 .wm--hero {
@@ -71,6 +79,8 @@
   isolation: isolate;
 }
 
+/* Высота и ширина заданы явно: у канваса есть собственный размер,
+   и при height:auto он взял бы его вместо того, чтобы растянуться. */
 .hero__wave {
   position: absolute;
   inset: 0;
@@ -349,16 +359,17 @@
   font-variation-settings: 'wght' 480;
 }
 .footer__req dt {
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   font-variation-settings: 'wght' 700;
-  opacity: 0.55;
-  margin-top: 16px;
+  /* без прозрачности: на зелёном она роняет контраст ниже нормы */
+  color: var(--on-green-dim);
+  margin-top: 18px;
 }
 .footer__req dt:first-child { margin-top: 0; }
 .footer__req dd { margin: 2px 0 0; }
-.footer__req a { color: inherit; text-decoration: none; border-bottom: 1px solid rgba(18, 18, 18, 0.3); }
+.footer__req a { color: inherit; text-decoration: none; border-bottom: 1px solid rgba(18, 18, 18, 0.45); }
 .footer__req a:hover { border-bottom-color: currentColor; }
 
 .footer__spacer { flex: 1 1 auto; min-height: var(--wm-cap, 120px); }

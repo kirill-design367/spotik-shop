@@ -2,50 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ------------------------------------------------------------------ шрифты
-   Две гарнитуры с разными ролями, и они намеренно разные.
-
-   ПРИЁМ — Roboto Flex. Сабсет ровно из шести литер S P O T I K, но со ВСЕМИ
-   13 осями: на них живёт главный механизм страницы. 13 КБ.
-
-   ГОЛОС — Golos Text. Roboto Flex несёт кириллицу адаптированную, а Golos
-   рисовался от кириллицы: шире строчная, спокойнее Ж Ф Щ, ровнее ритм
-   в абзаце. Весь русский текст набран им. Оси срезаны до wght —
-   абзацам тринадцать осей не нужны.
-
-   Каждая гарнитура разложена по unicode-range: браузер тянет только то,
-   что реально встретил в тексте.                                          */
-@font-face {
-  font-family: 'Spotik Wordmark';
-  src: url('/fonts/spotik-wordmark.woff2') format('woff2-variations');
-  font-weight: 100 1000;
-  font-stretch: 25% 151%;
-  font-display: block; /* вордмарк не имеет права мигнуть подменой */
-  unicode-range: U+49, U+4B, U+4F, U+50, U+53, U+54;
-}
-
-@font-face {
-  font-family: 'Spotik Text';
-  src: url('/fonts/golos-cyrillic.woff2') format('woff2-variations');
-  font-weight: 400 900;
-  font-display: swap;
-  unicode-range: U+0400-045F, U+2116;
-}
-@font-face {
-  font-family: 'Spotik Text';
-  src: url('/fonts/golos-latin.woff2') format('woff2-variations');
-  font-weight: 400 900;
-  font-display: swap;
-  unicode-range: U+0020-00FF, U+2013-2014, U+2018-201E, U+2022, U+2026;
-}
-@font-face {
-  font-family: 'Spotik Text';
-  src: url('/fonts/golos-symbols.woff2') format('woff2-variations');
-  font-weight: 400 900;
-  font-display: swap;
-  unicode-range: U+20BD;
-}
-
 /* ------------------------------------------------------------------ токены */
 :root {
   --green: #1db954;
@@ -57,6 +13,10 @@
   /* #535353 даёт 2.4:1 и не проходит нигде, где текст несёт смысл.
      #8e8e8e — 4.9:1 на #212121: минимум для вторичной подписи. */
   --dim-2: #8e8e8e;
+  /* На сплошном зелёном #1DB954 полупрозрачный чёрный давал 3.07:1
+     и не проходил. Сплошной #121212 даёт 7.24:1; иерархия на зелёном
+     строится кеглем и насыщенностью, а не прозрачностью. */
+  --on-green-dim: #121212;
   --white: #ffffff;
 
   --font-wordmark: 'Spotik Wordmark', 'Spotik Text', system-ui, sans-serif;
