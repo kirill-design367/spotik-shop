@@ -175,9 +175,9 @@ export default function WaveCanvas({ className }: { className?: string }) {
             const dd = (d < 0 ? -d : d) - r;
             const decay = 1 - age / (IMPULSE_LIFE / 1000);
             if (decay <= 0) continue;
-            k += Math.exp(-(dd * dd) * 140) * decay * decay;
+            k += Math.exp(-(dd * dd) * 190) * decay * decay;
           }
-          kicks[p] = k * 0.85;
+          kicks[p] = k * 1.1;
         }
       } else if (kicks[0] !== 0 || kicks[points - 1] !== 0) {
         kicks.fill(0);
