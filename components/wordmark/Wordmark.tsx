@@ -4,12 +4,14 @@ import { useEffect, useRef } from 'react';
 import {
   buildPaths,
   bottomAt,
+  footRise,
   VIEW_BOX,
   WM_BOX_HEIGHT,
   WM_VIEW_HEIGHT,
   WM_OVERSHOOT,
   WM_INSET,
   VIEW_OVER_INK,
+  PAD_OVER_INK,
   LAYER_WIDTH_VW,
 } from '@/lib/wordmark';
 import { onScrollProgress } from '@/lib/scroll';
@@ -19,6 +21,12 @@ type Props = {
   mode: 'hero' | 'footer';
   /** Элемент, чей проход мимо вьюпорта задаёт прогресс. */
   sectionId: string;
+  /**
+   * Блок, который едет за нижней кромкой чернил. Сдвиг считается из той же
+   * величины и в том же кадре, что и форма, поэтому отстать или обогнать
+   * слово он не может физически.
+   */
+  followSelector?: string;
 };
 
 const LETTERS = ['S', 'P', 'O', 'T', 'I', 'K'];
@@ -53,7 +61,7 @@ let entrancePlayed = false;
  * высоты хиро. Поэтому верх чернил — это низ навигации плюс поле, и никакой
  * JS для этого не нужен: ни чтения, ни записи, ни сдвига макета.
  */
-export default function Wordmark({ mode, sectionId }: Props) {
+export default function Wordmark({ mode, sectionId, followSelector }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const pathsRef = useRef<(SVGPathElement | null)[]>([]);
@@ -64,8 +72,14 @@ export default function Wordmark({ mode, sectionId }: Props) {
     const paths = pathsRef.current;
     if (!wrap || !svg || paths.length !== LETTERS.length) return;
 
+    const follow = followSelector
+      ? wrap.parentElement?.querySelector<HTMLElement>(followSelector) ?? null
+      : null;
+    const stage = wrap.parentElement;
+
     let progress = mode === 'hero' ? 0 : 1;
     let painted = NaN;
+    let opened = '';
     let disposed = false;
 
     const paint = () => {
@@ -83,6 +97,22 @@ export default function Wordmark({ mode, sectionId }: Props) {
         // Доля от собственной высоты слоя, поэтому пиксели знать не нужно.
         const shift = ((WM_BOX_HEIGHT - bottomAt(t)) / WM_VIEW_HEIGHT) * 100;
         svg.style.transform = `translate3d(0,${shift.toFixed(3)}%,0)`;
+
+        // Мелкий текст под словом выезжает только когда слово разошлось
+        // до конца. Атрибут пишем лишь на переходе, а не каждый кадр.
+        const open = t <= 0.002 ? '1' : '0';
+        if (stage && open !== opened) {
+          opened = open;
+          stage.dataset.open = open;
+        }
+      }
+
+      if (follow) {
+        // Тексты прицеплены к нижней кромке чернил. Высота слоя известна
+        // CSS как --wm-h, поэтому сдвиг выражается долей от неё, и читать
+        // геометрию из JS по-прежнему не нужно ни разу.
+        follow.style.transform =
+          `translate3d(0,calc(var(--wm-h) * ${footRise(t).toFixed(5)}),0)`;
       }
     };
 
@@ -117,7 +147,7 @@ export default function Wordmark({ mode, sectionId }: Props) {
       off();
       mq.removeEventListener('change', sync);
     };
-  }, [mode, sectionId]);
+  }, [mode, sectionId, followSelector]);
 
   /**
    * Вход букв. Сама анимация — на CSS, поэтому она играет и без JS,
@@ -170,7 +200,9 @@ export default function Wordmark({ mode, sectionId }: Props) {
     };
   }, [mode]);
 
-  const initial = buildPaths(mode === 'hero' ? 0 : 1);
+  // Оба слоя рисуются в раскрытом состоянии: это то, что человек видит
+  // в покое, и то, что останется, если скрипт не доедет.
+  const initial = buildPaths(0);
 
   return (
     <div
@@ -178,7 +210,16 @@ export default function Wordmark({ mode, sectionId }: Props) {
       className={`wm wm--${mode}`}
       // aria-hidden: слово дублирует заголовок страницы, скринридеру оно лишнее
       aria-hidden="true"
-      style={{ height: `calc(var(--wm-h) * ${VIEW_OVER_INK.toFixed(5)})` }}
+      // В хиро слой высотой во всю рамку: поле сверху нужно подскоку букв.
+      // В футере входа нет, и слово обязано идти вровень с верхом блока,
+      // поэтому слой ровно по чернилам, а поле уводится отрицательным
+      // полем самого SVG.
+      style={{
+        height:
+          mode === 'hero'
+            ? `calc(var(--wm-h) * ${VIEW_OVER_INK.toFixed(5)})`
+            : 'var(--wm-h)',
+      }}
     >
       <svg
         ref={svgRef}
@@ -189,6 +230,12 @@ export default function Wordmark({ mode, sectionId }: Props) {
         style={{
           width: `${LAYER_WIDTH_VW * 100}vw`,
           marginLeft: `${WM_INSET * 100}vw`,
+          ...(mode === 'footer'
+            ? {
+                height: `calc(var(--wm-h) * ${VIEW_OVER_INK.toFixed(5)})`,
+                marginTop: `calc(var(--wm-h) * ${(-PAD_OVER_INK).toFixed(5)})`,
+              }
+            : null),
           // величины входа — в единицах контура, их же понимает transform
           // внутри SVG, поэтому перелёт задан ровно в долях высоты прописной
           ['--wm-drop' as string]: `${WM_BOX_HEIGHT.toFixed(3)}px`,

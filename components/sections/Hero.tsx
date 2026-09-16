@@ -3,6 +3,7 @@
 import Wordmark from '@/components/wordmark/Wordmark';
 import Nav from '@/components/chrome/Nav';
 import { scrollToId } from '@/lib/scroll';
+import { MORPH_TRAVEL } from '@/lib/wordmark';
 
 /**
  * Хиро.
@@ -22,13 +23,19 @@ import { scrollToId } from '@/lib/scroll';
  */
 export default function Hero() {
   return (
-    <section id="hero" className="hero">
+    <section
+      id="hero"
+      className="hero"
+      // Ход морфа и высота секции — одна и та же величина, поэтому она
+      // приходит сюда из кода, а не дублируется числом в CSS.
+      style={{ ['--wm-travel' as string]: `${MORPH_TRAVEL * 100}svh` }}
+    >
       <div className="hero__stage">
         <Nav />
 
         {/* Верхняя скобка: SPOTIK во всю ширину экрана, с малым отступом
             от краёв. Верх слова неподвижен, меняется только низ. */}
-        <Wordmark mode="hero" sectionId="hero" />
+        <Wordmark mode="hero" sectionId="hero" followSelector=".hero__foot" />
 
         <div className="hero__foot shell">
           <h1 className="hero__kicker">

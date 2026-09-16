@@ -159,10 +159,13 @@ await page.evaluate(() => document.fonts.ready);
 await page.waitForTimeout(600);
 // слово лежит в шести группах (вход двигает литеры по одной), поэтому
 // «строка контуров слова» — это склейка шести путей в их же порядке
+// Литеры читаются ПООТДЕЛЬНО. Раньше слово склеивалось в одну строку
+// и резалось на литеры по пустым столбцам растра, но после оптического
+// выравнивания габариты O и T перекрываются — по белому их уже не разделить,
+// хотя просвет между чернилами на месте. Шесть путей и так лежат врозь.
 const read = () => page.evaluate(() =>
   [...document.querySelectorAll('.wm--hero .wm__letter path')]
-    .map((el) => el.getAttribute('d'))
-    .join(''));
+    .map((el) => el.getAttribute('d')));
 const dOpen = await read();
 await page.evaluate(() => window.scrollTo(0, window.innerHeight * 1.2));
 await page.waitForTimeout(1500);
@@ -174,16 +177,19 @@ const viewBox = await page.evaluate(() => document.querySelector('.wm--hero .wm_
 await page.close();
 
 console.log('Строки контуров сняты с живой страницы (хиро, атрибут d).');
-console.log(`  прогресс 0   длина d ${dOpen.length}`);
-console.log(`  прогресс 1   длина d ${dTight.length}   ${dTight === dTight2 ? 'дальше не меняется — упор достигнут' : 'ВНИМАНИЕ: ещё меняется'}`);
+const joinD = (a) => a.join('');
+const sameTight = joinD(dTight) === joinD(dTight2);
+console.log(`  прогресс 0   литер ${dOpen.length}, длина d ${joinD(dOpen).length}`);
+console.log(`  прогресс 1   литер ${dTight.length}, длина d ${joinD(dTight).length}   ` +
+  `${sameTight ? 'дальше не меняется — упор достигнут' : 'ВНИМАНИЕ: ещё меняется'}`);
 const seq = (d) => d.replace(/[^MLQZ]/g, '');
 const nums = (d) => d.match(/-?\d[\d.]*/g).length;
-console.log(`  последовательность команд ${seq(dOpen) === seq(dTight) ? 'идентична' : 'РАЗОШЛАСЬ'}, ` +
-  `чисел ${nums(dOpen)} и ${nums(dTight)}`);
-if (seq(dOpen) !== seq(dTight) || nums(dOpen) !== nums(dTight)) fail('топология разошлась');
+console.log(`  последовательность команд ${seq(joinD(dOpen)) === seq(joinD(dTight)) ? 'идентична' : 'РАЗОШЛАСЬ'}, ` +
+  `чисел ${nums(joinD(dOpen))} и ${nums(joinD(dTight))}`);
+if (seq(joinD(dOpen)) !== seq(joinD(dTight)) || nums(joinD(dOpen)) !== nums(joinD(dTight))) fail('топология разошлась');
 
 const [, , vbW, vbH] = viewBox.split(/\s+/).map(Number);
-const K = 4;
+const K = 3;
 const W = Math.round(vbW * K);
 const H = Math.round(vbH * K);
 const rig = await browser.newPage({ viewport: { width: W, height: H } });
@@ -195,35 +201,43 @@ const shot = async (d) => {
   await rig.evaluate((dd) => document.getElementById('p').setAttribute('d', dd), d);
   return PNG.sync.read(await rig.screenshot());
 };
-const pa = await shot(dOpen);
-const pb = await shot(dTight);
+// по одному снимку на литеру в каждом состоянии, окно и масштаб общие
+const shotsA = [];
+const shotsB = [];
+for (let i = 0; i < dOpen.length; i += 1) {
+  shotsA.push(await shot(dOpen[i]));
+  shotsB.push(await shot(dTight[i]));
+}
+const wordA = await shot(joinD(dOpen));
+const wordB = await shot(joinD(dTight));
 await rig.close();
 await browser.close();
 server.close();
 
-const covA = [];
-const covB = [];
-for (let x = 0; x < W; x += 1) { covA.push(colInk(pa, x)); covB.push(colInk(pb, x)); }
-const gA = letterGroups(covA, Math.max(...covA));
-const gB = letterGroups(covB, Math.max(...covB));
+/** Габарит чернил литеры по столбцам: левый край и ширина. */
+function inkBox(png) {
+  let a = -1;
+  let b = -1;
+  for (let x = 0; x < png.width; x += 1) {
+    if (colInk(png, x) > 0.05) { if (a < 0) a = x; b = x; }
+  }
+  return [a, b - a + 1];
+}
 const NAMES = ['S', 'P', 'O', 'T', 'I', 'K'];
+const gA = shotsA.map(inkBox);
+const gB = shotsB.map(inkBox);
 
 console.log('\n── УСЛОВИЕ 3: ШИРИНА И ПОЛОЖЕНИЕ КАЖДОЙ ЛИТЕРЫ ────────────────');
 console.log('литера   левый край A / B      ширина A / B       расхождение, px');
 let maxDx = 0;
-if (gA.length !== 6 || gB.length !== 6) fail(`литеры не разделились: ${gA.length} и ${gB.length}`);
-else {
-  for (let i = 0; i < 6; i += 1) {
-    const wA = gA[i][1] - gA[i][0] + 1;
-    const wB = gB[i][1] - gB[i][0] + 1;
-    const d = Math.max(Math.abs(gA[i][0] - gB[i][0]), Math.abs(wA - wB));
-    maxDx = Math.max(maxDx, d);
-    console.log(`  ${NAMES[i]}    ${String(gA[i][0]).padStart(6)} /${String(gB[i][0]).padStart(6)}` +
-      `   ${String(wA).padStart(6)} /${String(wB).padStart(6)}      ${d}`);
-  }
-  console.log(`наибольшее расхождение: ${maxDx} px при масштабе ${K} px на единицу`);
-  if (maxDx > 1) fail(`литеры разъезжаются на ${maxDx} px`);
+for (let i = 0; i < NAMES.length; i += 1) {
+  const d = Math.max(Math.abs(gA[i][0] - gB[i][0]), Math.abs(gA[i][1] - gB[i][1]));
+  maxDx = Math.max(maxDx, d);
+  console.log(`  ${NAMES[i]}    ${String(gA[i][0]).padStart(6)} /${String(gB[i][0]).padStart(6)}` +
+    `   ${String(gA[i][1]).padStart(6)} /${String(gB[i][1]).padStart(6)}      ${d}`);
 }
+console.log(`наибольшее расхождение: ${maxDx} px при масштабе ${K} px на единицу`);
+if (maxDx > 1) fail(`литеры разъезжаются на ${maxDx} px`);
 
 const rows = [];
 const add = (name, a, b, tgt, hard) => {
@@ -236,45 +250,41 @@ const add = (name, a, b, tgt, hard) => {
 /** Высота прописной — литера I, прямоугольник: покрытие столбца через неё. */
 const capOf = (png, g) => {
   const xs = [];
-  for (let x = g[0] + 2; x <= g[1] - 2; x += 1) xs.push(colInk(png, x));
+  for (let x = g[0] + 2; x < g[0] + g[1] - 2; x += 1) xs.push(colInk(png, x));
   return median(xs);
 };
-add('высота прописной (I)', capOf(pa, gA[4]), capOf(pb, gB[4]), R_CAP, true);
+add('высота прописной (I)', capOf(shotsA[4], gA[4]), capOf(shotsB[4], gB[4]), R_CAP, true);
 
 /** Горизонтальный штрих — перекладина T у её левого конца. */
 const barOf = (png, g) => {
-  const span = g[1] - g[0];
   const xs = [];
-  for (let x = g[0] + Math.round(span * 0.05); x <= g[0] + Math.round(span * 0.16); x += 1)
+  for (let x = g[0] + Math.round(g[1] * 0.05); x <= g[0] + Math.round(g[1] * 0.16); x += 1)
     xs.push(colInk(png, x));
   return median(xs);
 };
-add('горизонт. штрих (перекладина T)', barOf(pa, gA[3]), barOf(pb, gB[3]), R_HOR, true);
+add('горизонт. штрих (перекладина T)', barOf(shotsA[3], gA[3]), barOf(shotsB[3], gB[3]), R_HOR, true);
 
 /**
  * Вертикальный штрих — горизонтальный срез литеры на заданной доле её высоты.
- *
  * Долю приходится выбирать под литеру: у P на середине высоты чаша ещё
- * не замкнулась и сливается со стойкой в один отрезок, у O на середине
- * два чистых штриха. Срез берётся там, где нужный штрих стоит отдельно.
+ * не замкнулась и сливается со стойкой, у O на середине два чистых штриха.
  */
 const stemOf = (png, g, frac, which) => {
-  let top = -1, bot = -1;
+  let top = -1;
+  let bot = -1;
   for (let y = 0; y < png.height; y += 1) {
-    if (rowRuns(png, y, g[0], g[1]).length) { if (top < 0) top = y; bot = y; }
+    if (rowRuns(png, y, g[0], g[0] + g[1] - 1).length) { if (top < 0) top = y; bot = y; }
   }
-  const runs = rowRuns(png, Math.round(top + (bot - top) * frac), g[0], g[1]);
+  const runs = rowRuns(png, Math.round(top + (bot - top) * frac), g[0], g[0] + g[1] - 1);
   const r = which < 0 ? runs[runs.length - 1] : runs[which];
   return r ? r[1] - r[0] + 1 : NaN;
 };
-add('вертик. штрих I', stemOf(pa, gA[4], 0.5, 0), stemOf(pb, gB[4], 0.5, 0), R_VER, false);
-add('вертик. штрих O слева', stemOf(pa, gA[2], 0.5, 0), stemOf(pb, gB[2], 0.5, 0), R_VER, false);
-add('вертик. штрих O справа', stemOf(pa, gA[2], 0.5, -1), stemOf(pb, gB[2], 0.5, -1), R_VER, false);
-add('вертик. штрих T', stemOf(pa, gA[3], 0.6, 0), stemOf(pb, gB[3], 0.6, 0), R_VER, false);
-// у P стойка стоит одна ниже чаши, поэтому срез на 0.85 высоты
-add('вертик. штрих P', stemOf(pa, gA[1], 0.85, 0), stemOf(pb, gB[1], 0.85, 0), R_VER, false);
-// у K тоже: ниже развилки диагоналей остаётся только стойка
-add('вертик. штрих K', stemOf(pa, gA[5], 0.5, 0), stemOf(pb, gB[5], 0.5, 0), R_VER, false);
+add('вертик. штрих I', stemOf(shotsA[4], gA[4], 0.5, 0), stemOf(shotsB[4], gB[4], 0.5, 0), R_VER, false);
+add('вертик. штрих O слева', stemOf(shotsA[2], gA[2], 0.5, 0), stemOf(shotsB[2], gB[2], 0.5, 0), R_VER, false);
+add('вертик. штрих O справа', stemOf(shotsA[2], gA[2], 0.5, -1), stemOf(shotsB[2], gB[2], 0.5, -1), R_VER, false);
+add('вертик. штрих T', stemOf(shotsA[3], gA[3], 0.6, 0), stemOf(shotsB[3], gB[3], 0.6, 0), R_VER, false);
+add('вертик. штрих P', stemOf(shotsA[1], gA[1], 0.85, 0), stemOf(shotsB[1], gB[1], 0.85, 0), R_VER, false);
+add('вертик. штрих K', stemOf(shotsA[5], gA[5], 0.5, 0), stemOf(shotsB[5], gB[5], 0.5, 0), R_VER, false);
 
 console.log('\n── УСЛОВИЯ 4, 5, 6: ВЕРТИКАЛЬНАЯ ГЕОМЕТРИЯ ────────────────────');
 console.log(''.padEnd(32) + 'раскрытое'.padStart(11) + 'сжатое'.padStart(11) +
@@ -288,9 +298,51 @@ for (const r of rows) {
   );
 }
 
-const ink = { left: gA[0][0], right: gA[5][1] };
-console.log(`\nширина чернил: раскрытое ${ink.right - ink.left + 1} px, ` +
-  `сжатое ${gB[5][1] - gB[0][0] + 1} px при масштабе ${K}`);
+const wA = inkBox(wordA);
+const wB = inkBox(wordB);
+console.log(`\nширина чернил слова: раскрытое ${wA[1]} px, сжатое ${wB[1]} px при масштабе ${K}`);
+if (Math.abs(wA[1] - wB[1]) > 1) fail('ширина слова разъехалась между состояниями');
+
+/** Оптические просветы: средняя ширина белого между соседями, по растру. */
+console.log('\n── ОПТИЧЕСКИЕ ПРОСВЕТЫ (по растру, средняя ширина белого) ─────');
+const profile = (png, g, side) => {
+  const out = [];
+  for (let y = 0; y < png.height; y += 1) {
+    const r = rowRuns(png, y, g[0], g[0] + g[1] - 1);
+    out.push(r.length ? (side < 0 ? r[0][0] : r[r.length - 1][1]) : null);
+  }
+  return out;
+};
+// та же глубина, что у сборки (WM_GAP_DEPTH), и в том же пространстве
+const DEPTH = 0.27 * capOf(shotsA[4], gA[4]);
+// Считаем по тем же строкам, что и сборка: по высоте ЧЕРНИЛ слова,
+// а не по всей рамке. Поле сверху пустое у обеих литер, и если его
+// учитывать, замер поедет на пустоте, которой глаз не видит.
+const inkRows = (() => {
+  let a = -1;
+  let b = -1;
+  for (let y = 0; y < wordA.height; y += 1) {
+    if (rowRuns(wordA, y, 0, wordA.width - 1).length) { if (a < 0) a = y; b = y; }
+  }
+  return [a, b];
+})();
+const meanGap = (i) => {
+  const R = profile(shotsA[i], gA[i], 1);
+  const L = profile(shotsA[i + 1], gA[i + 1], -1);
+  let sum = 0;
+  let n = 0;
+  for (let y = inkRows[0]; y <= inkRows[1]; y += 1) {
+    const r = R[y] === null ? gA[i][0] + gA[i][1] - 1 : R[y];
+    const l = L[y] === null ? gA[i + 1][0] : L[y];
+    sum += Math.min(Math.max(l - r, 0), DEPTH);
+    n += 1;
+  }
+  return sum / n;
+};
+const gaps = [];
+for (let i = 0; i < 5; i += 1) gaps.push(meanGap(i));
+console.log('  ' + gaps.map((v, i) => `${NAMES[i]}–${NAMES[i + 1]} ${(v / K).toFixed(1)}`).join('   ') +
+  `  (нормированных единиц, разброс ${((Math.max(...gaps) - Math.min(...gaps)) / K).toFixed(2)})`);
 
 writeFileSync('.shots/morph-raster.json', JSON.stringify({ partA, rows }, null, 2));
 console.log(failed ? `\nПРОВАЛ: ${failed} проверок не прошло` : '\nВсе жёсткие условия выполнены.');

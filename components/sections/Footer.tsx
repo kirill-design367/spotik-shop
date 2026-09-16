@@ -1,6 +1,7 @@
 'use client';
 
 import Wordmark from '@/components/wordmark/Wordmark';
+import { MORPH_TRAVEL } from '@/lib/wordmark';
 
 /**
  * Нижняя скобка.
@@ -15,7 +16,11 @@ import Wordmark from '@/components/wordmark/Wordmark';
  */
 export default function Footer() {
   return (
-    <footer id="footer" className="footer">
+    <footer
+      id="footer"
+      className="footer"
+      style={{ ['--wm-travel' as string]: `${MORPH_TRAVEL * 100}svh` }}
+    >
       <div className="footer__stage">
         <Wordmark mode="footer" sectionId="footer" />
 

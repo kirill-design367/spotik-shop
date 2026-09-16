@@ -79,9 +79,15 @@ CAP_HEIGHT_UNITS = 750.0
 # в долях ширины слова. Ни на одно из шести условий не влияет — задаёт
 # только, насколько слово высокое.
 CAP_RATIO = float(os.environ.get('WM_CAP_RATIO', '0.235'))
-# Добавка к межбуквенному просвету, в долях ширины слова. Ноль — родной
-# ритм Unbounded.
-TRACK = float(os.environ.get('WM_TRACK', '0')) * NORM_WIDTH
+# Глубина, дальше которой просвет между литерами перестаёт считаться.
+# Без неё пустота под перекладиной T или внутри K утопила бы замер:
+# формально там «просвет» в пол-литеры, а глаз его так не читает.
+#
+# В долях высоты прописной — но ИМЕННО ТОЙ, которую видно на экране,
+# а не шрифтовой. Слово растянуто по вертикали неравномерно, поэтому
+# шрифтовая высота прописной (750) и экранная (CAP_RATIO × 1000) — разные
+# величины, и глубина, посчитанная не в том пространстве, обрезает не там.
+GAP_DEPTH = float(os.environ.get('WM_GAP_DEPTH', '0.27'))
 
 _cache = {}
 
@@ -239,6 +245,106 @@ def bbox(segs):
     return min(xs), min(ys), max(xs), max(ys)
 
 
+# ── оптические просветы ─────────────────────────────────────────────────────
+
+def profiles(segs, y_lo, y_hi, n=320):
+    """
+    Силуэт литеры: на каждой из n горизонталей — крайняя левая и крайняя
+    правая точка чернил. Там, где чернил на этой высоте нет, стоит None.
+    """
+    polys = flatten(segs)
+    left, right = [], []
+    for k in range(n):
+        y = y_lo + (y_hi - y_lo) * (k + 0.5) / n
+        runs = runs_at(polys, y)
+        if runs:
+            left.append(runs[0][0])
+            right.append(runs[-1][1])
+        else:
+            left.append(None)
+            right.append(None)
+    return left, right
+
+
+def optical_offsets(per_letter, natural, n=320):
+    """
+    Оптическое выравнивание межбуквенных просветов.
+
+    ── ПОЧЕМУ НЕ ПО АПРОШАМ ────────────────────────────────────────────────
+    Метрический апрош шрифта даёт формально равные значения, но глаз
+    считает не расстояние между габаритами, а ПЛОЩАДЬ БЕЛОГО между
+    соседями. У круглой O эта площадь больше, чем у прямой I при том же
+    апроше, а у диагонали K — больше, чем у обеих. Поэтому пары вроде
+    O–T и I–K всегда просят ручной правки.
+
+    ── КАК СЧИТАЕТСЯ ───────────────────────────────────────────────────────
+    Просвет между соседями меряется на 320 горизонталях по всей высоте
+    чернил: расстояние от правого силуэта левой литеры до левого силуэта
+    правой. Среднее по этим замерам — и есть площадь белого, делённая
+    на высоту, то есть «средняя ширина просвета».
+
+    Две поправки, без которых замер врёт:
+      • там, где у литеры на этой высоте чернил нет (под перекладиной T,
+        в развилке K), вместо силуэта берётся край габарита. Иначе
+        «просвет» уходил бы в бесконечность;
+      • просвет обрезается глубиной GAP_DEPTH от высоты прописной.
+        Глаз не складывает всю пустоту под перекладиной в ощущение
+        разреженности — он видит ближнюю часть.
+
+    ── КАК ВЫРАВНИВАЕТСЯ ───────────────────────────────────────────────────
+    Сдвиг всех литер правее пары меняет ТОЛЬКО эту пару: соседние
+    просветы едут вместе со своими литерами. Значит один проход слева
+    направо выставляет все пять просветов в цель. Обрезка делает связь
+    нелинейной, поэтому проходов несколько, до сходимости.
+    """
+    ys = [c[1] for L in per_letter for sg in L['heavy'] for c in sg['coords']]
+    y_lo, y_hi = min(ys), max(ys)
+    # Глубина задана в ЭКРАННЫХ единицах (ширина слова = NORM_WIDTH),
+    # а считаем мы пока в шрифтовых, поэтому переводим через масштаб.
+    # Масштаб берём по натуральной раскладке: после выравнивания он
+    # меняется на доли процента, а порог от этого не поедет.
+    xs_nat = [c[0] + natural[i] for i, L in enumerate(per_letter)
+              for sg in L['heavy'] for c in sg['coords']]
+    sx_est = NORM_WIDTH / (max(xs_nat) - min(xs_nat))
+    depth = GAP_DEPTH * CAP_RATIO * NORM_WIDTH / sx_est
+
+    prof, box = [], []
+    for L in per_letter:
+        prof.append(profiles(L['heavy'], y_lo, y_hi, n))
+        xs = [c[0] for sg in L['heavy'] for c in sg['coords']]
+        box.append((min(xs), max(xs)))
+
+    def gap(i, off):
+        """Средняя ширина просвета между литерами i и i+1 при смещениях off."""
+        _, right_a = prof[i]
+        left_b, _ = prof[i + 1]
+        total = 0.0
+        for k in range(n):
+            r = right_a[k] if right_a[k] is not None else box[i][1]
+            l = left_b[k] if left_b[k] is not None else box[i + 1][0]
+            g = (off[i + 1] + l) - (off[i] + r)
+            total += min(max(g, 0.0), depth)
+        return total / n
+
+    off = list(natural)
+    before = [gap(i, off) for i in range(len(off) - 1)]
+    for _ in range(40):
+        cur = [gap(i, off) for i in range(len(off) - 1)]
+        target = sum(cur) / len(cur)
+        moved = 0.0
+        for i in range(len(cur)):
+            adj = target - gap(i, off)
+            if abs(adj) < 1e-4:
+                continue
+            moved = max(moved, abs(adj))
+            for j in range(i + 1, len(off)):
+                off[j] += adj
+        if moved < 1e-4:
+            break
+    after = [gap(i, off) for i in range(len(off) - 1)]
+    return off, before, after
+
+
 def main():
     w_light = solve_light_weight()
     fa, fb = load(W_OPEN), load(w_light)
@@ -255,17 +361,22 @@ def main():
             assert x['ops'] == y['ops'], f'{ch}: разная последовательность команд'
             assert len(x['coords']) == len(y['coords']), f'{ch}: разное число точек'
         per_letter.append({'ch': ch, 'heavy': sa, 'light': sb,
-                           'shift': adv + idx * 0.0, 'n': len(sa)})
+                           'shift': adv, 'n': len(sa)})
         adv += a
+
+    natural = [L['shift'] for L in per_letter]
+    offsets, gaps_before, gaps_after = optical_offsets(per_letter, natural)
+    if os.environ.get('WM_NO_OPTICAL'):   # только для сравнительных рендеров
+        offsets, gaps_after = list(natural), list(gaps_before)
+    for L, o in zip(per_letter, offsets):
+        L['shift'] = o
 
     # горизонтальный масштаб: чернила слова ровно NORM_WIDTH
     raw_x = []
-    for i, L in enumerate(per_letter):
-        off = L['shift']
-        raw_x += [c[0] + off for s in L['heavy'] for c in s['coords']]
+    for L in per_letter:
+        raw_x += [c[0] + L['shift'] for s in L['heavy'] for c in s['coords']]
     span = max(raw_x) - min(raw_x)
-    # трекинг добавляет (n-1) просветов, поэтому масштаб решается вместе с ним
-    sx = (NORM_WIDTH - TRACK * (len(WORD) - 1)) / span
+    sx = NORM_WIDTH / span
     left0 = min(raw_x) * sx
 
     cap_a = CAP_RATIO * NORM_WIDTH
@@ -275,7 +386,7 @@ def main():
     def build(kind, sy):
         out = []
         for idx, L in enumerate(per_letter):
-            dx = L['shift'] * sx + idx * TRACK - left0
+            dx = L['shift'] * sx - left0
             for hs, ls in zip(L['heavy'], L['light']):
                 src_y = hs if kind == 'open' else ls
                 coords = [(xh * sx + dx, -yy * sy)
@@ -327,6 +438,22 @@ def main():
     print('наибольший выход выше линии за весь ход: %.6f ед. при t=%.2f' % (-worst, worst_t))
 
     print()
+    print('── ОПТИЧЕСКИЕ ПРОСВЕТЫ ─────────────────────────────────────────')
+    print('Средняя ширина просвета, в нормированных единицах (ширина слова 1000).')
+    print('Глубина обрезки %.2f высоты прописной.' % GAP_DEPTH)
+    print('  пара     по апрошам шрифта     оптически      правка')
+    k_norm = sx
+    for i in range(len(gaps_before)):
+        b, a = gaps_before[i] * k_norm, gaps_after[i] * k_norm
+        print('  %s–%s %18.2f %14.2f %11.2f' % (WORD[i], WORD[i + 1], b, a, a - b))
+    sp_b = max(gaps_before) - min(gaps_before)
+    sp_a = max(gaps_after) - min(gaps_after)
+    print('  разброс между парами: было %.2f, стало %.2f единиц' % (sp_b * k_norm, sp_a * k_norm))
+    print('  сдвиг литер относительно апрошей:  %s'
+          % ', '.join('%s %+.1f' % (WORD[i], (per_letter[i]['shift'] - natural[i]) * k_norm)
+                      for i in range(len(WORD))))
+    print()
+
     print('── УСЛОВИЕ 3: ШИРИНА И ПОЛОЖЕНИЕ КАЖДОЙ ЛИТЕРЫ ─────────────────')
     print('литера   левый край A / B          ширина A / B           расхождение')
     max_dx = 0.0
