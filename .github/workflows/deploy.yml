@@ -47,12 +47,10 @@ jobs:
         run: |
           test -f out/index.html
           test -f out/.nojekyll
-          test -f out/fonts/spotik-wordmark.woff2
           test -f out/fonts/golos-cyrillic.woff2
           test -d out/_next/static
-          test -f out/fonts/index.html
           grep -q '/spotik-shop/_next/static' out/index.html
-          grep -q "/spotik-shop/fonts/spotik-wordmark.woff2" out/index.html
+          grep -q "/spotik-shop/fonts/golos-cyrillic.woff2" out/index.html
           echo "выдача собрана, basePath проставлен"
 
       # Открывает собранную выдачу по боевому пути /spotik-shop/ в настоящем
@@ -63,6 +61,14 @@ jobs:
         run: |
           npx playwright install --with-deps chromium
           node scripts/verify-export.mjs
+
+      # Законы проекта про вордмарк: коэффициенты морфа в допуске ±1 %
+      # и свес круглых литер не срезан. Оба проверяются по растру живой
+      # страницы — регрессию в запечённых контурах иначе не поймать.
+      - name: Проверить вордмарк по растру
+        run: |
+          node scripts/verify-morph.mjs
+          node scripts/verify-clip.mjs
 
       # Закон проекта: three.js не попадает в бандл первого экрана.
       # Сторож у этого закона один, и он должен стоять в CI, а не в голове.

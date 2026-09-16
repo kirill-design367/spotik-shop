@@ -1,56 +1,47 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    ВОРДМАРК-СКОБКИ
-   Слово живёт в собственном слое. Внутри этого контейнера не анимируется
-   ничего, кроме самого слова: contain отрезает его лейаут и отрисовку
-   от остальной страницы, а текст вынут из потока, поэтому смена кегля
-   физически не может поднять рефлоу наружу.
+
+   Слово живёт в собственном слое. contain оставлен БЕЗ составляющей paint,
+   и это принципиально: paint режет содержимое по границе блока ровно как
+   overflow: hidden. Высота слоя заканчивалась на базовой линии, а у S и O
+   есть свес ниже неё — он и оказывался срезан прямой горизонталью.
+   Изоляция лейаута нужна, обрезка содержимого — нет.
+
+   Края экрана слово обрезают по-прежнему: за это отвечает overflow: hidden
+   на самой сцене, а не на этом слое.
    ═══════════════════════════════════════════════════════════════════════════ */
 .wm {
   position: absolute;
   left: 0;
   right: 0;
-  contain: layout paint style;
+  contain: layout style;
   pointer-events: none;
   z-index: 1;
 }
 
-.wm__text {
-  /* inline-block по содержимому и центрирование через translateX(-50%):
-     тогда getBoundingClientRect даёт НАСТОЯЩУЮ ширину слова, а не ширину
-     блока по вьюпорту — иначе трекинг-доводка считала бы невязку по
-     заведомо неверному числу. */
+.wm__svg {
   position: absolute;
   left: 50%;
-  top: 0;
-  display: inline-block;
-  white-space: pre;
-  font-family: var(--font-wordmark);
-  font-synthesis: none;
-  line-height: 1;
-  font-size: 1px;
-  /* До калибровки слово скрыто. Дело не в эстетике: если показать его
-     кеглем по умолчанию, а потом выставить настоящий, браузер засчитает
-     это как сдвиг макета — на десктопе это давало CLS 0.42. Элемент,
-     который был visibility: hidden, в сдвиг не попадает вовсе. */
-  visibility: hidden;
-  will-change: font-size, transform;
-  backface-visibility: hidden;
-  transition: opacity 220ms var(--ease);
-  opacity: 0;
+  display: block;
+  transform: translate3d(-50%, 0, 0);
+  will-change: transform;
 }
-.wm[data-ready='1'] .wm__text { visibility: visible; opacity: 1; }
+.wm__svg path {
+  fill: currentColor;
+  /* контуры приходят из шрифта как есть: заливка по ненулевому правилу,
+     иначе внутренние контуры O, P и других литер зальются вместе с внешним */
+  fill-rule: nonzero;
+}
 
 /* Верхняя скобка: зелёный на почти чёрном */
 .wm--hero {
   top: 0;
-  height: calc(var(--wm-top) + var(--wm-cap, 40px));
   color: var(--green);
   --wm-top: 76px;
 }
 /* Нижняя скобка: инверсия — чёрный на сплошном зелёном */
 .wm--footer {
   bottom: 0;
-  height: calc(var(--wm-cap, 40px) + 8px);
   color: var(--ink);
   --wm-top: 0px;
 }

@@ -11,3 +11,7 @@ next-env.d.ts
 .shots/*.png
 # Шрифтовые бинарники из чужого скилла: у проекта свой конвейер (scripts/build-fonts.py)
 .claude/skills/ui-styling/canvas-fonts/
+
+# промежуточные json-выгрузки замеров
+.shots/*.json
+!.shots/lh-*.json

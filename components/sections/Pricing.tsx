@@ -180,9 +180,11 @@ export default function Pricing() {
                         className="plan__opt"
                         onClick={() => setAccount((s) => ({ ...s, [plan.id]: key }))}
                       >
+                        {/* Пояснение не прячем от скринридера: именно оно
+                            говорит, чем варианты отличаются. */}
                         <span>
                           {title}
-                          <span style={{ display: 'block', fontSize: 12, color: 'var(--dim-2)' }} aria-hidden="true">
+                          <span style={{ display: 'block', fontSize: 12, color: 'var(--dim-2)' }}>
                             {hint}
                           </span>
                         </span>

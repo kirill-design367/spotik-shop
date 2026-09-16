@@ -46,11 +46,6 @@ for (const [sname, w, h, mob] of SIZES) {
     await page.waitForTimeout(950);
     await page.screenshot({ path: `.shots/final/${sname}-${name}.png` });
   }
-  // страница шрифтов
-  await page.goto(`http://localhost:${PORT}${PREFIX}/fonts/`, { waitUntil: 'networkidle' });
-  await page.evaluate(() => document.fonts.ready);
-  await page.waitForTimeout(900);
-  await page.screenshot({ path: `.shots/final/${sname}-11-шрифты.png` });
   await page.close();
   console.log(sname, 'снято');
 }

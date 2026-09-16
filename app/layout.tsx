@@ -34,14 +34,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* Объявления шрифтов идут инлайном: в CSS нельзя записать путь,
             который переживёт basePath. Подробности в lib/fontface.ts. */}
         <style dangerouslySetInnerHTML={{ __html: siteFontFaces(BASE) }} />
-        {/* Вордмарк — критический ресурс первого экрана: 13 КБ, все 13 осей */}
-        <link
-          rel="preload"
-          href={`${BASE}/fonts/spotik-wordmark.woff2`}
-          as="font"
-          type="font/woff2"
-          crossOrigin="anonymous"
-        />
+        {/* Шрифтового файла для вордмарка больше нет: слово запечено
+            в контуры и рисуется с первого кадра, не дожидаясь сети. */}
+        {/* Два сабсета, а не один: первый экранный абзац смешанный —
+            «СЕРВИС №1 … SPOTIFY PREMIUM ИЗ РОССИИ». Без латинского сабсета
+            он дорисовывается вторым заходом, и Lighthouse засчитывает
+            сдвиг макета на подстановке шрифта. */}
         <link
           rel="preload"
           href={`${BASE}/fonts/golos-cyrillic.woff2`}
@@ -49,10 +47,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           type="font/woff2"
           crossOrigin="anonymous"
         />
+        <link
+          rel="preload"
+          href={`${BASE}/fonts/golos-latin.woff2`}
+          as="font"
+          type="font/woff2"
+          crossOrigin="anonymous"
+        />
       </head>
       <body>
         {/* Цель скип-ссылки — сам <main>, а не секция: секции есть только
-            на главной, а layout общий и для /fonts, и для 404. */}
+            на главной, а layout общий и для 404. */}
         <a href="#main" className="skip-link">
           Перейти к содержимому
         </a>

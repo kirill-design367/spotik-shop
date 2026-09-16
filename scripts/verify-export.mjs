@@ -13,7 +13,8 @@
  *     так браузер сообщает, что сабсет не понадобился, и это ровно то,
  *     ради чего объявления разложены по unicode-range);
  *   • ни одного горизонтального скролла на трёх эталонных размерах;
- *   • вордмарк откалиброван и вылезает за края ровно на заданную долю.
+ *   • вордмарк вылезает за края ровно на заданную долю, и его контур
+ *     непустой (пустой путь тоже «не ломает страницу», но это не работа).
  */
 import { createServer } from 'node:http';
 import { gzipSync } from 'node:zlib';
@@ -54,7 +55,9 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(PORT, r));
 
 const SIZES = [['мобильный', 390, 844, true], ['десктоп', 1920, 1080, false], ['широкий', 2560, 1440, false]];
-const PAGES = [['главная', `${PREFIX}/`], ['/fonts', `${PREFIX}/fonts/`]];
+// Страница /fonts была временной витриной для отбора шрифтов и во второй
+// итерации удалена: набор выбран, показывать больше нечего.
+const PAGES = [['главная', `${PREFIX}/`]];
 
 const browser = await launch();
 let failed = 0;
@@ -74,14 +77,16 @@ for (const [pname, path] of PAGES) {
     await page.waitForTimeout(900);
 
     const d = await page.evaluate(() => {
-      const t = document.querySelector('.wm--hero .wm__text');
+      const t = document.querySelector('.wm--hero .wm__svg');
+      const p = t?.querySelector('path');
       return {
         dw: document.documentElement.scrollWidth,
         ww: window.innerWidth,
         dh: document.documentElement.scrollHeight,
         fonts: [...document.fonts].map((f) => `${f.family}:${f.status}`),
         wmWidth: t ? +t.getBoundingClientRect().width.toFixed(1) : null,
-        wmSize: t ? getComputedStyle(t).fontSize : null,
+        wmSize: t ? `слой ${t.getBoundingClientRect().height.toFixed(0)}px` : null,
+        dLen: p ? (p.getAttribute('d') || '').length : 0,
       };
     });
 
@@ -91,17 +96,19 @@ for (const [pname, path] of PAGES) {
     const overscan = d.wmWidth ? d.wmWidth / d.ww : null;
     const overscanBad = overscan !== null && (overscan < 1.1 || overscan > 1.25);
 
-    const ok = !bad.length && !xscroll && !fontErr.length && !overscanBad;
+    const pathBad = d.dLen < 500;
+    const ok = !bad.length && !xscroll && !fontErr.length && !overscanBad && !pathBad;
     if (!ok) failed += 1;
     console.log(
       `${ok ? 'OK  ' : 'СБОЙ'} ${pname.padEnd(9)} ${sname.padEnd(10)} ${w}×${h}  ` +
         `высота ${String(d.dh).padStart(6)}  ` +
-        (overscan ? `вылет вордмарка ${overscan.toFixed(3)}  кегль ${d.wmSize}  ` : '') +
+        (overscan ? `вылет вордмарка ${overscan.toFixed(3)}  ${d.wmSize}  длина d ${d.dLen}  ` : '') +
         `шрифтов загружено ${fontsUsed} из ${d.fonts.length} объявленных`,
     );
     if (xscroll) console.log(`      ГОРИЗОНТАЛЬНЫЙ СКРОЛЛ: документ ${d.dw} при окне ${d.ww}`);
     if (fontErr.length) console.log(`      ШРИФТЫ НЕ ЗАГРУЗИЛИСЬ: ${fontErr.join(', ')}`);
     if (overscanBad) console.log(`      ВЫЛЕТ ВОРДМАРКА ВНЕ ДОПУСКА: ${overscan}`);
+    if (pathBad) console.log(`      КОНТУР ВОРДМАРКА ПУСТ ИЛИ ОБРЕЗАН: длина d ${d.dLen}`);
     for (const b of [...new Set(bad)].slice(0, 6)) console.log(`      ${b}`);
     await page.close();
   }

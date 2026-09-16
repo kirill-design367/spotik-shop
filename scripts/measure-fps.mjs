@@ -19,8 +19,13 @@
  * поэтому надо читать как нижнюю границу, а не как приговор.
  */
 import { launch } from './browser.mjs';
+import { serveOut, PREFIX } from './serve-out.mjs';
 
-const URL = process.env.FPS_URL || 'http://localhost:3000/';
+// По умолчанию меряем БОЕВУЮ выдачу out/ по боевому пути: dev-сборка
+// с горячей перезагрузкой дала бы цифры про другое приложение.
+const PORT = 4187;
+const server = process.env.FPS_URL ? null : await serveOut(PORT);
+const URL = process.env.FPS_URL || `http://localhost:${PORT}${PREFIX}/`;
 const SECONDS = Number(process.env.FPS_SECONDS || 6);
 
 const PROBE = `
@@ -159,3 +164,4 @@ console.log('снимаются requestAnimationFrame внутри страни�
 console.log('растеризация программная — это нижняя граница, на живом устройстве быстрее.');
 
 for (const p of PROFILES) await run(p);
+server?.close();
