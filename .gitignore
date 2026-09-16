@@ -5,3 +5,9 @@ next-env.d.ts
 *.tsbuildinfo
 .DS_Store
 .perf/
+
+# Рабочие кадры проверок. Итоговые скриншоты лежат в .shots/final
+# и в историю попадают, промежуточные — нет.
+.shots/*.png
+# Шрифтовые бинарники из чужого скилла: у проекта свой конвейер (scripts/build-fonts.py)
+.claude/skills/ui-styling/canvas-fonts/
