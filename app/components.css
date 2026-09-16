@@ -3,12 +3,14 @@
 
    Слово живёт в собственном слое. contain оставлен БЕЗ составляющей paint,
    и это принципиально: paint режет содержимое по границе блока ровно как
-   overflow: hidden. Высота слоя заканчивалась на базовой линии, а у S и O
-   есть свес ниже неё — он и оказывался срезан прямой горизонталью.
+   overflow: hidden. Именно это срезало низ S и O прямой горизонталью.
    Изоляция лейаута нужна, обрезка содержимого — нет.
 
-   Края экрана слово обрезают по-прежнему: за это отвечает overflow: hidden
-   на самой сцене, а не на этом слое.
+   Края экрана слово больше НЕ обрезают: третья итерация вписала его
+   в экран с отступом около 0.65 % ширины с каждой стороны, первая
+   и последняя литеры видны целиком. Позиция по горизонтали задаётся
+   слою в долях вьюпорта, поэтому центрирующего трансформа здесь нет —
+   и трансформ остаётся свободен для футера.
    ═══════════════════════════════════════════════════════════════════════════ */
 .wm {
   position: absolute;
@@ -21,9 +23,11 @@
 
 .wm__svg {
   position: absolute;
-  left: 50%;
   display: block;
-  transform: translate3d(-50%, 0, 0);
+}
+/* В хиро слой не двигается вообще: верх чернил обязан стоять на месте.
+   will-change висит только на футере, где трансформ действительно есть. */
+.wm--footer .wm__svg {
   will-change: transform;
 }
 .wm__svg path {
@@ -31,6 +35,16 @@
   /* контуры приходят из шрифта как есть: заливка по ненулевому правилу,
      иначе внутренние контуры O, P и других литер зальются вместе с внешним */
   fill-rule: nonzero;
+}
+
+/* Пропорция знака: высота рамки в долях его ширины. Это композиция,
+   а не механика, поэтому решение живёт в CSS рядом с отступом сверху.
+   На узком экране знак вытянутый и держит верх страницы, на широком
+   приплюснутый — иначе он наезжает на текст.
+   Все шесть условий геометрии переживают любое значение: обе формы тянутся
+   одним и тем же вертикальным масштабом. */
+.wm {
+  --wm-box: 0.46;
 }
 
 /* Верхняя скобка: зелёный на почти чёрном */
@@ -46,9 +60,11 @@
   --wm-top: 0px;
 }
 @media (min-width: 768px) {
+  .wm { --wm-box: 0.34; }
   .wm--hero { --wm-top: 104px; }
 }
 @media (min-width: 1440px) {
+  .wm { --wm-box: 0.27; }
   .wm--hero { --wm-top: 124px; }
 }
 
@@ -64,21 +80,10 @@
   position: sticky;
   top: 0;
   height: 100svh;
-  overflow: hidden; /* обрезка вордмарка краями вьюпорта — не смягчается */
+  overflow: hidden; /* страховка от горизонтального скролла на дробных vw */
   display: flex;
   flex-direction: column;
   isolation: isolate;
-}
-
-/* Высота и ширина заданы явно: у канваса есть собственный размер,
-   и при height:auto он взял бы его вместо того, чтобы растянуться. */
-.hero__wave {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 0;
-  display: block;
 }
 
 .hero__foot {
@@ -106,19 +111,6 @@
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
-}
-
-.hero__hint {
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--dim);
-  display: none;
-  font-variation-settings: 'wght' 600;
-}
-
-@media (min-width: 560px) {
-  .hero__hint { display: inline; }
 }
 
 @media (min-width: 900px) {
@@ -263,68 +255,6 @@
   transform: none;
 }
 .btn:disabled:hover { background: var(--btn-bg); transform: none; }
-
-/* ═════════════════════════════════════════════════════════ ШКАЛА ДОРОЖКИ
-   Страница читается как одна дорожка: тонкая шкала слева показывает,
-   где мы находимся, и ведёт таймкод. Это не «индикатор скролла вообще»,
-   а предметная деталь — проигрыватель, из мира которого этот продукт.  */
-.playhead {
-  opacity: 0;
-  transition: opacity 400ms var(--ease);
-  position: fixed;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: var(--rail);
-  z-index: 40;
-  pointer-events: none;
-  display: none;
-}
-@media (min-width: 768px) {
-  .playhead { display: block; }
-}
-.playhead[data-on='1'] { opacity: 1; }
-.playhead__track {
-  position: absolute;
-  left: 50%;
-  top: 96px;
-  bottom: 96px;
-  width: 1px;
-  background: var(--hair);
-  /* целые пиксели: при translateX(-50%) однопиксельная линия садилась
-     на полпикселя и растекалась на две колонки по половине яркости */
-  transform: translateX(-0.5px);
-}
-.playhead__fill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 100%;
-  background: var(--green);
-  transition: background 200ms var(--ease);
-  transform-origin: top;
-  height: 100%;
-  transform: scaleY(0);
-  will-change: transform;
-}
-/* На сплошном зелёном подвале зелёная заливка шкалы давала 1.02:1,
-   а таймкод 1.90:1 — то есть шкала просто исчезала там, где страница
-   заканчивается. На зелёном она переключается на чёрное. */
-.playhead[data-invert='1'] .playhead__fill { background: var(--ink); }
-.playhead[data-invert='1'] .playhead__track { background: rgba(18, 18, 18, 0.28); }
-.playhead[data-invert='1'] .playhead__time { color: rgba(18, 18, 18, 0.72); }
-
-.playhead__time {
-  position: absolute;
-  left: 50%;
-  bottom: 36px;
-  transform: translateX(-50%) rotate(180deg);
-  writing-mode: vertical-rl;
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  color: var(--dim);
-  font-variation-settings: 'wght' 600;
-}
 
 /* ═══════════════════════════════════════════════════════════════ СЕКЦИИ */
 .section {

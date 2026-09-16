@@ -25,7 +25,6 @@
 
   /* поля: мобильный макет — самостоятельная работа, не сжатый десктоп */
   --gutter: 20px;
-  --rail: 0px;
 
   --t-fast: 180ms;
   --t-base: 420ms;
@@ -33,10 +32,10 @@
 }
 
 @media (min-width: 768px) {
-  :root { --gutter: 40px; --rail: 56px; }
+  :root { --gutter: 40px; }
 }
 @media (min-width: 1440px) {
-  :root { --gutter: 64px; --rail: 72px; }
+  :root { --gutter: 64px; }
 }
 
 /* ------------------------------------------------------------------- сброс */

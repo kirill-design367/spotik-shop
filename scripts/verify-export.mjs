@@ -13,8 +13,9 @@
  *     так браузер сообщает, что сабсет не понадобился, и это ровно то,
  *     ради чего объявления разложены по unicode-range);
  *   • ни одного горизонтального скролла на трёх эталонных размерах;
- *   • вордмарк вылезает за края ровно на заданную долю, и его контур
- *     непустой (пустой путь тоже «не ломает страницу», но это не работа).
+ *   • вордмарк занимает заданную долю ширины и НЕ упирается в края,
+ *     а его контур непустой (пустой путь тоже «не ломает страницу»,
+ *     но это не работа).
  */
 import { createServer } from 'node:http';
 import { gzipSync } from 'node:zlib';
@@ -93,21 +94,23 @@ for (const [pname, path] of PAGES) {
     const xscroll = d.dw > d.ww + 1;
     const fontErr = d.fonts.filter((f) => f.endsWith(':error'));
     const fontsUsed = d.fonts.filter((f) => f.endsWith(':loaded')).length;
-    const overscan = d.wmWidth ? d.wmWidth / d.ww : null;
-    const overscanBad = overscan !== null && (overscan < 1.1 || overscan > 1.25);
+    // Третья итерация отменила вылет за края: слово вписано в экран
+    // с отступом около 0.65 % ширины с каждой стороны.
+    const fill = d.wmWidth ? d.wmWidth / d.ww : null;
+    const fillBad = fill !== null && (fill < 0.96 || fill > 0.995);
 
     const pathBad = d.dLen < 500;
-    const ok = !bad.length && !xscroll && !fontErr.length && !overscanBad && !pathBad;
+    const ok = !bad.length && !xscroll && !fontErr.length && !fillBad && !pathBad;
     if (!ok) failed += 1;
     console.log(
       `${ok ? 'OK  ' : 'СБОЙ'} ${pname.padEnd(9)} ${sname.padEnd(10)} ${w}×${h}  ` +
         `высота ${String(d.dh).padStart(6)}  ` +
-        (overscan ? `вылет вордмарка ${overscan.toFixed(3)}  ${d.wmSize}  длина d ${d.dLen}  ` : '') +
+        (fill ? `ширина вордмарка ${(fill * 100).toFixed(1)} % окна  ${d.wmSize}  длина d ${d.dLen}  ` : '') +
         `шрифтов загружено ${fontsUsed} из ${d.fonts.length} объявленных`,
     );
     if (xscroll) console.log(`      ГОРИЗОНТАЛЬНЫЙ СКРОЛЛ: документ ${d.dw} при окне ${d.ww}`);
     if (fontErr.length) console.log(`      ШРИФТЫ НЕ ЗАГРУЗИЛИСЬ: ${fontErr.join(', ')}`);
-    if (overscanBad) console.log(`      ВЫЛЕТ ВОРДМАРКА ВНЕ ДОПУСКА: ${overscan}`);
+    if (fillBad) console.log(`      ШИРИНА ВОРДМАРКА ВНЕ ДОПУСКА: ${fill}`);
     if (pathBad) console.log(`      КОНТУР ВОРДМАРКА ПУСТ ИЛИ ОБРЕЗАН: длина d ${d.dLen}`);
     for (const b of [...new Set(bad)].slice(0, 6)) console.log(`      ${b}`);
     await page.close();

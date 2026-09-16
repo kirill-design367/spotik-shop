@@ -8,7 +8,7 @@
  * 2. Скролл гонится НАСТОЯЩИМИ событиями колеса (mouse.wheel), а не
  *    window.scrollTo: иначе не работает ни Lenis, ни инерция, ни весь
  *    конвейер обработки ввода, и замер получился бы про другое.
- * 3. Параллельно через CDP снимается длительность длинных задач
+ * 3. Параллельно снимается длительность длинных задач
  *    (PerformanceObserver longtask) — это главный источник срывов кадра.
  * 4. Мобильная эмуляция идёт с торможением процессора: Emulation
  *    .setCPUThrottlingRate, кратность задаётся аргументом.
@@ -40,7 +40,11 @@ window.__fps = { frames: [], long: [], start: 0 };
   window.__fps.raf = requestAnimationFrame(tick);
   try {
     new PerformanceObserver((l) => {
-      for (const e of l.getEntries()) window.__fps.long.push(Math.round(e.duration));
+      for (const e of l.getEntries()) window.__fps.long.push({
+        d: Math.round(e.duration),
+        at: Math.round(e.startTime),
+        who: (e.attribution || []).map((a) => a.name).join(','),
+      });
     }).observe({ entryTypes: ['longtask'] });
   } catch {}
   window.__fpsReset = () => { window.__fps.frames.length = 0; window.__fps.long.length = 0; prev = 0; };
@@ -48,7 +52,13 @@ window.__fps = { frames: [], long: [], start: 0 };
 `;
 
 function stats(frames) {
-  const f = frames.filter((x) => x > 0.2 && x < 400).sort((a, b) => a - b);
+  // Интервалы свыше 400 мс — это не кадры, а провалы: вкладка ушла в фон,
+  // либо главный поток встал. Их НЕЛЬЗЯ молча выбрасывать (так было раньше,
+  // и большая задержка пряталась от статистики), поэтому они считаются
+  // отдельно и печатаются рядом.
+  const all = frames.filter((x) => x > 0.2).sort((a, b) => a - b);
+  const stalls = all.filter((x) => x >= 400);
+  const f = all.filter((x) => x < 400);
   if (!f.length) return null;
   const q = (p) => f[Math.min(f.length - 1, Math.floor(f.length * p))];
   const median = q(0.5);
@@ -63,6 +73,8 @@ function stats(frames) {
     worst: f[f.length - 1],
     overPct: (over / f.length) * 100,
     badPct: (bad / f.length) * 100,
+    stalls,
+    worstAll: all[all.length - 1],
   };
 }
 
@@ -78,7 +90,7 @@ async function measure(page, cdp, label, drive) {
     console.log(`  ${label.padEnd(30)} кадров не набралось`);
     return;
   }
-  const longSum = res.long.reduce((a, b) => a + b, 0);
+  const longSum = res.long.reduce((a, b) => a + b.d, 0);
   console.log(
     `  ${label.padEnd(30)} медиана ${s.fpsMedian.toFixed(1).padStart(5)} fps  ` +
       `(кадр ${s.median.toFixed(1)} мс)   худшие 5% ${s.fpsP95.toFixed(1).padStart(5)} fps ` +
@@ -86,6 +98,14 @@ async function measure(page, cdp, label, drive) {
       `свыше 33 мс: ${s.badPct.toFixed(1)}%   кадров ${s.n}` +
       (res.long.length ? `   длинных задач ${res.long.length} на ${longSum} мс` : '   длинных задач нет'),
   );
+  if (s.stalls.length) {
+    console.log(`  ${' '.repeat(32)}ПРОВАЛЫ КАДРА свыше 400 мс: ${s.stalls.length} шт., ` +
+      `самый долгий ${s.worstAll.toFixed(0)} мс`);
+  }
+  if (res.long.length) {
+    console.log(`  ${' '.repeat(32)}подробно: ` +
+      res.long.map((e) => `${e.d} мс (${e.who || 'без атрибуции'})`).join(', '));
+  }
 }
 
 async function run(profile) {
@@ -122,31 +142,15 @@ async function run(profile) {
     await page.waitForTimeout(900);
   };
 
-  // 1. хиро: сжатие вордмарка по осям + пробуждение волны
+  // 1. хиро: морф вордмарка от неподвижного верха вниз
   await goto(0);
-  await measure(page, cdp, 'хиро: вордмарк + волна', () => wheel(height * 1.05, SECONDS * 1000));
+  await measure(page, cdp, 'хиро: морф вордмарка', () => wheel(height * 1.05, SECONDS * 1000));
 
-  // 2. волна отдельно: стоим в середине хиро, вордмарк не трогаем
-  await page.evaluate((h) => window.scrollTo(0, h * 0.62), height);
-  await page.waitForTimeout(700);
-  await measure(page, cdp, 'волна одна, без скролла', async () => {
-    await page.waitForTimeout(SECONDS * 1000);
-  });
-
-  // 3. волна под импульсами от тапов
-  await measure(page, cdp, 'волна с импульсами от тапов', async () => {
-    const t0 = Date.now();
-    while (Date.now() - t0 < SECONDS * 1000) {
-      await page.mouse.click(Math.round(width * (0.2 + Math.random() * 0.6)), Math.round(height * 0.5));
-      await page.waitForTimeout(420);
-    }
-  });
-
-  // 4. футер: обратное разрастание вордмарка
+  // 2. футер: то же зеркально, слово растёт вверх от неподвижного низа
   await goto(0.88);
   await measure(page, cdp, 'футер: вордмарк наоборот', () => wheel(height * 0.9, SECONDS * 1000));
 
-  // 5. середина страницы: блоки 2-6, где анимации нет
+  // 3. середина страницы: блоки 2-6, где анимации нет
   await goto(0.45);
   await measure(page, cdp, 'блоки 2-6 (анимации нет)', () => wheel(height * 1.5, SECONDS * 1000));
 

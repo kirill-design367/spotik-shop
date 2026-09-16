@@ -3,21 +3,21 @@
 import { useEffect, useRef } from 'react';
 import {
   buildPath,
+  bottomAt,
   capAt,
   VIEW_BOX,
-  OVERSCAN,
   WM_WIDTH,
   WM_BOX_HEIGHT,
-  WM_BOX_TOP,
   WM_CAP_OPEN,
+  WM_INSET,
+  LAYER_WIDTH_VW,
   LAYER_HEIGHT_VW,
-  CAP_TOP_VW,
+  BOX_RATIO_MAX,
 } from '@/lib/wordmark';
-import { waveBus } from '@/lib/wavebus';
 import { onScrollProgress } from '@/lib/scroll';
 
 type Props = {
-  /** hero — слово сжимается и уезжает вверх. footer — зеркально разрастается снизу вверх. */
+  /** hero — слово сжимается вниз от неподвижного верха. footer — зеркально. */
   mode: 'hero' | 'footer';
   /** Элемент, чей проход мимо вьюпорта задаёт прогресс. */
   sectionId: string;
@@ -35,22 +35,30 @@ type Props = {
  * Вордмарк-скобки.
  *
  * Слово SPOTIK открывает страницу и закрывает её — это один механизм,
- * а не два эффекта. Внизу оно возвращается зеркально, с инверсией цвета,
- * и при скролле разрастается снизу вверх.
+ * а не два эффекта. Внизу оно возвращается зеркально, с инверсией цвета.
  *
  * ── ЧТО ПРОИСХОДИТ В КАДРЕ ──────────────────────────────────────────────────
- * Ровно две записи: атрибут d у пути и transform у слоя. Ни одного чтения
- * геометрии, ни одной аллокации — буфер точек выделен один раз в lib/wordmark.
- * Морф — интерполяция координат контуров; трансформ отвечает только
- * за положение на экране и формы не касается.
+ * В хиро — РОВНО ОДНА запись: атрибут d у пути. Трансформа нет вообще:
+ * верх чернил обязан стоять на месте, а он уже стоит по построению данных
+ * (у обоих состояний верх на y = 0, и это одна и та же точка контура).
+ * Двигать слой нечем и незачем.
  *
- * ── ПОЧЕМУ РАЗМЕР ЗАДАН В РАЗМЕТКЕ, А НЕ В JS ───────────────────────────────
- * Слой получает размер прямо в серверной разметке, в долях ширины вьюпорта.
- * Поэтому слово нарисовано уже в первом кадре, до гидратации и без ожидания
- * шрифта: нет ни сдвига макета, ни задержки главного элемента страницы.
+ * В футере слово прижато НИЗОМ и растёт вверх — это зеркало того же правила.
+ * Низ чернил на промежуточном кадре считается интерполяцией двух чисел
+ * (самая нижняя точка у обоих состояний одна и та же, сборка это проверяет),
+ * и слой сдвигается трансформом. Трансформ отвечает только за положение,
+ * формы он не касается: форма целиком в атрибуте d.
+ *
+ * Чтений геометрии DOM в кадре нет, аллокаций нет — буфер точек выделен
+ * один раз в lib/wordmark.
+ *
+ * ── ПОЧЕМУ РАЗМЕР ЗАДАН В РАЗМЕТКЕ ──────────────────────────────────────────
+ * Слой получает размер и положение прямо в серверной разметке, в долях
+ * ширины вьюпорта. Поэтому слово нарисовано уже в первом кадре, до гидратации
+ * и без ожидания шрифта: ни сдвига макета, ни задержки главного элемента.
  * JS вмешивается, только если слову не хватает высоты (низкое широкое окно) —
  * тогда он ставит общий поджим, одинаковый для обоих состояний, поэтому все
- * три целевых соотношения сохраняются.
+ * целевые соотношения сохраняются.
  */
 export default function Wordmark({ mode, sectionId, reserveSelector, reserveGap = 24 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -64,47 +72,53 @@ export default function Wordmark({ mode, sectionId, reserveSelector, reserveGap 
     if (!wrap || !svg || !path) return;
 
     let progress = mode === 'hero' ? 0 : 1;
-    let queued = false;
+    let painted = NaN;
     let disposed = false;
-    let bandTop = 0;
     let layerH = 0;
 
+    /**
+     * Рисуем СРАЗУ, а не через requestAnimationFrame.
+     *
+     * Это не микрооптимизация, это была причина рывков. Прогресс приходит
+     * из ScrollTrigger, который дёргает Lenis, который висит на тикере GSAP,
+     * а тикер GSAP — это уже requestAnimationFrame. Если из него заказать
+     * ЕЩЁ один кадр, рисование уедет на следующий, а пока оно там ждёт,
+     * защёлка «кадр уже заказан» проглотит следующее обновление. В итоге
+     * форма меняется через кадр: страница идёт 60 fps, а морф 30.
+     *
+     * Замер до правки: на 463 подвижных кадрах 249 раз скролл ехал,
+     * а форма стояла, и пары (Δскролл, Δвысота) шли строго через одну:
+     * 1/0, 1/0, 1/−0.002, 1/0, 1/−0.005, 1/0…
+     *
+     * Здесь ни одного чтения геометрии, только запись атрибута, поэтому
+     * синхронная отрисовка внутри обработчика ничего не выталкивает
+     * в принудительный рефлоу.
+     */
     const paint = () => {
-      queued = false;
       if (disposed) return;
       // hero: 0 → 1 (раскрыт → сжат).  footer: зеркально, 1 → 0.
       const t = mode === 'hero' ? progress : 1 - progress;
+      if (t === painted) return;
+      painted = t;
 
       path.setAttribute('d', buildPath(t));
 
-      // Привязка по вертикали. В хиро слой стоит верхом прописных там, где
-      // его поставил макет, и уезжает вверх. В футере он держится низом
-      // и разрастается снизу вверх — зеркально.
-      if (mode === 'hero') {
-        const capPx = (capAt(t) / WM_BOX_HEIGHT) * layerH;
-        const drift = -(bandTop + capPx) * 0.42 * t * t;
-        svg.style.transform = `translate3d(-50%,${drift.toFixed(2)}px,0)`;
+      if (mode === 'footer') {
+        // Прижать НИЗ чернил к низу слоя: слово растёт вверх.
+        const shift = ((WM_BOX_HEIGHT - bottomAt(t)) / WM_BOX_HEIGHT) * layerH;
+        svg.style.transform = `translate3d(0,${shift.toFixed(2)}px,0)`;
       }
-
-      // Волна и вордмарк — одна система: сжимаясь, слово отдаёт энергию в волну.
-      if (mode === 'hero') waveBus.compression = t;
-      else waveBus.footer = 1 - t;
-    };
-
-    const request = () => {
-      if (queued) return;
-      queued = true;
-      requestAnimationFrame(paint);
     };
 
     /** Размер слоя. Считается вне кадра: при монтировании и на ресайзе. */
     const layout = () => {
       if (disposed) return;
       const vw = window.innerWidth;
-      const target = vw * OVERSCAN;
-      const k = target / WM_WIDTH;
+      const target = vw * LAYER_WIDTH_VW;
 
-      bandTop = parseFloat(getComputedStyle(wrap).getPropertyValue('--wm-top')) || 0;
+      const cs = getComputedStyle(wrap);
+      const bandTop = parseFloat(cs.getPropertyValue('--wm-top')) || 0;
+      const boxRatio = parseFloat(cs.getPropertyValue('--wm-box')) || BOX_RATIO_MAX;
 
       const host = wrap.parentElement;
       const reserve = host?.querySelector<HTMLElement>(reserveSelector)?.offsetHeight ?? 0;
@@ -116,20 +130,23 @@ export default function Wordmark({ mode, sectionId, reserveSelector, reserveGap 
           reserveGap,
       );
 
-      const naturalCap = WM_CAP_OPEN * k;
-      // Поджим ОДИН для обоих состояний, поэтому отношения высоты прописных,
-      // штрихов и ширины не меняются — двигается только абсолютная пропорция.
-      const squeeze = naturalCap > available ? available / naturalCap : 1;
-      layerH = WM_BOX_HEIGHT * k * squeeze;
+      // Слой забирает всю свободную высоту, но не вытягивается сверх предела.
+      // Растяжение и поджим ОДИНАКОВЫ для обоих состояний, поэтому отношения
+      // высоты прописной и штрихов не меняются — двигается только пропорция
+      // знака целиком. Ширина литер вообще не участвует: она в x.
+      layerH = Math.min(available, target * boxRatio);
 
       svg.style.width = `${target.toFixed(2)}px`;
       svg.style.height = `${layerH.toFixed(2)}px`;
-      const capTopOffset = ((-WM_CAP_OPEN - WM_BOX_TOP) / WM_BOX_HEIGHT) * layerH;
-      svg.style.top = mode === 'hero' ? `${(bandTop - capTopOffset).toFixed(2)}px` : 'auto';
+      svg.style.left = `${(vw * WM_INSET).toFixed(2)}px`;
+      svg.style.top = mode === 'hero' ? `${bandTop.toFixed(2)}px` : 'auto';
       svg.style.bottom = mode === 'footer' ? '0px' : 'auto';
 
       wrap.style.setProperty('--wm-cap', `${((WM_CAP_OPEN / WM_BOX_HEIGHT) * layerH).toFixed(1)}px`);
       wrap.style.height = `${(layerH + (mode === 'hero' ? bandTop : 0)).toFixed(1)}px`;
+      // размер слоя изменился — трансформ футера надо пересчитать даже
+      // при том же прогрессе, поэтому защёлку сбрасываем
+      painted = NaN;
       paint();
     };
 
@@ -161,11 +178,11 @@ export default function Wordmark({ mode, sectionId, reserveSelector, reserveGap 
       if (mq.matches) {
         progress = mode === 'hero' ? 0 : 1;
         off = () => {};
-        request();
+        paint();
       } else {
         off = onScrollProgress(sectionId, mode, (p) => {
           progress = p;
-          request();
+          paint();
         });
       }
     };
@@ -194,18 +211,16 @@ export default function Wordmark({ mode, sectionId, reserveSelector, reserveGap 
         viewBox={VIEW_BOX}
         preserveAspectRatio="none"
         focusable="false"
-        // Размер И ПОЛОЖЕНИЕ в долях ширины вьюпорта прямо в разметке: слово
-        // нарисовано уже в первом кадре, без JavaScript и без ожидания чего бы
-        // то ни было, и потом никуда не переезжает — иначе это сдвиг макета.
+        // Размер и положение в долях ширины вьюпорта прямо в разметке: слово
+        // нарисовано уже в первом кадре и потом никуда не переезжает.
         style={{
-          width: `${OVERSCAN * 100}vw`,
+          width: `${LAYER_WIDTH_VW * 100}vw`,
           height: `${LAYER_HEIGHT_VW * 100}vw`,
-          ...(mode === 'hero'
-            ? { top: `calc(var(--wm-top) - ${CAP_TOP_VW.toFixed(4)}vw)` }
-            : { bottom: 0 }),
+          left: `${WM_INSET * 100}vw`,
+          ...(mode === 'hero' ? { top: 'var(--wm-top)' } : { bottom: 0 }),
         }}
       >
-        <path ref={pathRef} d={buildPath(0)} />
+        <path ref={pathRef} d={buildPath(mode === 'hero' ? 0 : 1)} />
       </svg>
     </div>
   );
