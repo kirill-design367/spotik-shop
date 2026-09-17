@@ -657,10 +657,23 @@ export const WM_BOX_HEIGHT = %.3f;
  */
 export const WM_BOTTOM_OPEN = %.3f;
 export const WM_BOTTOM_TIGHT = %.3f;
+
+/**
+ * Линия прописных: верх ПЛОСКИХ литер P, T, I, K.
+ *
+ * Круглые S и O выходят выше неё на овершут рисунка, и именно их апекс
+ * лежит на y = 0 — то есть «верх чернил» и «линия прописных» это две
+ * разные высоты, между ними %.2f %% высоты прописной. Футеру это нужно,
+ * чтобы срез зелёного поля читался на всех шести литерах, а не только
+ * на двух круглых.
+ */
+export const WM_CAP_TOP_OPEN = %.3f;
+export const WM_CAP_TOP_TIGHT = %.3f;
 ''' % (NORM_WIDTH, n_contours, n_cmds, n_points, W_OPEN, w_light, cap_a,
        arr(lens), arr(ops_flat), arr(ca), arr(cb),
        ', '.join(str(L['n']) for L in per_letter),
-       NORM_WIDTH, cap_A, cap_B, box_h, bottom_a, bottom_b)
+       NORM_WIDTH, cap_A, cap_B, box_h, bottom_a, bottom_b,
+       bIa[1] / cap_A * 100, bIa[1], bIb[1])
 
     with open(OUT, 'w', encoding='utf-8') as fh:
         fh.write(ts)

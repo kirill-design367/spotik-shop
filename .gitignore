@@ -16,3 +16,4 @@ next-env.d.ts
 .shots/*.json
 !.shots/lh-*.json
 .shots/enter/
+.shots/cut/

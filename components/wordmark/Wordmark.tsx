@@ -3,11 +3,9 @@
 import { useEffect, useRef } from 'react';
 import {
   buildPaths,
-  bottomAt,
   footRise,
   VIEW_BOX,
   WM_BOX_HEIGHT,
-  WM_VIEW_HEIGHT,
   WM_OVERSHOOT,
   WM_INSET,
   VIEW_OVER_INK,
@@ -47,9 +45,15 @@ let entrancePlayed = false;
  * трансформ входа живёт отдельно и только на время входа.
  *
  * ── ЧТО ПРОИСХОДИТ В КАДРЕ ──────────────────────────────────────────────────
- * В хиро — шесть записей атрибута d, и всё. Трансформа нет: верх чернил
- * обязан стоять, а он стоит по построению данных. В футере добавляется одна
- * запись transform, которая прижимает НИЗ чернил к низу слоя.
+ * Шесть записей атрибута d, и всё — в обоих режимах. Трансформа нет нигде:
+ * верх чернил обязан стоять, а он стоит по построению данных, двигать слой
+ * нечем и незачем.
+ *
+ * В футере трансформ был: он прижимал НИЗ чернил к низу слоя, и слово росло
+ * вверх. Из-за этого над словом оставалось зелёное поле высотой в треть
+ * экрана, а верхняя кромка ездила. Теперь футер — точное зеркало хиро:
+ * верх неподвижен, слово растёт вниз, и держится это тем же построением
+ * данных, а не записью в кадре.
  *
  * Ни одного чтения геометрии DOM, ни одной аллокации: буферы выделены
  * один раз в lib/wordmark. Рисуем СРАЗУ, без лишнего requestAnimationFrame —
@@ -75,7 +79,9 @@ export default function Wordmark({ mode, sectionId, followSelector }: Props) {
     const follow = followSelector
       ? wrap.parentElement?.querySelector<HTMLElement>(followSelector) ?? null
       : null;
-    const stage = wrap.parentElement;
+    // data-open живёт на сцене футера: по нему выезжает мелкий текст
+    const stage =
+      mode === 'footer' ? wrap.closest<HTMLElement>('.footer__stage') : null;
 
     let progress = mode === 'hero' ? 0 : 1;
     let painted = NaN;
@@ -92,16 +98,11 @@ export default function Wordmark({ mode, sectionId, followSelector }: Props) {
       const d = buildPaths(t);
       for (let i = 0; i < d.length; i += 1) paths[i]!.setAttribute('d', d[i]);
 
-      if (mode === 'footer') {
-        // Прижать НИЗ чернил к низу слоя: слово растёт вверх.
-        // Доля от собственной высоты слоя, поэтому пиксели знать не нужно.
-        const shift = ((WM_BOX_HEIGHT - bottomAt(t)) / WM_VIEW_HEIGHT) * 100;
-        svg.style.transform = `translate3d(0,${shift.toFixed(3)}%,0)`;
-
+      if (stage) {
         // Мелкий текст под словом выезжает только когда слово разошлось
         // до конца. Атрибут пишем лишь на переходе, а не каждый кадр.
         const open = t <= 0.002 ? '1' : '0';
-        if (stage && open !== opened) {
+        if (open !== opened) {
           opened = open;
           stage.dataset.open = open;
         }

@@ -15,7 +15,7 @@ LanternError: NO_LCP
   Largest Contentful Paint          2.5 s
   Total Blocking Time               90 ms
   Cumulative Layout Shift               0
-  Speed Index                       1.4 s
+  Speed Index                       1.5 s
 LanternError: NO_LCP
     at LargestContentfulPaint.getOptimisticGraph (file:///home/user/spotik-shop/node_modules/@paulirish/trace_engine/models/trace/lantern/metrics/LargestContentfulPaint.js:30:19)
     at LargestContentfulPaint.compute (file:///home/user/spotik-shop/node_modules/@paulirish/trace_engine/models/trace/lantern/metrics/Metric.js:46:38)

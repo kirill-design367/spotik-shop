@@ -154,7 +154,7 @@ async function run(profile) {
   await goto(0);
   await measure(page, cdp, 'хиро: морф вордмарка', () => wheel(height * 1.05, SECONDS * 1000));
 
-  // 3. футер: то же зеркально, слово растёт вверх от неподвижного низа
+  // 3. футер: то же зеркально, слово растёт ВНИЗ от неподвижного верха
   await goto(0.88);
   await measure(page, cdp, 'футер: вордмарк наоборот', () => wheel(height * 0.9, SECONDS * 1000));
 
