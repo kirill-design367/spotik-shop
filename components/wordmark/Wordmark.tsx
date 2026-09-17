@@ -3,14 +3,19 @@
 import { useEffect, useRef } from 'react';
 import {
   buildPaths,
+  buildPathsE,
+  bottomAtE,
   footRise,
+  ease,
+  easeFooter,
   VIEW_BOX,
   WM_BOX_HEIGHT,
+  WM_VIEW_HEIGHT,
   WM_OVERSHOOT,
   WM_INSET,
   VIEW_OVER_INK,
   PAD_OVER_INK,
-  LAYER_WIDTH_VW,
+  LAYER_WIDTH,
 } from '@/lib/wordmark';
 import { onScrollProgress } from '@/lib/scroll';
 
@@ -45,15 +50,16 @@ let entrancePlayed = false;
  * трансформ входа живёт отдельно и только на время входа.
  *
  * ── ЧТО ПРОИСХОДИТ В КАДРЕ ──────────────────────────────────────────────────
- * Шесть записей атрибута d, и всё — в обоих режимах. Трансформа нет нигде:
- * верх чернил обязан стоять, а он стоит по построению данных, двигать слой
- * нечем и незачем.
+ * В хиро — шесть записей атрибута d, и всё. Трансформа нет: НЕПОДВИЖЕН ВЕРХ
+ * чернил, а он стоит по построению данных (у обоих состояний верх на y = 0),
+ * двигать слой нечем и незачем.
  *
- * В футере трансформ был: он прижимал НИЗ чернил к низу слоя, и слово росло
- * вверх. Из-за этого над словом оставалось зелёное поле высотой в треть
- * экрана, а верхняя кромка ездила. Теперь футер — точное зеркало хиро:
- * верх неподвижен, слово растёт вниз, и держится это тем же построением
- * данных, а не записью в кадре.
+ * В футере всё зеркально: неподвижен НИЗ, слово растёт вверх. Данные
+ * по-прежнему выровнены по верху, поэтому низ приходится прижимать —
+ * одна запись transform на кадр, сдвиг долей собственной высоты слоя.
+ * Форма при этом целиком остаётся в атрибуте d: трансформ двигает слой,
+ * а не меняет его. Величина сдвига берётся из той же bottomAtE(e), что
+ * и форма, и в том же вызове — разъехаться им негде.
  *
  * Ни одного чтения геометрии DOM, ни одной аллокации: буферы выделены
  * один раз в lib/wordmark. Рисуем СРАЗУ, без лишнего requestAnimationFrame —
@@ -95,8 +101,20 @@ export default function Wordmark({ mode, sectionId, followSelector }: Props) {
       if (t === painted) return;
       painted = t;
 
-      const d = buildPaths(t);
+      // Смягчение у хиро и футера разное (см. lib/wordmark, easeFooter),
+      // поэтому считается один раз здесь и дальше идёт готовым числом:
+      // форма и прижим низа обязаны брать его из одного места.
+      const e = mode === 'hero' ? ease(t) : easeFooter(t);
+
+      const d = buildPathsE(e);
       for (let i = 0; i < d.length; i += 1) paths[i]!.setAttribute('d', d[i]);
+
+      if (mode === 'footer') {
+        // Прижать НИЗ чернил к низу слоя: слово растёт ВВЕРХ от своей линии.
+        // Доля от собственной высоты слоя, поэтому пиксели знать не нужно.
+        const shift = ((WM_BOX_HEIGHT - bottomAtE(e)) / WM_VIEW_HEIGHT) * 100;
+        svg.style.transform = `translate3d(0,${shift.toFixed(5)}%,0)`;
+      }
 
       if (stage) {
         // Мелкий текст под словом выезжает только когда слово разошлось
@@ -229,8 +247,11 @@ export default function Wordmark({ mode, sectionId, followSelector }: Props) {
         preserveAspectRatio="none"
         focusable="false"
         style={{
-          width: `${LAYER_WIDTH_VW * 100}vw`,
-          marginLeft: `${WM_INSET * 100}vw`,
+          // cqw, а не vw: единица контейнерного запроса меряет ОБЛАСТЬ
+          // СОДЕРЖИМОГО, без полосы прокрутки. В vw правый отступ съедался
+          // полосой и уходил в минус — литеру K обрезало.
+          width: `${LAYER_WIDTH * 100}cqw`,
+          marginLeft: `${WM_INSET * 100}cqw`,
           ...(mode === 'footer'
             ? {
                 height: `calc(var(--wm-h) * ${VIEW_OVER_INK.toFixed(5)})`,

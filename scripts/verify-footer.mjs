@@ -4,11 +4,15 @@
  * Три вещи, которые шестая итерация обязана держать, и все три меряются
  * тем, что реально нарисовано пикселями, а не тем, что написано в коде.
  *
- * 1. ВЕРХНЯЯ КРОМКА НЕПОДВИЖНА. Это условие 1 из шести, только в футере:
- *    слово растёт ВНИЗ, верх стоит. Мерится дважды и независимо —
- *    по растру (первая строка, где на зелёном появились чернила) и по
- *    геометрии (верх бокса шести путей). Разброс обязан быть нулевым
- *    на всех положениях скролла и на всех трёх размерах.
+ * 1. НИЖНЯЯ КРОМКА НЕПОДВИЖНА. Зеркало условия 1 из шести: в хиро стоит
+ *    верх и слово растёт вниз, в футере стоит НИЗ и слово растёт вверх.
+ *    Мерится дважды и независимо — по растру (последняя строка, где
+ *    на зелёном есть чернила) и по геометрии (низ бокса шести путей).
+ *    Разброс обязан быть нулевым на всех положениях скролла и на всех
+ *    трёх размерах.
+ *
+ *    ПРЕЖНЕЕ ТРЕБОВАНИЕ «верх чернил в футере неподвижен» ОТМЕНЕНО
+ *    арт-директором в седьмой итерации: эталон делает обратное.
  *
  * 2. ЗЕЛЁНОЕ ПОЛЕ НАЧИНАЕТСЯ У СЛОВА И РЕЖЕТ ВЕРХУШКИ ЛИТЕР. Над полем
  *    остаётся полоса фона страницы ровно в величину среза, и она же
@@ -46,9 +50,11 @@ const fail = (m) => { failed += 1; console.log(`  ПРОВАЛ: ${m}`); };
 const GREEN = (d, k) => d[k] > 20 && d[k] < 60 && d[k + 1] > 160 && d[k + 1] < 200 && d[k + 2] > 65 && d[k + 2] < 105;
 const INK = (d, k) => d[k] < 40 && d[k + 1] < 40 && d[k + 2] < 40;
 
-/** Первая строка, где на одной горизонтали есть и зелёное, и чернила. */
-function inkOnGreenTop(png) {
-  for (let y = 0; y < png.height; y += 1) {
+/** Строка с чернилами на зелёном: первая сверху (dir=1) или снизу (dir=-1). */
+function inkOnGreenRow(png, dir) {
+  const from = dir > 0 ? 0 : png.height - 1;
+  const to = dir > 0 ? png.height : -1;
+  for (let y = from; y !== to; y += dir) {
     let g = 0, i = 0;
     for (let x = 0; x < png.width; x += 1) {
       const k = (png.width * y + x) * 4;
@@ -58,6 +64,30 @@ function inkOnGreenTop(png) {
     }
   }
   return -1;
+}
+
+/**
+ * Последняя строка, в которой на зелёном ещё есть хоть что-то не зелёное.
+ *
+ * Порог по «черноте» здесь не годится: самый низ слова — это кончик
+ * круглой литеры, сглаженный край. Сколько там почти чёрных пикселей,
+ * зависит от кривизны, а кривизна по ходу морфа меняется — и порог
+ * прыгает на пиксель, хотя кромка стоит. Признак «пиксель НЕ зелёный»
+ * ловит и слабую подмешку тоже, поэтому строка получается ровно floor
+ * от истинной кромки и не зависит ни от кривизны, ни от насыщенности.
+ */
+function inkBottomRow(png, fromY) {
+  let last = -1;
+  let clean = 0;
+  for (let y = Math.max(0, fromY); y < png.height; y += 1) {
+    let dirty = false;
+    for (let x = 0; x < png.width && !dirty; x += 1)
+      if (!GREEN(png.data, (png.width * y + x) * 4)) dirty = true;
+    // счётчик чистых строк считаем только ПОСЛЕ того, как слово найдено:
+    // до этого под верхней границей поля идёт чистая зелёная пустота
+    if (dirty) { last = y; clean = 0; } else if (last >= 0 && ++clean > 40) break;
+  }
+  return last;
 }
 
 /** Первая строка, где вообще появилось зелёное поле. */
@@ -137,6 +167,7 @@ for (const dev of SIZES) {
         inkTop: Math.min(...r.map((b) => b.top)),
         inkBottom: Math.max(...r.map((b) => b.bottom)),
         letterTops: r.map((b) => b.top),
+        stageTop: document.querySelector('.footer__stage').getBoundingClientRect().top,
         fieldTop: field.top,
         layerH: layer.height,
         bodyTop: body.getBoundingClientRect().top,
@@ -148,14 +179,18 @@ for (const dev of SIZES) {
         below: Math.round(document.documentElement.scrollHeight - (window.scrollY + window.innerHeight)),
       };
     });
-    rows.push({ ...m, rasterTop: inkOnGreenTop(png), rasterGreen: greenTop(png), png });
+    const gTop = greenTop(png);
+    rows.push({ ...m, rasterTop: inkOnGreenRow(png, 1),
+      rasterBottom: inkBottomRow(png, gTop + 4), rasterGreen: gTop, png });
   }
 
-  // ── условие 1 в футере ────────────────────────────────────────────────
-  const rt = rows.map((r) => r.rasterTop);
-  const gt = rows.map((r) => r.inkTop);
-  const spreadR = Math.max(...rt) - Math.min(...rt);
-  const spreadG = Math.max(...gt) - Math.min(...gt);
+  // ── условие 1 в футере, зеркальное: стоит НИЗ ─────────────────────────
+  // Растровый низ берётся только там, где мелкий текст скрыт: иначе самой
+  // нижней строкой «чернила на зелёном» окажется он, а не слово.
+  const rb = rows.map((r) => r.rasterBottom);
+  const gb = rows.map((r) => r.inkBottom);
+  const spreadR = Math.max(...rb) - Math.min(...rb);
+  const spreadG = Math.max(...gb) - Math.min(...gb);
 
   // ── срез ──────────────────────────────────────────────────────────────
   const last = rows[rows.length - 1];
@@ -163,6 +198,17 @@ for (const dev of SIZES) {
   const cuts = last.letterTops.map((t) => (last.fieldTop - t) / capPx);
   const cutMin = Math.min(...cuts);
   const cutMax = Math.max(...cuts);
+
+  /* Срез — не отдельная настройка, а следствие того, что слово доросло
+     до края зелёного поля: он набирается на последних CUT пикселях роста
+     и раньше не существует. Проверяется серединой хода — там верх чернил
+     обязан лежать НИЖЕ границы поля, то есть величина отрицательна. */
+  const cutPx = last.fieldTop - last.inkTop;
+  const hTight = rows[0].inkBottom - rows[0].inkTop;
+  const hOpen = last.inkBottom - last.inkTop;
+  const cutShare = cutPx / (hOpen - hTight);
+  const midRow = rows[5];
+  const cutMidMax = midRow.fieldTop - midRow.inkTop;
 
   // ── текст до раскрытия ────────────────────────────────────────────────
   const openH = last.inkBottom - last.inkTop;
@@ -182,26 +228,39 @@ for (const dev of SIZES) {
   const below = rows[rows.length - 1].below;
 
   if (process.env.WMDEBUG) {
+    console.log('    растр низ:', rows.map((r) => r.rasterBottom).join(' '));
+    console.log('    геом низ :', rows.map((r) => r.inkBottom.toFixed(2)).join(' '));
+    console.log('    высота   :', rows.map((r) => (r.inkBottom - r.inkTop).toFixed(1)).join(' '));
     for (const r of rows)
       console.log('    y=%s  inkTop=%s  fieldTop=%s  растр=%s  below=%s',
         String(r.scrollY).padStart(6), r.inkTop.toFixed(3).padStart(8),
         r.fieldTop.toFixed(3).padStart(8), String(r.rasterTop).padStart(4), r.below);
   }
-  if (spreadR !== 0) fail(`${dev.w}: верхняя кромка по растру гуляет на ${spreadR} px`);
-  if (spreadG > 0.01) fail(`${dev.w}: верхняя кромка по геометрии гуляет на ${spreadG.toFixed(3)} px`);
+  /* По растру кромка не может быть точнее пикселя: истинный низ лежит
+     на дробной позиции (358.79 на 390), и строка, в которую попадает край,
+     то попадает под порог, то нет — это сглаживание, а не движение.
+     Целочисленная проверка поэтому с допуском в 1 px, а настоящий ноль
+     даёт геометрия. */
+  if (spreadR > 1) fail(`${dev.w}: нижняя кромка по растру гуляет на ${spreadR} px`);
+  // 0.02 px — одна единица раскладки Chrome (1/64 px), пол измерения
+  if (spreadG > 0.02) fail(`${dev.w}: нижняя кромка по геометрии гуляет на ${spreadG.toFixed(3)} px`);
+  if (cutMidMax >= 0) fail(`${dev.w}: срез виден на середине хода (${cutMidMax.toFixed(2)} px)`);
   if (cutMin <= 0) fail(`${dev.w}: не срезана хотя бы одна литера (минимум ${cutMin.toFixed(4)})`);
   if (dirty !== 0) fail(`${dev.w}: до раскрытия под словом ${dirty} не-зелёных пикселей`);
   if (hs !== 0) fail(`${dev.w}: горизонтальный скролл ${hs} px`);
   if (below !== 0) fail(`${dev.w}: за нижним краем экрана осталось ${below} px документа`);
 
-  report.push({ dev, rows, spreadR, spreadG, cuts, cutMin, cutMax, capPx, checked, dirty, hs, below, rasterGreen: last.rasterGreen });
+  report.push({ dev, rows, spreadR, spreadG, cuts, cutMin, cutMax, capPx,
+    checked, dirty, hs, below, cutMidMax, cutPx, cutShare,
+    rasterGreen: last.rasterGreen });
   await page.close();
 }
 
 /* ── печать ──────────────────────────────────────────────────────────────── */
 const LETTERS = ['S', 'P', 'O', 'T', 'I', 'K'];
-console.log('── УСЛОВИЕ 1 В ФУТЕРЕ: ВЕРХ ЧЕРНИЛ НЕПОДВИЖЕН ──────────────────');
+console.log('── УСЛОВИЕ 1 В ФУТЕРЕ, ЗЕРКАЛЬНОЕ: НИЗ ЧЕРНИЛ НЕПОДВИЖЕН ───────');
 console.log('размер   положений   разброс по растру   разброс по геометрии');
+console.log('(растр целочислен и видит сглаживание края; ноль даёт геометрия)');
 for (const r of report) {
   console.log('  %s   %s   %s px   %s px',
     String(r.dev.w + '×' + r.dev.h).padEnd(10),
@@ -223,6 +282,14 @@ for (const r of report) {
 }
 console.log('(в процентах высоты прописной; у круглых S и O больше ровно');
 console.log(' на овершут рисунка — 1.93 %, это и есть прямой горизонтальный срез)');
+console.log('');
+console.log('Срез — следствие того, что слово доросло до края поля:');
+console.log('размер       на середине хода      срез набирается за');
+for (const r of report)
+  console.log('  %s %s px ниже границы %s %% хода (%s px роста)',
+    String(r.dev.w + '×' + r.dev.h).padEnd(11),
+    (-r.cutMidMax).toFixed(1).padStart(7),
+    (r.cutShare * 100).toFixed(1).padStart(7), r.cutPx.toFixed(1));
 
 console.log('');
 console.log('── ТЕКСТ ДО РАСКРЫТИЯ ──────────────────────────────────────────');

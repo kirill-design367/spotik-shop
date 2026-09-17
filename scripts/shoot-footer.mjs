@@ -12,12 +12,14 @@ await mkdir('.shots/footer', { recursive: true });
 const browser = await launch();
 
 const SIZES = [['390x844', 390, 844, true], ['1920x1080', 1920, 1080, false]];
-// доля хода морфа; для «раскрыто с текстом» ждём выезд текста
+/* Доля хода морфа. Отрицательная — это ПОДХОД: секция ещё едет, сцена
+   не прилипла, слово сжато и идёт вверх вместе со страницей. Ноль — тот
+   самый кадр, в котором низ чернил пришёл на свою линию и прибился. */
 const SPOTS = [
-  ['1-начало-раскрытия', 0, 260],
-  ['2-середина', 0.5, 260],
-  ['3-раскрыто-без-текста', 0.985, 260],
-  ['4-раскрыто-с-текстом', 1, 900],
+  ['1-слово-на-подходе', -0.6, 300],
+  ['2-низ-прибился', 0, 300],
+  ['3-середина-роста', 0.5, 300],
+  ['4-раскрыто-с-текстом', 1, 1000],
 ];
 
 for (const [sname, w, h, mob] of SIZES) {
@@ -29,11 +31,13 @@ for (const [sname, w, h, mob] of SIZES) {
   await page.evaluate(() => document.fonts.ready);
   await page.waitForSelector('.hero__stage[data-entered]');
   for (const [name, f, wait] of SPOTS) {
-    const state = await page.evaluate((frac) => {
+    await page.evaluate((frac) => {
       const el = document.getElementById('footer');
       const top = Math.ceil(el.getBoundingClientRect().top + window.scrollY);
-      window.scrollTo(0, top + Math.round(window.innerHeight * 0.55) * frac);
-      return 0;
+      // подход меряется экранами до прилипания, ход — долями самого хода
+      window.scrollTo(0, frac < 0
+        ? top + window.innerHeight * frac
+        : top + Math.round(window.innerHeight * 0.55) * frac);
     }, f);
     await page.waitForTimeout(wait);
     const info = await page.evaluate(() => {
