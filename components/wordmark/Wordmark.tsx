@@ -4,17 +4,15 @@ import { useEffect, useRef } from 'react';
 import {
   buildPaths,
   buildPathsE,
-  bottomAtE,
   footRise,
   ease,
   easeFooter,
   VIEW_BOX,
+  VIEW_BOX_INK,
   WM_BOX_HEIGHT,
-  WM_VIEW_HEIGHT,
   WM_OVERSHOOT,
   WM_INSET,
   VIEW_OVER_INK,
-  PAD_OVER_INK,
   LAYER_WIDTH,
 } from '@/lib/wordmark';
 import { onScrollProgress } from '@/lib/scroll';
@@ -50,16 +48,14 @@ let entrancePlayed = false;
  * трансформ входа живёт отдельно и только на время входа.
  *
  * ── ЧТО ПРОИСХОДИТ В КАДРЕ ──────────────────────────────────────────────────
- * В хиро — шесть записей атрибута d, и всё. Трансформа нет: НЕПОДВИЖЕН ВЕРХ
- * чернил, а он стоит по построению данных (у обоих состояний верх на y = 0),
- * двигать слой нечем и незачем.
+ * Шесть записей атрибута d, и всё — в обоих режимах. Трансформа нет нигде:
+ * НЕПОДВИЖЕН ВЕРХ чернил, и в хиро, и в футере. Он стоит по построению
+ * данных — у обоих состояний верх на y = 0, и это одна и та же точка
+ * контура, — поэтому двигать слой нечем и незачем.
  *
- * В футере всё зеркально: неподвижен НИЗ, слово растёт вверх. Данные
- * по-прежнему выровнены по верху, поэтому низ приходится прижимать —
- * одна запись transform на кадр, сдвиг долей собственной высоты слоя.
- * Форма при этом целиком остаётся в атрибуте d: трансформ двигает слой,
- * а не меняет его. Величина сдвига берётся из той же bottomAtE(e), что
- * и форма, и в том же вызове — разъехаться им негде.
+ * В седьмой итерации в футере была вторая запись, transform, прижимавший
+ * низ: постановка требовала растить слово вверх. Она отменена, требование
+ * вернулось к неподвижному верху, и трансформ ушёл вместе с ней.
  *
  * Ни одного чтения геометрии DOM, ни одной аллокации: буферы выделены
  * один раз в lib/wordmark. Рисуем СРАЗУ, без лишнего requestAnimationFrame —
@@ -108,13 +104,6 @@ export default function Wordmark({ mode, sectionId, followSelector }: Props) {
 
       const d = buildPathsE(e);
       for (let i = 0; i < d.length; i += 1) paths[i]!.setAttribute('d', d[i]);
-
-      if (mode === 'footer') {
-        // Прижать НИЗ чернил к низу слоя: слово растёт ВВЕРХ от своей линии.
-        // Доля от собственной высоты слоя, поэтому пиксели знать не нужно.
-        const shift = ((WM_BOX_HEIGHT - bottomAtE(e)) / WM_VIEW_HEIGHT) * 100;
-        svg.style.transform = `translate3d(0,${shift.toFixed(5)}%,0)`;
-      }
 
       if (stage) {
         // Мелкий текст под словом выезжает только когда слово разошлось
@@ -187,8 +176,18 @@ export default function Wordmark({ mode, sectionId, followSelector }: Props) {
     const stage = wrap?.closest<HTMLElement>('.hero__stage');
     if (!stage) return;
 
+    /*
+     * Вход обрывается сразу и в третьем случае: страница УЖЕ прокручена
+     * к моменту монтирования.
+     *
+     * До гидратации слушателей ещё нет, поэтому колесо, крутнутое в эти
+     * кадры, проходит мимо: вход продолжает играть уже поверх морфа, и два
+     * движения идут одновременно. Раньше это снималось только таймером —
+     * замер показывал 7 кадров наложения при замедленном процессоре.
+     */
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduced || entrancePlayed) {
+    if (reduced || entrancePlayed || window.scrollY > 0) {
+      entrancePlayed = true;
       stage.dataset.entered = '1';
       return;
     }
@@ -219,9 +218,16 @@ export default function Wordmark({ mode, sectionId, followSelector }: Props) {
     };
   }, [mode]);
 
-  // Оба слоя рисуются в раскрытом состоянии: это то, что человек видит
-  // в покое, и то, что останется, если скрипт не доедет.
-  const initial = buildPaths(0);
+  /*
+   * Начальная отрисовка — то, что видно ДО гидратации.
+   *
+   * Хиро рисуется раскрытым: это его состояние покоя на первом экране.
+   * Футер — СЖАТЫМ, потому что это его состояние покоя: к футеру всегда
+   * приходят прокруткой сверху, и в тот момент ход ещё не начался.
+   * Раньше он рисовался раскрытым и «въезжал снизу уже раскрытым», пока
+   * гидратация не поправит, — это ломало весь порядок хода.
+   */
+  const initial = buildPaths(mode === 'hero' ? 0 : 1);
 
   return (
     <div
@@ -230,9 +236,8 @@ export default function Wordmark({ mode, sectionId, followSelector }: Props) {
       // aria-hidden: слово дублирует заголовок страницы, скринридеру оно лишнее
       aria-hidden="true"
       // В хиро слой высотой во всю рамку: поле сверху нужно подскоку букв.
-      // В футере входа нет, и слово обязано идти вровень с верхом блока,
-      // поэтому слой ровно по чернилам, а поле уводится отрицательным
-      // полем самого SVG.
+      // В футере входа нет, и рамка там без поля (VIEW_BOX_INK), поэтому
+      // слой ровно по чернилам и никаких поправок не требует.
       style={{
         height:
           mode === 'hero'
@@ -243,7 +248,7 @@ export default function Wordmark({ mode, sectionId, followSelector }: Props) {
       <svg
         ref={svgRef}
         className="wm__svg"
-        viewBox={VIEW_BOX}
+        viewBox={mode === 'hero' ? VIEW_BOX : VIEW_BOX_INK}
         preserveAspectRatio="none"
         focusable="false"
         style={{
@@ -252,12 +257,6 @@ export default function Wordmark({ mode, sectionId, followSelector }: Props) {
           // полосой и уходил в минус — литеру K обрезало.
           width: `${LAYER_WIDTH * 100}cqw`,
           marginLeft: `${WM_INSET * 100}cqw`,
-          ...(mode === 'footer'
-            ? {
-                height: `calc(var(--wm-h) * ${VIEW_OVER_INK.toFixed(5)})`,
-                marginTop: `calc(var(--wm-h) * ${(-PAD_OVER_INK).toFixed(5)})`,
-              }
-            : null),
           // величины входа — в единицах контура, их же понимает transform
           // внутри SVG, поэтому перелёт задан ровно в долях высоты прописной
           ['--wm-drop' as string]: `${WM_BOX_HEIGHT.toFixed(3)}px`,

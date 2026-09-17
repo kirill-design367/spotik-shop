@@ -4,15 +4,21 @@
  * Три вещи, которые шестая итерация обязана держать, и все три меряются
  * тем, что реально нарисовано пикселями, а не тем, что написано в коде.
  *
- * 1. НИЖНЯЯ КРОМКА НЕПОДВИЖНА. Зеркало условия 1 из шести: в хиро стоит
- *    верх и слово растёт вниз, в футере стоит НИЗ и слово растёт вверх.
- *    Мерится дважды и независимо — по растру (последняя строка, где
- *    на зелёном есть чернила) и по геометрии (низ бокса шести путей).
- *    Разброс обязан быть нулевым на всех положениях скролла и на всех
+ * 1. ВЕРХНЯЯ КРОМКА НЕПОДВИЖНА — то же условие 1 из шести, что и в хиро.
+ *    Слово растёт ВНИЗ от линии, которая проходит сразу под нижней
+ *    границей шапки. Мерится по геометрии (верх бокса шести путей):
+ *    разброс обязан быть нулевым на всех положениях скролла и на всех
  *    трёх размерах.
  *
- *    ПРЕЖНЕЕ ТРЕБОВАНИЕ «верх чернил в футере неподвижен» ОТМЕНЕНО
- *    арт-директором в седьмой итерации: эталон делает обратное.
+ *    Растровый верх здесь ничего не доказывает: верх чернил лежит ВЫШЕ
+ *    границы зелёного поля на величину среза, поэтому первая видимая
+ *    строка чернил — это край поля, и он неподвижен тривиально.
+ *
+ *    Требование седьмой итерации «неподвижен низ» ОТМЕНЕНО арт-директором
+ *    в восьмой: постановка была его и оказалась неверной.
+ *
+ * 1а. ЛИНИЯ СЛОВА совпадает с низом шапки плюс минимальный воздух,
+ *    а ВЫСОТА раскрытого слова — с высотой раскрытого слова в хиро.
  *
  * 2. ЗЕЛЁНОЕ ПОЛЕ НАЧИНАЕТСЯ У СЛОВА И РЕЖЕТ ВЕРХУШКИ ЛИТЕР. Над полем
  *    остаётся полоса фона страницы ровно в величину среза, и она же
@@ -127,6 +133,22 @@ for (const dev of SIZES) {
   await page.evaluate(() => document.fonts.ready);
   await page.waitForSelector('.hero__stage[data-entered]');
 
+  /* Эталон для пунктов 1а: линия слова и его высота берутся из ХИРО,
+     на той же странице и в том же прогоне — сравнивать надо с живым
+     состоянием, а не с записанным числом. */
+  const hero = await page.evaluate(() => {
+    const st = document.querySelector('.hero__stage').getBoundingClientRect();
+    const nav = document.querySelector('.nav').getBoundingClientRect();
+    const r = [...document.querySelectorAll('.wm--hero .wm__letter path')]
+      .map((el) => el.getBoundingClientRect());
+    return {
+      navBottom: nav.bottom - st.top,
+      ink: Math.max(...r.map((b) => b.bottom)) - Math.min(...r.map((b) => b.top)),
+    };
+  });
+  const navBottom = hero.navBottom;
+  const heroInk = hero.ink;
+
   const geom = await page.evaluate(() => {
     const f = document.getElementById('footer');
     return {
@@ -184,11 +206,9 @@ for (const dev of SIZES) {
       rasterBottom: inkBottomRow(png, gTop + 4), rasterGreen: gTop, png });
   }
 
-  // ── условие 1 в футере, зеркальное: стоит НИЗ ─────────────────────────
-  // Растровый низ берётся только там, где мелкий текст скрыт: иначе самой
-  // нижней строкой «чернила на зелёном» окажется он, а не слово.
-  const rb = rows.map((r) => r.rasterBottom);
-  const gb = rows.map((r) => r.inkBottom);
+  // ── условие 1 в футере: стоит ВЕРХ ───────────────────────────────────
+  const rb = rows.map((r) => r.rasterTop);
+  const gb = rows.map((r) => r.inkTop);
   const spreadR = Math.max(...rb) - Math.min(...rb);
   const spreadG = Math.max(...gb) - Math.min(...gb);
 
@@ -199,16 +219,12 @@ for (const dev of SIZES) {
   const cutMin = Math.min(...cuts);
   const cutMax = Math.max(...cuts);
 
-  /* Срез — не отдельная настройка, а следствие того, что слово доросло
-     до края зелёного поля: он набирается на последних CUT пикселях роста
-     и раньше не существует. Проверяется серединой хода — там верх чернил
-     обязан лежать НИЖЕ границы поля, то есть величина отрицательна. */
+  /* Верх неподвижен, значит срез постоянен на всём ходу: он не событие,
+     а отбивка слова от края поля. Разброс по кадрам обязан быть нулевым. */
   const cutPx = last.fieldTop - last.inkTop;
-  const hTight = rows[0].inkBottom - rows[0].inkTop;
-  const hOpen = last.inkBottom - last.inkTop;
-  const cutShare = cutPx / (hOpen - hTight);
-  const midRow = rows[5];
-  const cutMidMax = midRow.fieldTop - midRow.inkTop;
+  const cuts2 = rows.map((r) => r.fieldTop - r.inkTop);
+  const cutSpread = Math.max(...cuts2) - Math.min(...cuts2);
+  const footerInk = last.inkBottom - last.inkTop;
 
   // ── текст до раскрытия ────────────────────────────────────────────────
   const openH = last.inkBottom - last.inkTop;
@@ -241,24 +257,27 @@ for (const dev of SIZES) {
      то попадает под порог, то нет — это сглаживание, а не движение.
      Целочисленная проверка поэтому с допуском в 1 px, а настоящий ноль
      даёт геометрия. */
-  if (spreadR > 1) fail(`${dev.w}: нижняя кромка по растру гуляет на ${spreadR} px`);
+  if (spreadR > 1) fail(`${dev.w}: верхняя кромка по растру гуляет на ${spreadR} px`);
   // 0.02 px — одна единица раскладки Chrome (1/64 px), пол измерения
-  if (spreadG > 0.02) fail(`${dev.w}: нижняя кромка по геометрии гуляет на ${spreadG.toFixed(3)} px`);
-  if (cutMidMax >= 0) fail(`${dev.w}: срез виден на середине хода (${cutMidMax.toFixed(2)} px)`);
+  if (spreadG > 0.02) fail(`${dev.w}: верхняя кромка по геометрии гуляет на ${spreadG.toFixed(3)} px`);
+  if (Math.abs(last.inkTop - (navBottom + 12)) > 0.6)
+    fail(`${dev.w}: линия слова ${last.inkTop.toFixed(1)} вместо ${(navBottom + 12).toFixed(1)} (низ шапки + воздух)`);
+  if (Math.abs(heroInk - footerInk) > 0.6)
+    fail(`${dev.w}: слово в футере ${footerInk.toFixed(1)} против ${heroInk.toFixed(1)} в хиро`);
   if (cutMin <= 0) fail(`${dev.w}: не срезана хотя бы одна литера (минимум ${cutMin.toFixed(4)})`);
   if (dirty !== 0) fail(`${dev.w}: до раскрытия под словом ${dirty} не-зелёных пикселей`);
   if (hs !== 0) fail(`${dev.w}: горизонтальный скролл ${hs} px`);
   if (below !== 0) fail(`${dev.w}: за нижним краем экрана осталось ${below} px документа`);
 
   report.push({ dev, rows, spreadR, spreadG, cuts, cutMin, cutMax, capPx,
-    checked, dirty, hs, below, cutMidMax, cutPx, cutShare,
-    rasterGreen: last.rasterGreen });
+    checked, dirty, hs, below, cutPx, cutSpread, heroInk, footerInk, navBottom,
+    line: last.inkTop, rasterGreen: last.rasterGreen });
   await page.close();
 }
 
 /* ── печать ──────────────────────────────────────────────────────────────── */
 const LETTERS = ['S', 'P', 'O', 'T', 'I', 'K'];
-console.log('── УСЛОВИЕ 1 В ФУТЕРЕ, ЗЕРКАЛЬНОЕ: НИЗ ЧЕРНИЛ НЕПОДВИЖЕН ───────');
+console.log('── УСЛОВИЕ 1 В ФУТЕРЕ: ВЕРХ ЧЕРНИЛ НЕПОДВИЖЕН ──────────────────');
 console.log('размер   положений   разброс по растру   разброс по геометрии');
 console.log('(растр целочислен и видит сглаживание края; ноль даёт геометрия)');
 for (const r of report) {
@@ -283,13 +302,21 @@ for (const r of report) {
 console.log('(в процентах высоты прописной; у круглых S и O больше ровно');
 console.log(' на овершут рисунка — 1.93 %, это и есть прямой горизонтальный срез)');
 console.log('');
-console.log('Срез — следствие того, что слово доросло до края поля:');
-console.log('размер       на середине хода      срез набирается за');
+console.log('Верх неподвижен, поэтому срез постоянен на всём ходу:');
+console.log('размер        величина среза   разброс по кадрам');
 for (const r of report)
-  console.log('  %s %s px ниже границы %s %% хода (%s px роста)',
+  console.log('  %s %s px %s px',
     String(r.dev.w + '×' + r.dev.h).padEnd(11),
-    (-r.cutMidMax).toFixed(1).padStart(7),
-    (r.cutShare * 100).toFixed(1).padStart(7), r.cutPx.toFixed(1));
+    r.cutPx.toFixed(1).padStart(12), r.cutSpread.toFixed(2).padStart(14));
+
+console.log('');
+console.log('── ЛИНИЯ СЛОВА И ВЫСОТА: ФУТЕР ПРОТИВ ХИРО ─────────────────────');
+console.log('размер       низ шапки   линия слова   слово хиро   слово футер');
+for (const r of report)
+  console.log('  %s %s %s %s %s',
+    String(r.dev.w + '×' + r.dev.h).padEnd(11),
+    r.navBottom.toFixed(1).padStart(9), r.line.toFixed(1).padStart(13),
+    r.heroInk.toFixed(1).padStart(12), r.footerInk.toFixed(1).padStart(13));
 
 console.log('');
 console.log('── ТЕКСТ ДО РАСКРЫТИЯ ──────────────────────────────────────────');

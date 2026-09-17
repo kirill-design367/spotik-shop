@@ -10,10 +10,10 @@ LanternError: NO_LCP
     at async TraceEngineResult.compute_ (file:///home/user/spotik-shop/node_modules/lighthouse/core/computed/trace-engine-result.js:256:7)
 
 === МОБИЛЬНЫЙ ===
-производительность  96   доступность 100   практики 100   SEO 100
+производительность  97   доступность 100   практики 100   SEO 100
   First Contentful Paint            0.9 s
-  Largest Contentful Paint          2.5 s
-  Total Blocking Time              110 ms
+  Largest Contentful Paint          2.4 s
+  Total Blocking Time               80 ms
   Cumulative Layout Shift               0
   Speed Index                       1.4 s
 LanternError: NO_LCP

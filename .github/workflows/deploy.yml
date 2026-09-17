@@ -74,6 +74,7 @@ jobs:
           node scripts/verify-footer.mjs
           node scripts/verify-footer-flow.mjs
           node scripts/verify-gutter.mjs
+          node scripts/verify-coldstart.mjs
 
       # Закон проекта: three.js не попадает в бандл первого экрана.
       # Сторож у этого закона один, и он должен стоять в CI, а не в голове.
