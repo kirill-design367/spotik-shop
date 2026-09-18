@@ -160,7 +160,7 @@ async function run(profile) {
 
   // 4. середина страницы: блоки 2-6, где анимации нет
   await goto(0.45);
-  await measure(page, cdp, 'блоки 2-6 (анимации нет)', () => wheel(height * 1.5, SECONDS * 1000));
+  await measure(page, cdp, 'блоки 2-6 (появление строк)', () => wheel(height * 1.5, SECONDS * 1000));
 
   await browser.close();
 }

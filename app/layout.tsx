@@ -34,6 +34,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* Объявления шрифтов идут инлайном: в CSS нельзя записать путь,
             который переживёт basePath. Подробности в lib/fontface.ts. */}
         <style dangerouslySetInnerHTML={{ __html: siteFontFaces(BASE) }} />
+        {/* ПОЯВЛЕНИЕ СТРОК включается атрибутом на <html>, и ставится он
+            здесь, до первой отрисовки: поставь его из эффекта — середина
+            страницы успела бы показаться и мигнуть обратно. Без скрипта
+            атрибута нет и не прячется ничего; при «уменьшить движение»
+            он не ставится вовсе, и страница сразу в конечном состоянии. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{if(!matchMedia('(prefers-reduced-motion: reduce)').matches)" +
+              "document.documentElement.setAttribute('data-rv','')}catch(e){}",
+          }}
+        />
         {/* Шрифтового файла для вордмарка больше нет: слово запечено
             в контуры и рисуется с первого кадра, не дожидаясь сети. */}
         {/* Два сабсета, а не один: первый экранный абзац смешанный —

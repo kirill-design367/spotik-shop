@@ -1,8 +1,15 @@
 import SectionHead from './SectionHead';
 
 /**
- * БЛОК 4 — ПРЕИМУЩЕСТВА. Пять пунктов из брифа.
- * Собственной анимации нет — следующая итерация.
+ * БЛОК 4 — ПРЕИМУЩЕСТВА. ПРИЁМ А: РЯДЫ.
+ *
+ * Тот же приём, что и в блоке тарифов: пункт — это крупный ряд по центру
+ * почти во всю ширину, пояснение — мелкая строка-подпись под ним. Тексты
+ * из брифа не тронуты.
+ *
+ * Кегль здесь меньше, чем у тарифов: там ряд — короткое слово, здесь фраза
+ * в тридцать-сорок знаков. Если дать им один кегль, фраза развалится
+ * на строки по одному слову, а это первое, что ломается на мобильной.
  */
 const PERKS = [
   {
@@ -37,17 +44,23 @@ export default function Benefits() {
           title="Что даёт Premium"
           lead="Пять вещей, ради которых это оформляют. Без «улучшенного опыта» и прочих слов ни о чём."
           meta="до 320 кбит/с · 0 рекламы"
+          quiet
+          center
         />
+      </div>
 
-        <div className="perks">
-          {PERKS.map((p, i) => (
-            <article key={p.t} className="perk">
-              <span className="perk__n">{String(i + 1).padStart(2, '0')}</span>
-              <h3 className="perk__t">{p.t}</h3>
-              <p className="perk__d">{p.d}</p>
-            </article>
-          ))}
-        </div>
+      <div className="rows">
+        {PERKS.map((p, i) => (
+          <article key={p.t} className="row row--perk">
+            <div className="row__in shell rv" style={{ ['--rv-d' as string]: `${i * 80}ms` }}>
+              <p className="row__cap">
+                <span className="row__n tnum">{String(i + 1).padStart(2, '0')}</span>
+              </p>
+              <h3 className="row__t">{p.t}</h3>
+              <p className="row__sub">{p.d}</p>
+            </div>
+          </article>
+        ))}
       </div>
     </section>
   );

@@ -91,8 +91,10 @@ export default function Footer() {
           </dl>
         </div>
 
-        <div className="footer__col">
-          <p className="footer__head">Оговорка</p>
+        {/* Подписи «Оговорка» здесь нет: текст говорит сам за себя, а слово
+            над ним читалось как ещё один раздел реквизитов. Первая строка
+            встаёт на линию соседних колонок распоркой в CSS. */}
+        <div className="footer__col footer__col--note">
           <p className="footer__req footer__note">
             Spotik Shop — независимый сервис. Мы не связаны со Spotify AB
             и не используем её товарные знаки.

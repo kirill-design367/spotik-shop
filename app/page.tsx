@@ -5,6 +5,7 @@ import Benefits from '@/components/sections/Benefits';
 import Gift from '@/components/sections/Gift';
 import Faq from '@/components/sections/Faq';
 import Footer from '@/components/sections/Footer';
+import RevealRoot from '@/components/chrome/RevealRoot';
 
 export default function Page() {
   return (
@@ -18,6 +19,8 @@ export default function Page() {
         <Faq />
       </main>
       <Footer />
+      {/* Один наблюдатель на всю страницу: появление строк в кадре. */}
+      <RevealRoot />
     </>
   );
 }

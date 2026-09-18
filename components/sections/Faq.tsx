@@ -65,7 +65,11 @@ export default function Faq() {
             const qid = `${base}-q-${i}`;
             const aid = `${base}-a-${i}`;
             return (
-              <div key={item.q} className="faq__item">
+              <div
+                key={item.q}
+                className="faq__item rv"
+                style={{ ['--rv-d' as string]: `${i * 60}ms` }}
+              >
                 <h3 style={{ margin: 0 }}>
                   <button
                     type="button"

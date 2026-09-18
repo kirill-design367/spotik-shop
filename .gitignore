@@ -17,3 +17,6 @@ next-env.d.ts
 !.shots/lh-*.json
 .shots/enter/
 .shots/cut/
+# подбор пропорции знака и рабочие кадры середины страницы
+.shots/mid/
+.shots/wmcap/
