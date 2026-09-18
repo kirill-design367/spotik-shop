@@ -73,6 +73,7 @@ jobs:
           node scripts/verify-follow.mjs
           node scripts/verify-footer.mjs
           node scripts/verify-footer-flow.mjs
+          node scripts/verify-footer-band.mjs
           node scripts/verify-gutter.mjs
           node scripts/verify-coldstart.mjs
 

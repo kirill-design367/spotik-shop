@@ -1,5 +1,5 @@
 /**
- * Кадры футера для отчёта: четыре состояния хода на двух размерах.
+ * Кадры футера для отчёта: пять шагов хода на двух размерах.
  * Снимается с собранной выдачи по боевому пути, как и все прочие проверки.
  */
 import { mkdir } from 'node:fs/promises';
@@ -16,11 +16,11 @@ const SIZES = [['390x844', 390, 844, true], ['1920x1080', 1920, 1080, false]];
    не прилипла, слово сжато и идёт вверх вместе со страницей. Ноль — тот
    самый кадр, в котором низ чернил пришёл на свою линию и прибился. */
 const SPOTS = [
-  ['1-слово-на-подходе', -0.6, 300],
-  ['2-верх-прибился', 0, 300],
-  ['3-середина-роста', 0.5, 300],
-  ['4-раскрыто-без-текста', 0.985, 300],
-  ['5-раскрыто-с-текстом', 1, 1100],
+  ['шаг1-подход', -0.6, 300],
+  ['шаг2-прилипание', 0, 300],
+  ['шаг3-рост', 0.5, 300],
+  ['шаг4-остановка', 0.985, 300],
+  ['шаг5-футер', 1, 1100],
 ];
 
 for (const [sname, w, h, mob] of SIZES) {
@@ -45,17 +45,47 @@ for (const [sname, w, h, mob] of SIZES) {
       const r = [...document.querySelectorAll('.wm--footer .wm__letter path')]
         .map((p) => p.getBoundingClientRect());
       const cs = getComputedStyle(document.querySelector('.footer__body'));
+      const fill = document.querySelector('.footer__fill').getBoundingClientRect();
       return {
         ink: (Math.max(...r.map((b) => b.bottom)) - Math.min(...r.map((b) => b.top))).toFixed(1),
-        open: document.querySelector('.footer__stage').dataset.open,
+        open: document.getElementById('footer').dataset.open,
         vis: cs.visibility,
+        // пустая зелёная полоса под словом: низ заливки минус низ чернил
+        band: (fill.bottom - Math.max(...r.map((b) => b.bottom))).toFixed(2),
       };
     });
     await page.screenshot({ path: `.shots/footer/${sname}-${name}.png` });
-    console.log('%s  %s  чернила %s px, data-open=%s, текст %s',
-      sname.padEnd(10), name.padEnd(24), info.ink.padStart(6), info.open, info.vis);
+    console.log('%s  %s  чернила %s px, полоса под словом %s px, data-open=%s, текст %s',
+      sname.padEnd(10), name.padEnd(17), info.ink.padStart(6),
+      info.band.padStart(7), info.open, info.vis);
   }
   await page.close();
+
+  /* И отдельный кадр при «уменьшить движение»: там хода нет вовсе, футер
+     сразу стоит в конечном состоянии — поле во весь экран, слово раскрыто,
+     реквизиты на месте. Если эта ветка отвалится, на глаз этого не видно
+     ни на одном из пяти кадров выше. */
+  const rm = await browser.newPage({
+    viewport: { width: w, height: h }, isMobile: mob, hasTouch: mob,
+    deviceScaleFactor: mob ? 2 : 1, reducedMotion: 'reduce',
+  });
+  await rm.goto(`http://localhost:${PORT}${PREFIX}/`, { waitUntil: 'networkidle' });
+  await rm.evaluate(() => document.fonts.ready);
+  await rm.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await rm.waitForTimeout(800);
+  const rmi = await rm.evaluate(() => {
+    const fill = document.querySelector('.footer__fill').getBoundingClientRect();
+    const field = document.querySelector('.footer__field').getBoundingClientRect();
+    return {
+      open: document.getElementById('footer').dataset.open,
+      full: (field.bottom - fill.bottom).toFixed(2),
+      vis: getComputedStyle(document.querySelector('.footer__body')).visibility,
+    };
+  });
+  await rm.screenshot({ path: `.shots/footer/${sname}-уменьшенное-движение.png` });
+  console.log('%s  %s  поле не доходит до низа сцены на %s px, data-open=%s, текст %s',
+    sname.padEnd(10), 'уменьшенное-движение'.padEnd(17), rmi.full.padStart(6), rmi.open, rmi.vis);
+  await rm.close();
 }
 await browser.close();
 server.close();

@@ -5,6 +5,7 @@ import {
   buildPaths,
   buildPathsE,
   footRise,
+  inkAtE,
   ease,
   easeFooter,
   VIEW_BOX,
@@ -81,9 +82,13 @@ export default function Wordmark({ mode, sectionId, followSelector }: Props) {
     const follow = followSelector
       ? wrap.parentElement?.querySelector<HTMLElement>(followSelector) ?? null
       : null;
-    // data-open живёт на сцене футера: по нему выезжает мелкий текст
-    const stage =
-      mode === 'footer' ? wrap.closest<HTMLElement>('.footer__stage') : null;
+    /*
+     * Состояние футера живёт на САМОЙ СЕКЦИИ, а не на сцене: по нему
+     * выезжает мелкий текст, доливается зелёное поле И красится пиксель
+     * запаса под липкой сценой (см. CLAUDE.md, Р-25). Пиксель лежит вне
+     * сцены, поэтому атрибут обязан стоять выше неё.
+     */
+    const host = mode === 'footer' ? wrap.closest<HTMLElement>('.footer') : null;
 
     let progress = mode === 'hero' ? 0 : 1;
     let painted = NaN;
@@ -105,13 +110,25 @@ export default function Wordmark({ mode, sectionId, followSelector }: Props) {
       const d = buildPathsE(e);
       for (let i = 0; i < d.length; i += 1) paths[i]!.setAttribute('d', d[i]);
 
-      if (stage) {
+      if (host) {
+        /*
+         * НИЖНИЙ КРАЙ ЗЕЛЁНОГО ПОЛЯ ИДЁТ ЗА КРОМКОЙ ЧЕРНИЛ.
+         *
+         * Под словом не должно оставаться пустого зелёного поля: поле
+         * кончается ровно там, где кончаются чернила, и растёт вниз вместе
+         * со словом. В CSS уходит одна величина — доля высоты слоя, занятая
+         * чернилами, — та же самая, из которой в хиро едут тексты. Сдвиг
+         * заливки CSS считает сам, поэтому геометрию из DOM по-прежнему
+         * читать не нужно ни разу.
+         */
+        host.style.setProperty('--wm-ink', inkAtE(e).toFixed(5));
+
         // Мелкий текст под словом выезжает только когда слово разошлось
         // до конца. Атрибут пишем лишь на переходе, а не каждый кадр.
         const open = t <= 0.002 ? '1' : '0';
         if (open !== opened) {
           opened = open;
-          stage.dataset.open = open;
+          host.dataset.open = open;
         }
       }
 

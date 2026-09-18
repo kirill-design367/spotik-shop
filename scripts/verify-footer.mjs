@@ -25,9 +25,10 @@
  *    делает срез видимым. Проверяется, что срез одинаков (в долях высоты
  *    прописной) на всех трёх размерах и что режется КАЖДАЯ из шести литер.
  *
- * 3. МЕЛКИЙ ТЕКСТ НЕ ВИДЕН, ПОКА СЛОВО НЕ ДОШЛО. Доказательство
- *    растровое: полоса под чернилами до конца хода обязана быть ЧИСТО
- *    зелёной — ни одного пикселя другого цвета.
+ * 3. ПОД СЛОВОМ ДО КОНЦА ХОДА НЕТ НИЧЕГО. Доказательство растровое:
+ *    полоса от кромки чернил до низа экрана обязана быть чистым фоном
+ *    страницы. Это разом ловит и мелкий текст, выехавший раньше времени,
+ *    и пустое зелёное поле, оставшееся под неразросшимся словом.
  *
  * Плюс сторожа планки: нет горизонтального скролла, ничего не вылезает
  * за нижний край страницы.
@@ -107,13 +108,22 @@ function greenTop(png) {
   return -1;
 }
 
-/** Сколько пикселей в полосе НЕ зелёные и не чернила слова. */
+/**
+ * Сколько пикселей в полосе под словом НЕ фон страницы.
+ *
+ * С девятой итерации под словом не должно быть вообще ничего: зелёное поле
+ * кончается на кромке чернил, а ниже идёт фон страницы — та же чернота,
+ * что и в полосе НАД словом. Поэтому проверка одна на два требования сразу:
+ * найденный не-фоновый пиксель — это либо выехавший раньше времени текст,
+ * либо оставшееся под словом пустое зелёное поле.
+ */
+const PAGE = (d, k) => Math.abs(d[k] - 18) < 8 && Math.abs(d[k + 1] - 18) < 8 && Math.abs(d[k + 2] - 18) < 8;
 function foreignInBand(png, y0, y1) {
   let n = 0;
   for (let y = Math.max(0, y0); y < Math.min(png.height, y1); y += 1)
     for (let x = 0; x < png.width; x += 1) {
       const k = (png.width * y + x) * 4;
-      if (!GREEN(png.data, k)) n += 1;
+      if (!PAGE(png.data, k)) n += 1;
     }
   return n;
 }
@@ -195,7 +205,7 @@ for (const dev of SIZES) {
         bodyTop: body.getBoundingClientRect().top,
         vis: cs.visibility,
         op: Number(cs.opacity),
-        open: document.querySelector('.footer__stage').dataset.open ?? '',
+        open: document.getElementById('footer').dataset.open ?? '',
         scrollY: Math.round(window.scrollY),
         hscroll: document.documentElement.scrollWidth - document.documentElement.clientWidth,
         below: Math.round(document.documentElement.scrollHeight - (window.scrollY + window.innerHeight)),
@@ -235,7 +245,8 @@ for (const dev of SIZES) {
     if (h > openH - 1) continue; // слово уже раскрыто — текст имеет право быть
     checked += 1;
     if (r.vis !== 'hidden' || r.op > 0.001) fail(`${dev.w}: текст не скрыт при высоте чернил ${h.toFixed(1)}`);
-    // растр: полоса от низа чернил до низа экрана обязана быть чисто зелёной
+    // растр: полоса от низа чернил до низа экрана обязана быть чистым
+    // фоном страницы — ни текста, ни остатка зелёного поля
     dirty += foreignInBand(r.png, Math.ceil(r.inkBottom) + 2, dev.h - 1);
   }
 
@@ -348,6 +359,8 @@ for (const [w, h] of FIT) {
     const st = document.querySelector('.footer__stage').getBoundingClientRect();
     const b = document.querySelector('.footer__body').getBoundingClientRect();
     const wm = document.querySelector('.wm--footer').getBoundingClientRect();
+    const ink = [...document.querySelectorAll('.wm--footer .wm__letter path')]
+      .map((el) => el.getBoundingClientRect());
     let side = 0;
     document.querySelectorAll('.footer__body *').forEach((el) => {
       side = Math.max(side, el.getBoundingClientRect().right - b.right);
@@ -355,10 +368,15 @@ for (const [w, h] of FIT) {
     return {
       down: Math.max(0, b.bottom - st.bottom), side: Math.max(0, side),
       word: wm.height, text: b.height,
+      // просвет между низом раскрытых чернил и верхом реквизитов:
+      // реквизиты больше не делят место со словом во флексбоксе, значит
+      // наехать на литеры им мешает только потолок --footer-text
+      clear: b.top - Math.max(...ink.map((r) => r.bottom)),
       hs: document.documentElement.scrollWidth - document.documentElement.clientWidth,
     };
   });
   if (m.down > 0.5) fail(`${w}×${h}: реквизиты вылезают за низ сцены на ${m.down.toFixed(1)} px`);
+  if (m.clear < 0) fail(`${w}×${h}: реквизиты наехали на слово на ${(-m.clear).toFixed(1)} px`);
   if (m.side > 0.5) fail(`${w}×${h}: строка вылезает за колонку на ${m.side.toFixed(1)} px`);
   if (m.hs !== 0) fail(`${w}×${h}: горизонтальный скролл ${m.hs} px`);
   fit.push({ w, h, ...m });
@@ -367,12 +385,13 @@ for (const [w, h] of FIT) {
 
 console.log('');
 console.log('── ВМЕЩАЕМОСТЬ ФУТЕРА ──────────────────────────────────────────');
-console.log('размер       слово   реквизиты   вылет вниз   вылет вбок');
+console.log('размер       слово   реквизиты   просвет   вылет вниз   вылет вбок');
 for (const f of fit) {
-  console.log('  %s %s px %s px %s px %s px',
+  console.log('  %s %s px %s px %s px %s px %s px',
     String(f.w + '×' + f.h).padEnd(11),
     Math.round(f.word).toString().padStart(5),
     Math.round(f.text).toString().padStart(8),
+    f.clear.toFixed(1).padStart(6),
     f.down.toFixed(1).padStart(9),
     f.side.toFixed(1).padStart(9));
 }
