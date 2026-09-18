@@ -1,31 +1,34 @@
 /**
- * ФУТЕР: ПУСТАЯ ЗЕЛЁНАЯ ПОЛОСА ПОД СЛОВОМ.
+ * ФУТЕР: ЧТО ПОД СЛОВОМ НА ХОДУ РОСТА.
  *
- * Постановка девятой итерации: на всём ходу роста под словом должны быть
- * ЛИБО ЧЕРНИЛА, ЛИБО КРАЙ ЭКРАНА. Пустого зелёного поля под словом быть
- * не должно ни на одном кадре.
+ * Прилипания нет, слово растёт один к одному с прокруткой, и низ чернил
+ * поэтому стоит у нижнего края экрана. Значит под словом не может быть
+ * ничего, кроме воздуха FOOTER_BOTTOM_GAP: ни пустого зелёного поля,
+ * ни выехавшего раньше времени текста.
  *
  * Мерится двумя способами разом.
  *
- *   ПО ГЕОМЕТРИИ — низ зелёной заливки минус низ чернил. Это точное число,
- *   и оно обязано быть нулевым или отрицательным на каждом кадре.
+ *   ПО ГЕОМЕТРИИ — расстояние от низа чернил до низа экрана. Оно обязано
+ *   равняться воздуху и не меняться по ходу.
  *
  *   ПО РАСТРУ — сколько строк НИЖЕ последней строки с чернилами ещё залиты
- *   зелёным. Здесь есть свой пол: кромка заливки лежит на дробной позиции,
+ *   зелёным. Здесь есть свой пол: кромка лежит на дробной позиции,
  *   а сглаженный кончик круглой литеры гаснет на строку раньше настоящего
- *   низа, поэтому одна переходная строка засчитывается всегда. Растр тут
- *   подтверждает геометрию, а не заменяет её.
- *
- * Отдельно пишется ЗАЗОР — геометрическое расстояние от низа чернил до низа
- * экрана. Он нулевым быть не может: при линии слова под шапкой и высоте
- * слова, равной хиро, раскрытое слово кончается выше низа экрана. Число
- * приводится честно, чтобы разница между «полосой» и «зазором» была видна.
+ *   низа. Растр тут подтверждает геометрию, а не заменяет её.
  */
+import { readFileSync } from 'node:fs';
 import { PNG } from 'pngjs';
 import { launch } from './browser.mjs';
 import { serveOut, PREFIX } from './serve-out.mjs';
 
 const PORT = 4207;
+/* Воздух под словом живёт в lib/wordmark.ts: полоса под чернилами обязана
+   быть равна ему и только ему. */
+const SRC = readFileSync('lib/wordmark.ts', 'utf8');
+const DATA = readFileSync('lib/wordmark.data.ts', 'utf8');
+const GAP = Number(/FOOTER_BOTTOM_GAP = ([\d.]+)/.exec(SRC)[1]);
+const INK_TIGHT = Number(/WM_BOTTOM_TIGHT = ([\d.]+)/.exec(DATA)[1])
+  / Number(/WM_BOX_HEIGHT = ([\d.]+)/.exec(DATA)[1]);
 const SIZES = [
   { w: 390, h: 844, mobile: true },
   { w: 1920, h: 1080, mobile: false },
@@ -86,19 +89,23 @@ for (const dev of SIZES) {
   await page.waitForSelector('.hero__stage[data-entered]');
 
   const geom = await page.evaluate(() => {
-    const f = document.getElementById('footer');
+    const l = document.querySelector('.wm--footer').getBoundingClientRect();
     return {
-      top: f.getBoundingClientRect().top + window.scrollY,
-      doc: document.documentElement.scrollHeight,
+      layerBottomDoc: l.bottom + window.scrollY,
+      layerH: l.height,
       vh: window.innerHeight,
+      doc: document.documentElement.scrollHeight,
     };
   });
-  const travel = Math.round(geom.vh * 0.55);
-  const start = Math.ceil(geom.top);
+  /* Ход роста выводится из самой формы: это разница раскрытой и сжатой
+     высоты чернил. Конец хода — там, где низ слоя пришёл на линию низа. */
+  const travel = geom.layerH * (1 - INK_TIGHT);
+  const end = Math.round(geom.layerBottomDoc - geom.vh + GAP);
+  const start = end - travel;
 
-  // подход (шаг 1) + весь ход роста (шаги 2…4), 4 + 17 положений
+  // подход (слово ещё сжато, низ за краем) + весь ход роста
   const stops = [];
-  for (let i = 4; i >= 1; i -= 1) stops.push(start - (geom.vh * 0.5 * i) / 4);
+  for (let i = 4; i >= 1; i -= 1) stops.push(start - (travel * i) / 4);
   for (let i = 0; i <= 16; i += 1) stops.push(start + (travel * i) / 16);
 
   const rows = [];
@@ -109,33 +116,33 @@ for (const dev of SIZES) {
     const m = await page.evaluate(() => {
       const r = [...document.querySelectorAll('.wm--footer .wm__letter path')]
         .map((p) => p.getBoundingClientRect());
-      const fill = document.querySelector('.footer__fill').getBoundingClientRect();
-      const field = document.querySelector('.footer__field').getBoundingClientRect();
+      const sec = document.getElementById('footer').getBoundingClientRect();
+      const text = document.querySelector('.footer__col').getBoundingClientRect();
       const body = document.querySelector('.footer__body');
       const bs = body.getBoundingClientRect();
       const cs = getComputedStyle(body);
       return {
         inkBottom: Math.max(...r.map((b) => b.bottom)),
         inkTop: Math.min(...r.map((b) => b.top)),
-        fillBottom: fill.bottom,
-        fillTop: field.top,
+        secTop: sec.top,
+        textTop: text.top,
         bodyTop: bs.top,
         bodyVisible: cs.visibility !== 'hidden' && Number(cs.opacity) > 0,
-        open: document.getElementById('footer').dataset.open ?? '',
+        textShown: text.top < window.innerHeight - 0.5,
         scrollY: Math.round(window.scrollY),
       };
     });
-    const bottom = inkBottomRow(png, m.fillTop);
+    const bottom = inkBottomRow(png, m.secTop);
     rows.push({
       y: m.scrollY,
-      phase: m.scrollY < start ? 'подход' : 'рост',
-      open: m.open,
+      phase: m.scrollY < start - 1 ? 'подход' : 'рост',
+      open: m.textShown ? '1' : '0',
       inkBottom: m.inkBottom,
-      geom: m.fillBottom - m.inkBottom,
+      geom: dev.h - m.inkBottom,
       band: bottom < 0 ? 0 : emptyGreenBelow(png, bottom),
       gap: dev.h - m.inkBottom,
-      bodyVisible: m.bodyVisible,
-      bodyTop: m.bodyTop,
+      bodyVisible: m.textShown,
+      bodyTop: m.textTop,
     });
   }
   await page.close();
@@ -155,16 +162,16 @@ for (const dev of SIZES) {
       `  ${String(r.y).padStart(7)}  ${r.phase.padEnd(7)}  ${r.inkBottom.toFixed(1).padStart(9)}` +
       `  ${(r.inkBottom + r.geom).toFixed(1).padStart(8)}  ${r.geom.toFixed(2).padStart(11)}` +
       `  ${String(r.band).padStart(12)}  ${r.gap.toFixed(1).padStart(5)}${r.open === '1' ? '  (раскрыто)' : ''}`);
-  out.push(`  ПУСТАЯ ЗЕЛЁНАЯ ПОЛОСА, максимум за ход: ${maxGeom.toFixed(2)} px по геометрии, ${maxBand} px по растру`);
-  out.push(`  зазор от низа чернил до низа экрана:    ${maxGap.toFixed(1)} px (не закрывается: см. CLAUDE.md, Р-32)`);
+  out.push(`  ПОЛОСА ПОД СЛОВОМ, максимум за ход:   ${maxGeom.toFixed(2)} px по геометрии, ${maxBand} px по растру`);
+  out.push(`  задан воздух ${GAP} px — и это всё, что там есть`);
   out.push(`  реквизиты видны до раскрытия:           ${shown.length} кадров из ${live.length}`);
-  if (maxGeom > 0.02) fail(`${dev.w}: под словом остаётся пустое зелёное поле ${maxGeom.toFixed(2)} px`);
-  if (maxBand > 1) fail(`${dev.w}: по растру под словом ${maxBand} px зелёного`);
+  if (maxGeom > GAP + 0.6) fail(`${dev.w}: под словом ${maxGeom.toFixed(2)} px вместо воздуха ${GAP} px`);
+  if (maxBand > GAP + 1) fail(`${dev.w}: по растру под словом ${maxBand} px зелёного`);
   if (shown.length) fail(`${dev.w}: реквизиты видны до полного раскрытия`);
 }
 
 console.log(out.join('\n'));
 await browser.close();
 server.close();
-console.log(failed ? `\nПРОВАЛОВ: ${failed}` : '\nПУСТОЙ ЗЕЛЁНОЙ ПОЛОСЫ ПОД СЛОВОМ НЕТ НИ НА ОДНОМ КАДРЕ.');
+console.log(failed ? `\nПРОВАЛОВ: ${failed}` : '\nПОД СЛОВОМ ТОЛЬКО ВОЗДУХ ДО КРАЯ ЭКРАНА, НИ НА ОДНОМ КАДРЕ БОЛЬШЕ.');
 process.exit(failed ? 1 : 0);

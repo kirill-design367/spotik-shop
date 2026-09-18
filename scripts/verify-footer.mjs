@@ -1,48 +1,45 @@
 /**
- * ПРОВЕРКА ФУТЕРА — ПО РАСТРУ ЖИВОЙ СТРАНИЦЫ.
+ * ПРОВЕРКА ФУТЕРА — ПО РАСТРУ И ГЕОМЕТРИИ ЖИВОЙ СТРАНИЦЫ.
  *
- * Три вещи, которые шестая итерация обязана держать, и все три меряются
- * тем, что реально нарисовано пикселями, а не тем, что написано в коде.
+ * Десятая итерация переписала механику целиком: ПРИЛИПАНИЯ НЕТ. Секция
+ * едет обычным скроллом, слово едет вместе с ней и одновременно растёт.
+ * Отсюда четыре вещи, которые надо держать, и все меряются тем, что
+ * реально нарисовано, а не тем, что написано в коде.
  *
- * 1. ВЕРХНЯЯ КРОМКА НЕПОДВИЖНА — то же условие 1 из шести, что и в хиро.
- *    Слово растёт ВНИЗ от линии, которая проходит сразу под нижней
- *    границей шапки. Мерится по геометрии (верх бокса шести путей):
- *    разброс обязан быть нулевым на всех положениях скролла и на всех
- *    трёх размерах.
+ * 1. РОСТ ОДИН К ОДНОМУ. Прирост высоты чернил в пикселях равен пройденной
+ *    прокрутке в пикселях. Это не украшение: именно из равенства скоростей
+ *    следует неподвижный низ.
  *
- *    Растровый верх здесь ничего не доказывает: верх чернил лежит ВЫШЕ
- *    границы зелёного поля на величину среза, поэтому первая видимая
- *    строка чернил — это край поля, и он неподвижен тривиально.
+ * 2. НИЗ ЧЕРНИЛ СТОИТ у нижнего края экрана на всём ходу роста. Верх при
+ *    этом уходит вверх вместе со страницей — и обязан уходить.
  *
- *    Требование седьмой итерации «неподвижен низ» ОТМЕНЕНО арт-директором
- *    в восьмой: постановка была его и оказалась неверной.
+ * 3. СРЕЗ ВЕРХУШЕК делает верхний край СЕКЦИИ, и он постоянен: слой поднят
+ *    над краем ровно на величину среза и едет вместе с ним.
  *
- * 1а. ЛИНИЯ СЛОВА совпадает с низом шапки плюс минимальный воздух,
- *    а ВЫСОТА раскрытого слова — с высотой раскрытого слова в хиро.
+ * 4. ПОД СЛОВОМ НИЧЕГО НЕТ. Полоса от кромки чернил до низа экрана — это
+ *    воздух FOOTER_BOTTOM_GAP и только он: ни текста, ни пустого поля.
+ *    Реквизиты лежат НИЖЕ края экрана и выезжают после конца роста.
  *
- * 2. ЗЕЛЁНОЕ ПОЛЕ НАЧИНАЕТСЯ У СЛОВА И РЕЖЕТ ВЕРХУШКИ ЛИТЕР. Над полем
- *    остаётся полоса фона страницы ровно в величину среза, и она же
- *    делает срез видимым. Проверяется, что срез одинаков (в долях высоты
- *    прописной) на всех трёх размерах и что режется КАЖДАЯ из шести литер.
- *
- * 3. ПОД СЛОВОМ ДО КОНЦА ХОДА НЕТ НИЧЕГО. Доказательство растровое:
- *    полоса от кромки чернил до низа экрана обязана быть чистым фоном
- *    страницы. Это разом ловит и мелкий текст, выехавший раньше времени,
- *    и пустое зелёное поле, оставшееся под неразросшимся словом.
- *
- * Плюс сторожа планки: нет горизонтального скролла, ничего не вылезает
- * за нижний край страницы.
+ * Плюс сторожа планки: высота слова совпадает с хиро на одиннадцати
+ * ширинах, нет горизонтального скролла, ничего не вылезает за нижний край.
  */
 import { readFileSync } from 'node:fs';
 import { PNG } from 'pngjs';
 import { launch } from './browser.mjs';
 import { serveOut, PREFIX } from './serve-out.mjs';
 
-// Величина среза живёт в одном месте — lib/wordmark.ts. Скрипт на чистом
-// node и .ts не читает, поэтому число вынимается из исходника, а не
-// дублируется здесь: расходиться нечему.
-const FOOTER_CUT_RATIO = Number(
-  /FOOTER_CUT_RATIO = ([\d.]+)/.exec(readFileSync('lib/wordmark.ts', 'utf8'))[1]);
+/* Величины живут в одном месте — lib/wordmark.ts. Скрипт на чистом node
+   и .ts не читает, поэтому числа вынимаются из исходника, а не дублируются
+   здесь: расходиться нечему. */
+const SRC = readFileSync('lib/wordmark.ts', 'utf8');
+const DATA = readFileSync('lib/wordmark.data.ts', 'utf8');
+const num = (re, src) => Number(re.exec(src)[1]);
+const FOOTER_CUT_RATIO = num(/FOOTER_CUT_RATIO = ([\d.]+)/, SRC);
+const GAP = num(/FOOTER_BOTTOM_GAP = ([\d.]+)/, SRC);
+const WM_BOX_HEIGHT = num(/WM_BOX_HEIGHT = ([\d.]+)/, DATA);
+const WM_BOTTOM_TIGHT = num(/WM_BOTTOM_TIGHT = ([\d.]+)/, DATA);
+const WM_CAP_OPEN = num(/WM_CAP_OPEN = ([\d.]+)/, DATA);
+const INK_TIGHT = WM_BOTTOM_TIGHT / WM_BOX_HEIGHT;
 
 const PORT = 4187;
 const SIZES = [
@@ -57,11 +54,9 @@ const fail = (m) => { failed += 1; console.log(`  ПРОВАЛ: ${m}`); };
 const GREEN = (d, k) => d[k] > 20 && d[k] < 60 && d[k + 1] > 160 && d[k + 1] < 200 && d[k + 2] > 65 && d[k + 2] < 105;
 const INK = (d, k) => d[k] < 40 && d[k + 1] < 40 && d[k + 2] < 40;
 
-/** Строка с чернилами на зелёном: первая сверху (dir=1) или снизу (dir=-1). */
-function inkOnGreenRow(png, dir) {
-  const from = dir > 0 ? 0 : png.height - 1;
-  const to = dir > 0 ? png.height : -1;
-  for (let y = from; y !== to; y += dir) {
+/** Первая строка сверху, где на зелёном уже есть чернила: это линия среза. */
+function inkOnGreenRow(png) {
+  for (let y = 0; y < png.height; y += 1) {
     let g = 0, i = 0;
     for (let x = 0; x < png.width; x += 1) {
       const k = (png.width * y + x) * 4;
@@ -71,30 +66,6 @@ function inkOnGreenRow(png, dir) {
     }
   }
   return -1;
-}
-
-/**
- * Последняя строка, в которой на зелёном ещё есть хоть что-то не зелёное.
- *
- * Порог по «черноте» здесь не годится: самый низ слова — это кончик
- * круглой литеры, сглаженный край. Сколько там почти чёрных пикселей,
- * зависит от кривизны, а кривизна по ходу морфа меняется — и порог
- * прыгает на пиксель, хотя кромка стоит. Признак «пиксель НЕ зелёный»
- * ловит и слабую подмешку тоже, поэтому строка получается ровно floor
- * от истинной кромки и не зависит ни от кривизны, ни от насыщенности.
- */
-function inkBottomRow(png, fromY) {
-  let last = -1;
-  let clean = 0;
-  for (let y = Math.max(0, fromY); y < png.height; y += 1) {
-    let dirty = false;
-    for (let x = 0; x < png.width && !dirty; x += 1)
-      if (!GREEN(png.data, (png.width * y + x) * 4)) dirty = true;
-    // счётчик чистых строк считаем только ПОСЛЕ того, как слово найдено:
-    // до этого под верхней границей поля идёт чистая зелёная пустота
-    if (dirty) { last = y; clean = 0; } else if (last >= 0 && ++clean > 40) break;
-  }
-  return last;
 }
 
 /** Первая строка, где вообще появилось зелёное поле. */
@@ -108,23 +79,12 @@ function greenTop(png) {
   return -1;
 }
 
-/**
- * Сколько пикселей в полосе под словом НЕ фон страницы.
- *
- * С девятой итерации под словом не должно быть вообще ничего: зелёное поле
- * кончается на кромке чернил, а ниже идёт фон страницы — та же чернота,
- * что и в полосе НАД словом. Поэтому проверка одна на два требования сразу:
- * найденный не-фоновый пиксель — это либо выехавший раньше времени текст,
- * либо оставшееся под словом пустое зелёное поле.
- */
-const PAGE = (d, k) => Math.abs(d[k] - 18) < 8 && Math.abs(d[k + 1] - 18) < 8 && Math.abs(d[k + 2] - 18) < 8;
+/** Сколько пикселей в полосе НЕ зелёные: полоса под словом обязана быть чистой. */
 function foreignInBand(png, y0, y1) {
   let n = 0;
   for (let y = Math.max(0, y0); y < Math.min(png.height, y1); y += 1)
-    for (let x = 0; x < png.width; x += 1) {
-      const k = (png.width * y + x) * 4;
-      if (!PAGE(png.data, k)) n += 1;
-    }
+    for (let x = 0; x < png.width; x += 1)
+      if (!GREEN(png.data, (png.width * y + x) * 4)) n += 1;
   return n;
 }
 
@@ -135,213 +95,183 @@ const report = [];
 for (const dev of SIZES) {
   const page = await browser.newPage({
     viewport: { width: dev.w, height: dev.h },
-    isMobile: dev.mobile,
-    hasTouch: dev.mobile,
-    deviceScaleFactor: 1,
+    isMobile: dev.mobile, hasTouch: dev.mobile, deviceScaleFactor: 1,
   });
   await page.goto(`http://localhost:${PORT}${PREFIX}/`, { waitUntil: 'networkidle' });
   await page.evaluate(() => document.fonts.ready);
   await page.waitForSelector('.hero__stage[data-entered]');
 
-  /* Эталон для пунктов 1а: линия слова и его высота берутся из ХИРО,
-     на той же странице и в том же прогоне — сравнивать надо с живым
-     состоянием, а не с записанным числом. */
-  const hero = await page.evaluate(() => {
-    const st = document.querySelector('.hero__stage').getBoundingClientRect();
-    const nav = document.querySelector('.nav').getBoundingClientRect();
+  /* Эталон высоты берётся из ХИРО, на той же странице и в том же прогоне:
+     сравнивать надо с живым состоянием, а не с записанным числом. */
+  const heroInk = await page.evaluate(() => {
     const r = [...document.querySelectorAll('.wm--hero .wm__letter path')]
       .map((el) => el.getBoundingClientRect());
-    return {
-      navBottom: nav.bottom - st.top,
-      ink: Math.max(...r.map((b) => b.bottom)) - Math.min(...r.map((b) => b.top)),
-    };
+    return Math.max(...r.map((b) => b.bottom)) - Math.min(...r.map((b) => b.top));
   });
-  const navBottom = hero.navBottom;
-  const heroInk = hero.ink;
 
-  const geom = await page.evaluate(() => {
-    const f = document.getElementById('footer');
+  const g = await page.evaluate(() => {
+    const l = document.querySelector('.wm--footer').getBoundingClientRect();
     return {
-      // именно getBoundingClientRect, а не offsetTop: offsetTop округлён
-      // до целого, и промах в доли пикселя означает, что сцена ЕЩЁ
-      // не прилипла — тогда слой стоит ниже на этот остаток, и замер
-      // ловит не движение кромки, а собственную ошибку
-      top: f.getBoundingClientRect().top + window.scrollY,
-      height: f.offsetHeight,
-      doc: document.documentElement.scrollHeight,
+      layerBottomDoc: l.bottom + window.scrollY,
+      layerH: l.height,
       vh: window.innerHeight,
+      doc: document.documentElement.scrollHeight,
     };
   });
-  // ход морфа = 0.55 экрана от момента, когда верх футера пришёл к верху
-  // экрана; дальше выдержка до конца документа
-  const travel = Math.round(geom.vh * 0.55);
-  const maxScroll = geom.doc - geom.vh;
-  // сцена прилипает, когда верх футера дошёл до верха экрана; замер идёт
-  // по прилипшей сцене, поэтому старт округляем вверх
-  const start = Math.ceil(geom.top);
+  /* Ход роста ВЫВОДИТСЯ, а не задаётся: это разница раскрытой и сжатой
+     высоты чернил. Конец хода — там, где низ слоя пришёл на линию низа. */
+  const travel = Math.round(g.layerH * (1 - INK_TIGHT));
+  const end = Math.round(g.layerBottomDoc - g.vh + GAP);
+  const start = end - travel;
+
   const stops = [];
-  for (let i = 0; i <= 10; i += 1) stops.push(start + (travel * i) / 10);
-  for (let i = 1; i <= 4; i += 1) stops.push(start + travel + ((maxScroll - start - travel) * i) / 4);
+  stops.push(start - Math.round(travel * 0.6));      // подход: слово ещё сжато
+  for (let i = 0; i <= 12; i += 1) stops.push(start + (travel * i) / 12);
+  stops.push(Math.min(g.doc - g.vh, end + Math.round(travel * 0.6))); // хвост
 
   const rows = [];
   for (const y of stops) {
     await page.evaluate((v) => window.scrollTo(0, v), Math.round(y));
-    await page.waitForTimeout(220);
+    await page.waitForTimeout(200);
     const png = PNG.sync.read(await page.screenshot());
     const m = await page.evaluate(() => {
-      const paths = [...document.querySelectorAll('.wm--footer .wm__letter path')];
-      const r = paths.map((p) => p.getBoundingClientRect());
-      const field = document.querySelector('.footer__field').getBoundingClientRect();
-      const layer = document.querySelector('.wm--footer').getBoundingClientRect();
-      const body = document.querySelector('.footer__body');
-      const cs = getComputedStyle(body);
+      const r = [...document.querySelectorAll('.wm--footer .wm__letter path')]
+        .map((p) => p.getBoundingClientRect());
+      const body = document.querySelector('.footer__body').getBoundingClientRect();
+      const sec = document.getElementById('footer').getBoundingClientRect();
       return {
         inkTop: Math.min(...r.map((b) => b.top)),
         inkBottom: Math.max(...r.map((b) => b.bottom)),
         letterTops: r.map((b) => b.top),
-        stageTop: document.querySelector('.footer__stage').getBoundingClientRect().top,
-        fieldTop: field.top,
-        layerH: layer.height,
-        bodyTop: body.getBoundingClientRect().top,
-        vis: cs.visibility,
-        op: Number(cs.opacity),
-        open: document.getElementById('footer').dataset.open ?? '',
+        secTop: sec.top,
+        bodyTop: body.top,
+        textTop: document.querySelector('.footer__col').getBoundingClientRect().top,
+        layerH: document.querySelector('.wm--footer').getBoundingClientRect().height,
         scrollY: Math.round(window.scrollY),
         hscroll: document.documentElement.scrollWidth - document.documentElement.clientWidth,
         below: Math.round(document.documentElement.scrollHeight - (window.scrollY + window.innerHeight)),
       };
     });
-    const gTop = greenTop(png);
-    rows.push({ ...m, rasterTop: inkOnGreenRow(png, 1),
-      rasterBottom: inkBottomRow(png, gTop + 4), rasterGreen: gTop, png });
+    rows.push({ ...m, ink: m.inkBottom - m.inkTop, png, rasterCut: inkOnGreenRow(png), rasterGreen: greenTop(png) });
   }
 
-  // ── условие 1 в футере: стоит ВЕРХ ───────────────────────────────────
-  const rb = rows.map((r) => r.rasterTop);
-  const gb = rows.map((r) => r.inkTop);
-  const spreadR = Math.max(...rb) - Math.min(...rb);
-  const spreadG = Math.max(...gb) - Math.min(...gb);
+  const inGrowth = rows.filter((r) => r.scrollY >= start - 1 && r.scrollY <= end + 1);
 
-  // ── срез ──────────────────────────────────────────────────────────────
-  const last = rows[rows.length - 1];
-  const capPx = (last.layerH * 235.0) / 244.074;
-  const cuts = last.letterTops.map((t) => (last.fieldTop - t) / capPx);
+  // ── 1. рост один к одному ─────────────────────────────────────────────
+  const ratios = [];
+  for (let i = 1; i < inGrowth.length; i += 1) {
+    const ds = inGrowth[i].scrollY - inGrowth[i - 1].scrollY;
+    const dh = inGrowth[i].ink - inGrowth[i - 1].ink;
+    if (ds > 0) ratios.push(dh / ds);
+  }
+  const rMin = Math.min(...ratios);
+  const rMax = Math.max(...ratios);
+  const rAvg = (inGrowth[inGrowth.length - 1].ink - inGrowth[0].ink)
+    / (inGrowth[inGrowth.length - 1].scrollY - inGrowth[0].scrollY);
+
+  // ── 2. низ чернил неподвижен относительно нижнего края экрана ─────────
+  const bottoms = inGrowth.map((r) => dev.h - r.inkBottom);
+  const bSpread = Math.max(...bottoms) - Math.min(...bottoms);
+  const tops = inGrowth.map((r) => r.inkTop);
+  const tMoved = Math.max(...tops) - Math.min(...tops);
+
+  // ── 3. срез ────────────────────────────────────────────────────────────
+  const cutsFrames = inGrowth.map((r) => r.secTop - r.inkTop);
+  const cutSpread = Math.max(...cutsFrames) - Math.min(...cutsFrames);
+  /* Доли считаются на РАСКРЫТОМ кадре: срез постоянен в пикселях, а высота
+     прописной по ходу растёт, поэтому в долях прописной он совпадает
+     с заданным только там, где слово раскрыто. */
+  const open = inGrowth[inGrowth.length - 1];
+  const capPx = (open.layerH * WM_CAP_OPEN) / WM_BOX_HEIGHT;
+  const cuts = open.letterTops.map((t) => (open.secTop - t) / capPx);
   const cutMin = Math.min(...cuts);
-  const cutMax = Math.max(...cuts);
 
-  /* Верх неподвижен, значит срез постоянен на всём ходу: он не событие,
-     а отбивка слова от края поля. Разброс по кадрам обязан быть нулевым. */
-  const cutPx = last.fieldTop - last.inkTop;
-  const cuts2 = rows.map((r) => r.fieldTop - r.inkTop);
-  const cutSpread = Math.max(...cuts2) - Math.min(...cuts2);
-  const footerInk = last.inkBottom - last.inkTop;
-
-  // ── текст до раскрытия ────────────────────────────────────────────────
-  const openH = last.inkBottom - last.inkTop;
+  // ── 4. под словом ничего нет ──────────────────────────────────────────
   let dirty = 0;
-  let checked = 0;
-  for (const r of rows) {
-    const h = r.inkBottom - r.inkTop;
-    if (h > openH - 1) continue; // слово уже раскрыто — текст имеет право быть
-    checked += 1;
-    if (r.vis !== 'hidden' || r.op > 0.001) fail(`${dev.w}: текст не скрыт при высоте чернил ${h.toFixed(1)}`);
-    // растр: полоса от низа чернил до низа экрана обязана быть чистым
-    // фоном страницы — ни текста, ни остатка зелёного поля
+  let shown = 0;
+  let bandMax = 0;
+  for (const r of inGrowth) {
+    bandMax = Math.max(bandMax, dev.h - r.inkBottom);
+    if (r.textTop < dev.h - 0.5) shown += 1;
     dirty += foreignInBand(r.png, Math.ceil(r.inkBottom) + 2, dev.h - 1);
   }
 
   const hs = Math.max(...rows.map((r) => r.hscroll));
-  // «за нижним краем» имеет смысл только в самом низу документа
-  const below = rows[rows.length - 1].below;
+  /* «за нижним краем» имеет смысл только в самом низу документа — это
+     меряется ниже, на прокрутке до конца страницы. */
+  const below = 0;
 
-  if (process.env.WMDEBUG) {
-    console.log('    растр низ:', rows.map((r) => r.rasterBottom).join(' '));
-    console.log('    геом низ :', rows.map((r) => r.inkBottom.toFixed(2)).join(' '));
-    console.log('    высота   :', rows.map((r) => (r.inkBottom - r.inkTop).toFixed(1)).join(' '));
-    for (const r of rows)
-      console.log('    y=%s  inkTop=%s  fieldTop=%s  растр=%s  below=%s',
-        String(r.scrollY).padStart(6), r.inkTop.toFixed(3).padStart(8),
-        r.fieldTop.toFixed(3).padStart(8), String(r.rasterTop).padStart(4), r.below);
-  }
-  /* По растру кромка не может быть точнее пикселя: истинный низ лежит
-     на дробной позиции (358.79 на 390), и строка, в которую попадает край,
-     то попадает под порог, то нет — это сглаживание, а не движение.
-     Целочисленная проверка поэтому с допуском в 1 px, а настоящий ноль
-     даёт геометрия. */
-  if (spreadR > 1) fail(`${dev.w}: верхняя кромка по растру гуляет на ${spreadR} px`);
-  // 0.02 px — одна единица раскладки Chrome (1/64 px), пол измерения
-  if (spreadG > 0.02) fail(`${dev.w}: верхняя кромка по геометрии гуляет на ${spreadG.toFixed(3)} px`);
-  if (Math.abs(last.inkTop - (navBottom + 12)) > 0.6)
-    fail(`${dev.w}: линия слова ${last.inkTop.toFixed(1)} вместо ${(navBottom + 12).toFixed(1)} (низ шапки + воздух)`);
-  if (Math.abs(heroInk - footerInk) > 0.6)
-    fail(`${dev.w}: слово в футере ${footerInk.toFixed(1)} против ${heroInk.toFixed(1)} в хиро`);
+  if (Math.abs(rAvg - 1) > 0.01) fail(`${dev.w}: рост ${rAvg.toFixed(4)} px на пиксель прокрутки вместо 1.000`);
+  if (rMin < 0.97 || rMax > 1.03) fail(`${dev.w}: отношение гуляет ${rMin.toFixed(3)}…${rMax.toFixed(3)}`);
+  if (bSpread > 0.6) fail(`${dev.w}: низ чернил гуляет на ${bSpread.toFixed(2)} px`);
+  if (tMoved < travel * 0.9) fail(`${dev.w}: верх чернил прошёл ${tMoved.toFixed(0)} px вместо ${travel}`);
+  if (cutSpread > 0.6) fail(`${dev.w}: срез гуляет по кадрам на ${cutSpread.toFixed(2)} px`);
   if (cutMin <= 0) fail(`${dev.w}: не срезана хотя бы одна литера (минимум ${cutMin.toFixed(4)})`);
-  if (dirty !== 0) fail(`${dev.w}: до раскрытия под словом ${dirty} не-зелёных пикселей`);
+  if (shown) fail(`${dev.w}: реквизиты видны на ${shown} положениях до конца роста`);
+  if (dirty !== 0) fail(`${dev.w}: под словом ${dirty} не-зелёных пикселей`);
   if (hs !== 0) fail(`${dev.w}: горизонтальный скролл ${hs} px`);
   if (below !== 0) fail(`${dev.w}: за нижним краем экрана осталось ${below} px документа`);
 
-  report.push({ dev, rows, spreadR, spreadG, cuts, cutMin, cutMax, capPx,
-    checked, dirty, hs, below, cutPx, cutSpread, heroInk, footerInk, navBottom,
-    line: last.inkTop, rasterGreen: last.rasterGreen });
+  report.push({ dev, rows, inGrowth, travel, start, end, rMin, rMax, rAvg,
+    bSpread, tMoved, cuts, cutMin, cutSpread, capPx, bandMax, dirty, shown,
+    heroInk, footerInk: Math.max(...rows.map((r) => r.ink)), hs, below });
   await page.close();
 }
 
 /* ── печать ──────────────────────────────────────────────────────────────── */
 const LETTERS = ['S', 'P', 'O', 'T', 'I', 'K'];
-console.log('── УСЛОВИЕ 1 В ФУТЕРЕ: ВЕРХ ЧЕРНИЛ НЕПОДВИЖЕН ──────────────────');
-console.log('размер   положений   разброс по растру   разброс по геометрии');
-console.log('(растр целочислен и видит сглаживание края; ноль даёт геометрия)');
+console.log('── ХОД РОСТА: ВЕРХ, НИЗ, ВЫСОТА ────────────────────────────────');
 for (const r of report) {
-  console.log('  %s   %s   %s px   %s px',
-    String(r.dev.w + '×' + r.dev.h).padEnd(10),
-    String(r.rows.length).padStart(6),
-    r.spreadR.toFixed(2).padStart(12),
-    r.spreadG.toFixed(2).padStart(14));
+  console.log('\n%s   ход роста %d px (= раскрытая минус сжатая высота)',
+    r.dev.w + '×' + r.dev.h, r.travel);
+  console.log('   скролл    верх чернил   низ чернил   высота   Δскролл  Δвысота');
+  let prev = null;
+  for (const q of r.inGrowth) {
+    const ds = prev ? q.scrollY - prev.scrollY : 0;
+    const dh = prev ? q.ink - prev.ink : 0;
+    console.log('  %s %s %s %s %s %s',
+      String(q.scrollY).padStart(8), q.inkTop.toFixed(1).padStart(12),
+      q.inkBottom.toFixed(1).padStart(12), q.ink.toFixed(1).padStart(8),
+      (prev ? String(ds) : '—').padStart(8), (prev ? dh.toFixed(1) : '—').padStart(8));
+    prev = q;
+  }
+  console.log('  прирост высоты на пиксель прокрутки: %s (по кадрам %s…%s)',
+    r.rAvg.toFixed(4), r.rMin.toFixed(3), r.rMax.toFixed(3));
 }
 
 console.log('');
-console.log('── СРЕЗ ВЕРХУШЕК ГРАНИЦЕЙ ЗЕЛЁНОГО ─────────────────────────────');
-console.log('задано %s высоты прописной, отсчёт от ЛИНИИ ПРОПИСНЫХ',
-  (FOOTER_CUT_RATIO * 100).toFixed(2) + ' %');
-console.log('размер      прописная   %s', LETTERS.map((c) => c.padStart(6)).join(''));
+console.log('── НИЗ ЧЕРНИЛ ОТНОСИТЕЛЬНО НИЖНЕГО КРАЯ ЭКРАНА ─────────────────');
+console.log('размер       воздух под словом   РАЗБРОС   верх прошёл вверх');
 for (const r of report) {
-  console.log('  %s %s px   %s',
+  console.log('  %s %s px %s px %s px',
     String(r.dev.w + '×' + r.dev.h).padEnd(11),
-    r.capPx.toFixed(1).padStart(7),
-    r.cuts.map((c) => (c * 100).toFixed(2).padStart(6)).join(''));
+    r.bandMax.toFixed(1).padStart(14),
+    r.bSpread.toFixed(2).padStart(8),
+    r.tMoved.toFixed(0).padStart(14));
+}
+
+console.log('');
+console.log('── СРЕЗ ВЕРХУШЕК ЛИТЕР ─────────────────────────────────────────');
+console.log('задано %s %% высоты прописной, отсчёт от ЛИНИИ ПРОПИСНЫХ',
+  (FOOTER_CUT_RATIO * 100).toFixed(2));
+console.log('размер      прописная   ' + LETTERS.map((l) => l.padStart(5)).join(' ') + '   разброс по кадрам');
+for (const r of report) {
+  console.log('  %s %s px  %s %s px',
+    String(r.dev.w + '×' + r.dev.h).padEnd(11), r.capPx.toFixed(1).padStart(7),
+    r.cuts.map((c) => (c * 100).toFixed(2).padStart(5)).join(' '),
+    r.cutSpread.toFixed(2).padStart(6));
 }
 console.log('(в процентах высоты прописной; у круглых S и O больше ровно');
-console.log(' на овершут рисунка — 1.93 %, это и есть прямой горизонтальный срез)');
-console.log('');
-console.log('Верх неподвижен, поэтому срез постоянен на всём ходу:');
-console.log('размер        величина среза   разброс по кадрам');
-for (const r of report)
-  console.log('  %s %s px %s px',
-    String(r.dev.w + '×' + r.dev.h).padEnd(11),
-    r.cutPx.toFixed(1).padStart(12), r.cutSpread.toFixed(2).padStart(14));
+console.log(' на овершут рисунка — 1.93 %, это и есть прямой срез)');
 
 console.log('');
-console.log('── ЛИНИЯ СЛОВА И ВЫСОТА: ФУТЕР ПРОТИВ ХИРО ─────────────────────');
-console.log('размер       низ шапки   линия слова   слово хиро   слово футер');
-for (const r of report)
-  console.log('  %s %s %s %s %s',
-    String(r.dev.w + '×' + r.dev.h).padEnd(11),
-    r.navBottom.toFixed(1).padStart(9), r.line.toFixed(1).padStart(13),
-    r.heroInk.toFixed(1).padStart(12), r.footerInk.toFixed(1).padStart(13));
-
-console.log('');
-console.log('── ТЕКСТ ДО РАСКРЫТИЯ ──────────────────────────────────────────');
+console.log('── ПОД СЛОВОМ НА ХОДУ РОСТА ────────────────────────────────────');
 for (const r of report) {
-  console.log('  %s   положений с несомкнутым словом %d, чужих пикселей под словом %d',
-    String(r.dev.w + '×' + r.dev.h).padEnd(11), r.checked, r.dirty);
+  console.log('  %s   полоса до низа экрана %s px, чужих пикселей %d, реквизиты видны на %d положениях',
+    String(r.dev.w + '×' + r.dev.h).padEnd(11), r.bandMax.toFixed(1), r.dirty, r.shown);
 }
 
-/* ── ВМЕЩАЕМОСТЬ: слово и реквизиты в один экран ─────────────────────────
-   Слово стоит вверху, реквизиты под ним, и вылезти за нижний край сцены
-   не имеет права ничего. На мобильных это не даётся само: в одну колонку
-   реквизиты занимают 551 px и под слово не помещаются ни на одной узкой
-   ширине. Поэтому колонок две с самых узких экранов, а высота слова
-   ограничена местом под текст. Здесь это проверяется замером. */
+/* ── ВМЕЩАЕМОСТЬ: слово и реквизиты, одиннадцать ширин ─────────────────── */
 const FIT = [[320, 568], [360, 640], [390, 844], [414, 896], [768, 1024],
   [1024, 768], [1280, 800], [1440, 900], [1920, 1080], [2560, 1440], [3440, 1440]];
 const fit = [];
@@ -353,54 +283,54 @@ for (const [w, h] of FIT) {
   await page.goto(`http://localhost:${PORT}${PREFIX}/`, { waitUntil: 'networkidle' });
   await page.evaluate(() => document.fonts.ready);
   await page.waitForSelector('.hero__stage[data-entered]');
+  const hero = await page.evaluate(() => {
+    const r = [...document.querySelectorAll('.wm--hero .wm__letter path')]
+      .map((el) => el.getBoundingClientRect());
+    return Math.max(...r.map((b) => b.bottom)) - Math.min(...r.map((b) => b.top));
+  });
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   await page.waitForTimeout(500);
   const m = await page.evaluate(() => {
-    const st = document.querySelector('.footer__stage').getBoundingClientRect();
     const b = document.querySelector('.footer__body').getBoundingClientRect();
-    const wm = document.querySelector('.wm--footer').getBoundingClientRect();
-    const ink = [...document.querySelectorAll('.wm--footer .wm__letter path')]
-      .map((el) => el.getBoundingClientRect());
+    const sec = document.getElementById('footer').getBoundingClientRect();
+    const r = [...document.querySelectorAll('.wm--footer .wm__letter path')]
+      .map((p) => p.getBoundingClientRect());
     let side = 0;
     document.querySelectorAll('.footer__body *').forEach((el) => {
       side = Math.max(side, el.getBoundingClientRect().right - b.right);
     });
     return {
-      down: Math.max(0, b.bottom - st.bottom), side: Math.max(0, side),
-      word: wm.height, text: b.height,
-      // просвет между низом раскрытых чернил и верхом реквизитов:
-      // реквизиты больше не делят место со словом во флексбоксе, значит
-      // наехать на литеры им мешает только потолок --footer-text
-      clear: b.top - Math.max(...ink.map((r) => r.bottom)),
+      down: Math.max(0, b.bottom - sec.bottom), side: Math.max(0, side),
+      word: Math.max(...r.map((q) => q.bottom)) - Math.min(...r.map((q) => q.top)),
+      text: b.height,
+      clear: b.top - Math.max(...r.map((q) => q.bottom)),
       hs: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      below: Math.round(document.documentElement.scrollHeight - (window.scrollY + window.innerHeight)),
     };
   });
-  if (m.down > 0.5) fail(`${w}×${h}: реквизиты вылезают за низ сцены на ${m.down.toFixed(1)} px`);
+  if (m.down > 0.5) fail(`${w}×${h}: реквизиты вылезают за низ секции на ${m.down.toFixed(1)} px`);
   if (m.clear < 0) fail(`${w}×${h}: реквизиты наехали на слово на ${(-m.clear).toFixed(1)} px`);
   if (m.side > 0.5) fail(`${w}×${h}: строка вылезает за колонку на ${m.side.toFixed(1)} px`);
   if (m.hs !== 0) fail(`${w}×${h}: горизонтальный скролл ${m.hs} px`);
-  fit.push({ w, h, ...m });
+  if (m.below !== 0) fail(`${w}×${h}: за нижним краем осталось ${m.below} px документа`);
+  if (Math.abs(m.word - hero) > 0.6)
+    fail(`${w}×${h}: слово в футере ${m.word.toFixed(1)} против ${hero.toFixed(1)} в хиро`);
+  fit.push({ w, h, hero, ...m });
   await page.close();
 }
 
 console.log('');
-console.log('── ВМЕЩАЕМОСТЬ ФУТЕРА ──────────────────────────────────────────');
-console.log('размер       слово   реквизиты   просвет   вылет вниз   вылет вбок');
+console.log('── ВЫСОТА СЛОВА: ФУТЕР ПРОТИВ ХИРО, И ВМЕЩАЕМОСТЬ ──────────────');
+console.log('размер       хиро    футер   разница   реквизиты   просвет   вылет');
 for (const f of fit) {
-  console.log('  %s %s px %s px %s px %s px %s px',
+  console.log('  %s %s %s %s px %s px %s px %s px',
     String(f.w + '×' + f.h).padEnd(11),
-    Math.round(f.word).toString().padStart(5),
+    f.hero.toFixed(1).padStart(7),
+    f.word.toFixed(1).padStart(8),
+    (f.word - f.hero).toFixed(1).padStart(7),
     Math.round(f.text).toString().padStart(8),
-    f.clear.toFixed(1).padStart(6),
-    f.down.toFixed(1).padStart(9),
-    f.side.toFixed(1).padStart(9));
-}
-
-console.log('');
-console.log('── СТОРОЖА ─────────────────────────────────────────────────────');
-for (const r of report) {
-  console.log('  %s   горизонтальный скролл %d px, за нижним краем %d px',
-    String(r.dev.w + '×' + r.dev.h).padEnd(11), r.hs, r.below);
+    f.clear.toFixed(1).padStart(7),
+    f.down.toFixed(1).padStart(5));
 }
 
 await browser.close();
