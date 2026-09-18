@@ -5,7 +5,6 @@ import {
   buildPaths,
   buildPathsE,
   footRise,
-  inkAtE,
   ease,
   easeFooter,
   VIEW_BOX,
