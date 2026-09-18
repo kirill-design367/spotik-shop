@@ -202,7 +202,6 @@
   /* .btn объявлен ниже по файлу и при равной специфичности побеждал,
      поэтому здесь селектор длиннее на один класс */
   .hero__foot .hero__cta { display: none; }
-  .nav__inner .nav__cta { display: none; }
   .hero__foot {
     grid-template-columns: minmax(0, 24ch) minmax(0, 46ch);
     gap: 32px 56px;

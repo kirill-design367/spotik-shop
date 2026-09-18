@@ -35,17 +35,33 @@ type Stage = {
 let stage: Stage | null = null;
 let users = 0;
 
+/**
+ * Умеет ли браузер отдавать кадр БЕЗ КОПИИ.
+ *
+ * OffscreenCanvas + transferToImageBitmap → canvas.getContext('bitmaprenderer')
+ * передаёт кадр как объект, а не копирует пиксели. Это ровно тот путь,
+ * ради которого bitmaprenderer и существует.
+ */
+const canTransfer =
+  typeof OffscreenCanvas !== 'undefined' &&
+  typeof HTMLCanvasElement !== 'undefined' &&
+  'transferFromImageBitmap' in ImageBitmapRenderingContext.prototype;
+
 function getStage(): Stage {
   if (stage) return stage;
-  const canvas = document.createElement('canvas');
+  const canvas: HTMLCanvasElement | OffscreenCanvas = canTransfer
+    ? new OffscreenCanvas(1, 1)
+    : document.createElement('canvas');
   const renderer = new THREE.WebGLRenderer({
-    canvas,
+    canvas: canvas as HTMLCanvasElement,
     antialias: true,
     alpha: true,
     // Кадр рисуется один раз. Просить ради него дискретную видеокарту —
     // это мигание окна на ноутбуках с двумя GPU и расход батареи.
     powerPreference: 'low-power',
-    preserveDrawingBuffer: true, // иначе drawImage заберёт пустой буфер
+    // нужен ТОЛЬКО запасному пути через drawImage: transferToImageBitmap
+    // забирает кадр сам и в сохранённом буфере не нуждается
+    preserveDrawingBuffer: !canTransfer,
   });
   renderer.setPixelRatio(1); // масштаб задаём размером буфера, а не dpr
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -264,12 +280,28 @@ export async function attachSlot(
   const built = kind === 'card' ? buildCard(seed) : buildGift();
   built.scene.environment = st.envTexture;
 
-  // собственный 2D-канвас слота: он показывает копию кадра,
-  // а живой WebGL-контекст на странице остаётся один
+  /*
+   * СОБСТВЕННЫЙ КАНВАС СЛОТА: живой WebGL-контекст на странице остаётся
+   * один, а слоты показывают его кадр.
+   *
+   * Кадр ПЕРЕДАЁТСЯ, а не копируется: transferToImageBitmap отдаёт его
+   * объектом, bitmaprenderer принимает без чтения пикселей. Прежний путь
+   * (ctx2d.drawImage с WebGL-канваса) — это обратное чтение из GL, на живой
+   * видеокарте оно стоит круга «видеопамять → память → видеопамять»
+   * на каждую отрисовку.
+   *
+   * Замером выяснилось, что в НАШЕЙ среде (SwiftShader, без видеоускорителя)
+   * оба пути стоят одинаково: 3.6 с уходит не на копию, а на первую
+   * материализацию кадра — компиляцию шейдера в машинный код. Отсюда
+   * и решение по мобильным: там 3D не поднимается вовсе (Р-34).
+   */
   const canvas = document.createElement('canvas');
   canvas.style.cssText = 'position:absolute;inset:0;display:block;width:100%;height:100%';
   host.appendChild(canvas);
-  const ctx2d = canvas.getContext('2d');
+  const bmp = canTransfer
+    ? (canvas.getContext('bitmaprenderer') as ImageBitmapRenderingContext | null)
+    : null;
+  const ctx2d = bmp ? null : canvas.getContext('2d');
 
   // Компиляция программ занимает десятки миллисекунд синхронно. Прогреваем
   // заранее, иначе рывок придётся ровно на подход скролла к блоку.
@@ -288,7 +320,7 @@ export async function attachSlot(
   let disposed = false;
 
   const draw = () => {
-    if (disposed || !ctx2d) return;
+    if (disposed || (!ctx2d && !bmp)) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = Math.max(1, Math.round(host.clientWidth * dpr));
     const h = Math.max(1, Math.round(host.clientHeight * dpr));
@@ -301,8 +333,15 @@ export async function attachSlot(
     // третий аргумент false: иначе three пишет inline-размеры в свой канвас
     st.renderer.setSize(w, h, false);
     st.renderer.render(built.scene, built.camera);
-    ctx2d.clearRect(0, 0, w, h);
-    ctx2d.drawImage(st.renderer.domElement, 0, 0, w, h);
+    if (bmp) {
+      // передача кадра: пиксели не копируются
+      bmp.transferFromImageBitmap(
+        (st.renderer.domElement as unknown as OffscreenCanvas).transferToImageBitmap(),
+      );
+    } else if (ctx2d) {
+      ctx2d.clearRect(0, 0, w, h);
+      ctx2d.drawImage(st.renderer.domElement, 0, 0, w, h);
+    }
   };
 
   draw();

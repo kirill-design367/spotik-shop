@@ -52,14 +52,28 @@ export function bootScroll(): () => void {
   ro.observe(document.body);
 
   const reduced = prefersReducedMotion();
+  /*
+   * НА КАСАНИЯХ LENIS НЕ ПОДНИМАЕТСЯ ВОВСЕ.
+   *
+   * У системы своя инерция, и она идёт мимо главного потока. Lenis же
+   * вешает на touchstart/touchmove слушатели с passive: false — браузер
+   * обязан дождаться JS, прежде чем прокрутить, — и каждый кадр сверяет
+   * позицию. Замерено на мобильном профиле: пока палец ведёт, страница
+   * стоит на 21 кадре из 39, то есть едет через кадр. Это и есть та самая
+   * рваность, которой на десктопе нет.
+   *
+   * Признак — тип указателя, а не ширина окна: узкое окно на десктопе
+   * плавный скролл заслуживает, телефон в альбомной ориентации — нет.
+   */
+  const coarse = window.matchMedia('(pointer: coarse)').matches;
 
-  if (!reduced) {
+  if (!reduced && !coarse) {
     lenis = new Lenis({
       duration: 1.05,
       easing: (t: number) => 1 - Math.pow(1 - t, 3),
       smoothWheel: true,
-      syncTouch: false, // на тачах родная инерция ощущается честнее и дешевле
-      touchMultiplier: 1.4,
+      // касаний здесь не бывает по построению: на них Lenis не создаётся
+      syncTouch: false,
     });
 
     /*
