@@ -43,7 +43,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           dangerouslySetInnerHTML={{
             __html:
               "try{if(!matchMedia('(prefers-reduced-motion: reduce)').matches)" +
-              "document.documentElement.setAttribute('data-rv','')}catch(e){}",
+              "document.documentElement.setAttribute('data-rv','')}catch(e){}" +
+              // Позицию прокрутки восстанавливаем мы сами: браузер знает
+              // только про документ, а он у нас неподвижен. Manual нужен
+              // и затем, чтобы браузер не пытался дёрнуть документ сам.
+              "try{history.scrollRestoration='manual'}catch(e){}",
           }}
         />
         {/* Шрифтового файла для вордмарка больше нет: слово запечено
@@ -73,7 +77,39 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <a href="#main" className="skip-link">
           Перейти к содержимому
         </a>
-        {children}
+        {/*
+          ПРОКРУЧИВАЕТСЯ ЭТОТ КОНТЕЙНЕР, А НЕ ДОКУМЕНТ. Панель Safari
+          сворачивается только под документ, поэтому документ стоит,
+          а едет .scroller. Подробности в globals.css и в CLAUDE.md, Р-37.
+        */}
+        <div id="scroller" className="scroller">
+          {/* Единая обёртка нужна Lenis: он меряет высоту содержимого
+              по ОДНОМУ элементу. Без неё content оказывался бы первым
+              ребёнком, то есть <main>, и футер не попадал бы в предел
+              прокрутки. */}
+          <div className="scroller__inner">{children}</div>
+        </div>
+        {/*
+          Восстановление позиции. Скрипт стоит СРАЗУ ПОСЛЕ контейнера,
+          то есть в разборе HTML — контейнер уже существует и уже набрал
+          высоту, а первой отрисовки ещё не было. Поставь это в эффект,
+          и страница мигнула бы сверху вниз.
+        */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{
+var s=document.getElementById('scroller');if(!s)return;
+var k='spotik:scroll';
+var v=sessionStorage.getItem(k);
+if(v&&performance.getEntriesByType('navigation')[0]&&
+   performance.getEntriesByType('navigation')[0].type!=='navigate'){s.scrollTop=+v||0;}
+else{sessionStorage.removeItem(k);}
+var save=function(){try{sessionStorage.setItem(k,String(s.scrollTop))}catch(e){}};
+addEventListener('pagehide',save);
+addEventListener('visibilitychange',function(){if(document.visibilityState==='hidden')save()});
+}catch(e){}})()`,
+          }}
+        />
         <ScrollProvider />
       </body>
     </html>

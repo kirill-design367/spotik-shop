@@ -16,6 +16,34 @@ let booted = false;
 let refreshQueued = false;
 
 /**
+ * ПРОКРУЧИВАЕТСЯ КОНТЕЙНЕР, А НЕ ДОКУМЕНТ.
+ *
+ * Панель Safari на iPhone сворачивается только под движение самого
+ * документа. Поэтому документ стоит (html и body в экран, overflow: hidden),
+ * а едет `#scroller`. Отсюда три следствия, и все три учтены ниже:
+ * ScrollTrigger обязан знать про этот контейнер, Lenis обязан вешаться
+ * на него же, а позиция читается из `scrollTop`, а не из `window.scrollY`.
+ *
+ * Функция терпима к отсутствию контейнера: на 404 и в тестах разметки
+ * его может не быть, и тогда всё честно падает обратно на документ.
+ */
+export function scroller(): HTMLElement | null {
+  if (typeof document === 'undefined') return null;
+  return document.getElementById('scroller');
+}
+
+/** Текущая позиция прокрутки — из контейнера, если он есть. */
+export function scrollPos(): number {
+  const el = scroller();
+  return el ? el.scrollTop : window.scrollY;
+}
+
+/** Элемент, на котором слушать событие scroll. */
+export function scrollSource(): HTMLElement | Window {
+  return scroller() ?? window;
+}
+
+/**
  * Связка Lenis + GSAP ScrollTrigger.
  *
  * Порядок здесь не косметический:
@@ -30,6 +58,13 @@ let refreshQueued = false;
 export function bootScroll(): () => void {
   if (booted) return () => {};
   booted = true;
+
+  /* ScrollTrigger по умолчанию меряет документ. Указатель на контейнер
+     ставится ОДИН РАЗ и ДО создания любого триггера — иначе часть
+     триггеров родится с документом, часть с контейнером, и границы
+     разъедутся. */
+  const sc = scroller();
+  if (sc) ScrollTrigger.defaults({ scroller: sc });
 
   /**
    * Пересчёт триггеров при изменении высоты документа.
@@ -74,6 +109,18 @@ export function bootScroll(): () => void {
       smoothWheel: true,
       // касаний здесь не бывает по построению: на них Lenis не создаётся
       syncTouch: false,
+      /* Lenis вешается на КОНТЕЙНЕР. Без этого он продолжал бы двигать
+         документ, который у нас неподвижен, и колесо перестало бы
+         работать вовсе. */
+      ...(sc
+        ? {
+            wrapper: sc,
+            /* content — ОДИН элемент, охватывающий всю страницу целиком.
+               Первый ребёнок здесь не годится: это <main>, а футер лежит
+               рядом с ним, и предел прокрутки вышел бы короче страницы. */
+            content: sc.querySelector<HTMLElement>('.scroller__inner') ?? sc,
+          }
+        : {}),
     });
 
     /*
@@ -89,7 +136,7 @@ export function bootScroll(): () => void {
      * Поэтому цель пересинхронизируется с фактической позицией: сразу
      * и ещё раз на первом тике, когда нативные события уже улеглись.
      */
-    const sync = () => lenis?.scrollTo(window.scrollY, { immediate: true, force: true });
+    const sync = () => lenis?.scrollTo(scrollPos(), { immediate: true, force: true });
     sync();
 
     /*
@@ -107,13 +154,13 @@ export function bootScroll(): () => void {
      * переставляется на фактическую. Своей анимации это не мешает —
      * после lenis.raf позиция и есть то, что он поставил сам.
      */
-    let applied = window.scrollY;
+    let applied = scrollPos();
 
     lenis.on('scroll', ScrollTrigger.update);
     const raf = (time: number) => {
-      if (Math.abs(window.scrollY - applied) > 0.5) sync();
+      if (Math.abs(scrollPos() - applied) > 0.5) sync();
       lenis?.raf(time * 1000);
-      applied = window.scrollY;
+      applied = scrollPos();
     };
     gsap.ticker.add(raf);
     gsap.ticker.lagSmoothing(0);
@@ -213,12 +260,27 @@ export function onScrollProgress(
   return () => st.kill();
 }
 
-/** Плавная прокрутка к секции — для кнопки «Выбрать тариф» и навигации. */
+/**
+ * Плавная прокрутка к секции — для кнопки «Выбрать тариф» и пунктов меню.
+ *
+ * Считаем СМЕЩЕНИЕ ВНУТРИ КОНТЕЙНЕРА, а не зовём scrollIntoView: последний
+ * при вложенной прокрутке норовит подвинуть заодно и документ, а документ
+ * у нас обязан стоять — иначе панель Safari снова начнёт сворачиваться.
+ */
 export function scrollToId(id: string) {
   const el = document.getElementById(id);
   if (!el) return;
-  if (lenis) lenis.scrollTo(el, { offset: 0, duration: 1.1 });
-  else el.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' });
+  const sc = scroller();
+  if (lenis) {
+    lenis.scrollTo(el, { offset: 0, duration: 1.1 });
+    return;
+  }
+  if (sc) {
+    const top = sc.scrollTop + el.getBoundingClientRect().top - sc.getBoundingClientRect().top;
+    sc.scrollTo({ top, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+    return;
+  }
+  el.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth', block: 'start' });
 }
 
 export function refreshScroll() {

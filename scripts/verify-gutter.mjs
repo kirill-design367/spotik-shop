@@ -17,10 +17,13 @@ import { serveOut, PREFIX } from './serve-out.mjs';
 
 const PORT = 4199;
 const BAR = 15;
+/* Полоса прокрутки теперь принадлежит КОНТЕЙНЕРУ, а не документу:
+   документ у нас неподвижен (Р-37). Принуждаем к классической полосе
+   именно его. */
 const FORCE = `
-  html::-webkit-scrollbar { width: ${BAR}px; }
-  html::-webkit-scrollbar-thumb { background: #535353; }
-  html::-webkit-scrollbar-track { background: #212121; }
+  .scroller::-webkit-scrollbar { width: ${BAR}px; }
+  .scroller::-webkit-scrollbar-thumb { background: #535353; }
+  .scroller::-webkit-scrollbar-track { background: #212121; }
 `;
 
 let failed = 0;
@@ -44,7 +47,10 @@ for (const [w, h] of [[390, 844], [1920, 1080], [2560, 1440]]) {
     await page.waitForTimeout(150);
 
     const m = await page.evaluate(() => {
-      const box = document.documentElement.clientWidth;
+      /* Опора замера — область СОДЕРЖИМОГО того, что прокручивается.
+         Раньше это был документ; теперь контейнер, и его clientWidth
+         как раз и есть ширина без полосы прокрутки. */
+      const box = (document.getElementById('scroller') || document.documentElement).clientWidth;
       const ink = (sel) => {
         const ps = [...document.querySelectorAll(`${sel} .wm__letter path`)];
         if (ps.length !== 6) return null;

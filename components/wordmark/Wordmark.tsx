@@ -15,7 +15,7 @@ import {
   VIEW_OVER_INK,
   LAYER_WIDTH,
 } from '@/lib/wordmark';
-import { onScrollProgress } from '@/lib/scroll';
+import { onScrollProgress, scrollPos, scrollSource } from '@/lib/scroll';
 
 type Props = {
   /** hero — слово сплющивается вниз от неподвижного верха. footer — зеркально. */
@@ -141,9 +141,10 @@ export default function Wordmark({ mode, sectionId, followSelector }: Props) {
       | PerformanceNavigationTiming
       | undefined;
     const fresh = !nav || nav.type === 'navigate';
-    /* Прокрутка, накопленная ДО гидратации, — это ровно scrollY на монтировании.
-       Ноль здесь означает, что догонять нечего и смещения не будет вовсе. */
-    const scrolled = window.scrollY;
+    /* Прокрутка, накопленная ДО гидратации, — это ровно позиция контейнера
+       на монтировании. Ноль здесь означает, что догонять нечего
+       и смещения не будет вовсе. */
+    const scrolled = scrollPos();
     let base = 0;
     let baseSet = !(mode === 'hero' && fresh && scrolled > 0);
     const origin = (p: number): number => {
@@ -229,19 +230,23 @@ export default function Wordmark({ mode, sectionId, followSelector }: Props) {
      * замер показывал 7 кадров наложения при замедленном процессоре.
      */
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduced || entrancePlayed || window.scrollY > 0) {
+    if (reduced || entrancePlayed || scrollPos() > 0) {
       entrancePlayed = true;
       stage.dataset.entered = '1';
       return;
     }
 
+    /* Событие scroll приходит ОТ КОНТЕЙНЕРА: документ у нас неподвижен,
+       и на window оно не всплывает. Колесо и касание — с window, они
+       всплывают как обычно. */
+    const src = scrollSource();
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
       entrancePlayed = true;
       stage.dataset.entered = '1';
-      window.removeEventListener('scroll', finish);
+      src.removeEventListener('scroll', finish);
       window.removeEventListener('wheel', finish);
       window.removeEventListener('touchstart', finish);
       clearTimeout(timer);
@@ -250,11 +255,11 @@ export default function Wordmark({ mode, sectionId, followSelector }: Props) {
     const cs = getComputedStyle(stage);
     const total = (parseFloat(cs.getPropertyValue('--wm-enter-total')) || 1.1) * 1000;
     const timer = window.setTimeout(finish, total + 80);
-    window.addEventListener('scroll', finish, { passive: true, once: true });
+    src.addEventListener('scroll', finish, { passive: true, once: true });
     window.addEventListener('wheel', finish, { passive: true, once: true });
     window.addEventListener('touchstart', finish, { passive: true, once: true });
     return () => {
-      window.removeEventListener('scroll', finish);
+      src.removeEventListener('scroll', finish);
       window.removeEventListener('wheel', finish);
       window.removeEventListener('touchstart', finish);
       clearTimeout(timer);

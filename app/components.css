@@ -27,6 +27,9 @@
 }
 /* Трансформа нет ни в одном режиме: верх чернил неподвижен и в хиро,
    и в футере, и стоит он по построению данных — двигать слой нечем. */
+/* .wm--mark рисует пути без групп-литер: вход там не играет, делить
+   слово на шесть групп незачем. Заливка при этом та же. */
+.wm--mark path { fill: currentColor; fill-rule: nonzero; }
 .wm__letter path {
   fill: currentColor;
   /* контуры приходят из шрифта как есть: заливка по ненулевому правилу,
@@ -41,25 +44,24 @@
    при ширине слова 385 дают пропорцию 1.53, литеры превращаются
    в волосяные линии и выталкивают текст за экран.
 
-   Поэтому сверху стоит потолок, и задан он ПРОПОРЦИЕЙ ЗНАКА, а не долей
-   экрана. Ширина слова всегда 98.7cqw; потолок 61.7cqw — это ровно
-   98.7 / 1.6, то есть «раскрытое слово не выше, чем 1 к 1.6».
+   ТРИНАДЦАТАЯ ИТЕРАЦИЯ СНЯЛА ПРОПОРЦИОНАЛЬНЫЙ ПОТОЛОК. Двенадцатая держала
+   его на 61.7cqw («слово не выше, чем 1 к 1.6»), и на телефоне это увело
+   знак слишком мелко — 28 % высоты экрана против 70 % на десктопе.
+   Ориентир 1 к 1.6 арт-директор снял: высоту везде связывает правило 70 %.
 
-   Двенадцатая итерация опустила потолок с 98.7cqw. Там он давал на 390
-   пропорцию 1 к 1.00 — слово квадратное, и сжатие в нём не читалось:
-   сжатое состояние выходило 1 к 1.71 против 1 к 4.29 на десктопе, то есть
-   на телефоне приём был другим приёмом. Стало 1 к 1.60 раскрытое
-   и 1 к 2.74 сжатое. Величина выбрана по рендерам, сравнивались
-   1:1.33, 1:1.50, 1:1.60, 1:1.80 и 1:2.00.
+   Потолок остался ровно один и только как СТРАХОВКА ОТ ВЫЛЕТА:
+   `100svh - 220px`, где 220 px — место под тексты хиро и кнопку.
+   На 390 и 414 он не срабатывает вовсе, там связывает 70 % и правило
+   выполняется буквально. Он бьёт только на коротких экранах (320×568
+   и 360×640), где 70 % высоты просто не оставляют места тексту.
 
-   На 1920 и 2560 потолок по-прежнему не срабатывает: там связывает 70 %
-   высоты, и правило выполняется буквально. Заодно он убрал вылет текстов
-   хиро за нижний край экрана на 360 и 768 — было 58 и 60 px.
+   Хватает этого потому, что шапка на мобильной больше не стоит в потоке:
+   она накладка, и слову достался весь экран (Р-38).
 
    Менять высоту МОЖНО: шесть условий задают отношения между двумя
    состояниями, обе формы живут в одном viewBox и тянутся одним
    и тем же вертикальным масштабом. */
-.hero__stage { --wm-h: min(70svh, 61.7cqw); }
+.hero__stage { --wm-h: min(70svh, var(--wm-cap)); }
 /* ВЫСОТА СЛОВА В ФУТЕРЕ РАВНА ВЫСОТЕ В ХИРО — формула буквально та же,
    и теперь без единой оговорки. Приём обязан читаться как одна скобка.
 
@@ -68,7 +70,7 @@
    секция просто становится выше. Ужимать слово стало нечему, поэтому
    совпадение с хиро теперь точное на ВСЕХ ширинах, а не только на тех,
    где хватало места. Сторож — verify-footer.mjs. */
-.footer { --wm-h: min(70svh, 61.7cqw); }
+.footer { --wm-h: min(70svh, var(--wm-cap)); }
 
 .wm--hero { color: var(--green); }
 /* Нижняя скобка: инверсия — чёрный на зелёном.
@@ -168,6 +170,15 @@
   display: flex;
   flex-direction: column;
   isolation: isolate;
+  /* сплошной фон нужен смешиванию: difference у шапки обязан видеть
+     под собой настоящий цвет, а не прозрачность */
+  background: var(--ink);
+}
+/* Шапка вышла из потока, поэтому на десктопе её высоту сцена держит полем:
+   верхняя кромка слова остаётся ровно там же, где была. На мобильной поля
+   нет намеренно — там шапка наезжает на слово, и в этом весь приём. */
+@media (min-width: 900px) {
+  .hero__stage { padding-top: var(--nav-h); }
 }
 
 /* Тексты прижаты к низу блока и набраны мелко: крупного абзаца в хиро
@@ -182,6 +193,24 @@
   display: grid;
   gap: 18px;
   align-items: start;
+}
+
+/* НА МОБИЛЬНОЙ НАДСТРОЧНОЙ СТРОКИ НЕТ. Она убрана с экрана, но не из
+   документа: это единственный h1 страницы, и выкинуть его из дерева
+   доступности значило бы оставить страницу без заголовка. Приём тот же,
+   что у .sr-only, — элемент остаётся для скринридера и поисковика. */
+@media (max-width: 899.98px) {
+  .hero__kicker {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
 }
 
 .hero__kicker {
@@ -240,10 +269,48 @@
 @media (min-width: 768px) { :root { --nav-h: 76px; } }
 @media (min-width: 900px) { :root { --nav-h: 67px; } }
 
+/* ШАПКА — НАКЛАДКА, а не строка в потоке.
+   На мобильной слово занимает весь экран, и шапка лежит ПОВЕРХ него:
+   иначе 70 % высоты просто некуда положить. На десктопе композиция
+   не меняется ни на пиксель — сцена получает поле сверху ровно
+   в высоту шапки, и слово встаёт там же, где стояло. */
 .nav {
-  position: relative;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
   z-index: 3;
-  background: var(--ink);
+  background: transparent;
+}
+@media (min-width: 900px) {
+  /* на десктопе шапка по-прежнему со сплошной подложкой: там она стоит
+     над полем сцены и ни на что не наезжает */
+  .nav { background: var(--ink); }
+}
+
+/* ИНВЕРСИЯ ПРИ НАЕЗДЕ — СМЕШИВАНИЕМ СЛОЁВ, а не переключением классов
+   по скроллу. Содержимое шапки нарисовано зелёным и смешивается режимом
+   difference: на зелёном слове |зелёный − зелёный| = чёрный, то есть шапка
+   читается тёмной; на почти чёрном фоне |#121212 − #1DB954| даёт зелёный
+   #0BA754 — 5.95:1 к фону, то есть светлее фона и читается.
+
+   Почему не белым: difference с белым даёт 1 − фон, и на зелёном это
+   розовый #E246AB. Такого цвета в палитре нет, а режима, который свёл бы
+   ДВА заданных цвета в белый и чёрный одновременно, не существует —
+   выбор был между зелёным на тёмном и розовым на зелёном. */
+@media (max-width: 899.98px) {
+  /* Режим смешивания стоит НА САМОЙ ШАПКЕ, а не на её внутренностях.
+     На .nav__inner он не работал бы вовсе: z-index у .nav делает её
+     контекстом наложения, и смешиваться внутри было бы не с чем —
+     под содержимым оказывалась бы прозрачность, а не слово. Группа
+     смешивания здесь — сцена хиро (isolation: isolate), и в ней под
+     шапкой лежат и фон, и зелёное слово. */
+  .nav {
+    color: var(--green);
+    mix-blend-mode: difference;
+  }
+  .nav .logo-slot__text,
+  .nav .nav__burger { color: inherit; }
 }
 .nav__inner {
   min-height: var(--nav-h);
@@ -314,6 +381,181 @@
   transition: color var(--t-fast) var(--ease);
 }
 .nav__link:hover { color: var(--white); }
+
+/* ═════════════════════════════════════════ БУРГЕР И НАКЛАДКА МЕНЮ
+   Бургер — ДВЕ полосы, короткие и плотные. Габарит знака и габарит
+   тач-цели разведены: знак 22 px, цель полные 44. */
+.nav__burger {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  width: 44px;
+  height: 44px;
+  margin-right: -10px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: inherit;
+  touch-action: manipulation;
+}
+@media (min-width: 900px) { .nav__burger { display: none; } }
+
+.nav__burger-bars {
+  display: block;
+  width: 22px;
+  height: 8px;
+  position: relative;
+}
+.nav__burger-bars::before,
+.nav__burger-bars::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: currentColor;
+}
+.nav__burger-bars::before { top: 0; }
+.nav__burger-bars::after { bottom: 0; }
+
+/* НАКЛАДКА. Плотная, во весь экран, цвет из палитры — выделенная
+   поверхность --surface: она читается как слой НАД страницей, а не как
+   та же страница. Зелёный эталона намеренно не берём: зелёный у нас
+   акцент и финал страницы, второй зелёной зоны в кадре быть не должно. */
+.menu {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: var(--surface);
+  /* страховка: содержимое накладки не должно расширять её ни на пиксель */
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  /* закрытое состояние: из дерева фокуса выведено visibility */
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+}
+.menu[data-open] {
+  visibility: visible;
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+/* Короткое движение, как просил арт-директор: открытие резче закрытия. */
+@media (prefers-reduced-motion: no-preference) {
+  .menu {
+    transition:
+      opacity 200ms var(--ease),
+      transform 200ms var(--ease),
+      visibility 0s linear 200ms;
+  }
+  .menu[data-open] {
+    transition:
+      opacity 180ms var(--ease),
+      transform 180ms var(--ease),
+      visibility 0s;
+  }
+  .menu[data-open] .menu__item {
+    animation: menu-in 260ms var(--ease) both;
+    animation-delay: calc(60ms + var(--i) * 40ms);
+  }
+}
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+
+.menu__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: var(--nav-h);
+  padding-top: calc(12px + env(safe-area-inset-top));
+  padding-bottom: 12px;
+}
+
+/* Крестик крупный и стоит РОВНО на месте бургера: закрывается тем же
+   движением, которым открывалось. */
+.menu__close {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  width: 44px;
+  height: 44px;
+  margin-right: -10px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: var(--white);
+  touch-action: manipulation;
+}
+.menu__cross { display: block; width: 26px; height: 26px; position: relative; }
+.menu__cross::before,
+.menu__cross::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: currentColor;
+}
+.menu__cross::before { transform: rotate(45deg); }
+.menu__cross::after { transform: rotate(-45deg); }
+
+.menu__list {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: clamp(6px, 1.6vh, 16px);
+  padding-inline: var(--gutter);
+}
+.menu__item {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 6px 0;
+  font-family: inherit;
+  color: var(--white);
+  text-transform: uppercase;
+  font-variation-settings: 'wght' 800;
+  font-size: clamp(1.75rem, 8.4vw, 2.75rem);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  text-align: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: color var(--t-fast) var(--ease);
+}
+.menu__item:hover { color: var(--green); }
+
+/* КОНТЕЙНЕР для cqw — здесь, а не на всей накладке: слово должно мерить
+   колонку, а не экран, иначе оно выходит за поля и расталкивает накладку. */
+.menu__foot {
+  container-type: inline-size;
+  padding-bottom: calc(18px + env(safe-area-inset-bottom));
+}
+/* Слово внизу накладки — знак, а не приём: контуры те же, механики нет. */
+.menu__mark { --wm-h: min(15svh, 26cqw); color: var(--white); }
+.menu__contacts {
+  margin: 14px 0 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--dim);
+}
+.menu__contacts a {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+}
+.menu__contacts a:hover { color: var(--white); border-bottom-color: currentColor; }
 
 /* ═════════════════════════════════════════════════════════════════ КНОПКИ */
 .btn {
@@ -440,8 +682,14 @@
   .footer__body { gap: 28px 32px; }
 }
 @media (min-width: 900px) {
-  .footer__body { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 32px; }
+  /* Колонок ТРИ: «Документы» снята тринадцатой итерацией вместе
+     с единственной строкой «Оферта — готовится». */
+  .footer__body { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; }
 }
+/* Оговорка идёт третьей и на двух колонках занимает всю строку:
+   иначе рядом с ней зияла бы пустая половина. */
+.footer__col--note { grid-column: 1 / -1; }
+@media (min-width: 900px) { .footer__col--note { grid-column: auto; } }
 
 .footer__head {
   margin: 0 0 10px;
