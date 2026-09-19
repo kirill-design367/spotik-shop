@@ -9,7 +9,14 @@
  *   • у каждого кликабельного элемента подсветка касания прозрачна;
  *   • после указателя кольца фокуса нет — фокус ставится, но не рисуется;
  *   • после Tab кольцо есть. Это и есть доступность: убрать кольцо
- *     совсем было бы хуже квадрата.
+ *     совсем было бы хуже квадрата;
+ *   • ПОСЛЕ ЗАКРЫТИЯ МЕНЮ ПАЛЬЦЕМ кольца вокруг бургера нет, а после
+ *     закрытия с клавиатуры — есть. Фокус возвращается в обоих случаях:
+ *     без возврата человек с клавиатуры оказался бы в начале документа.
+ *     Это ровно та прямоугольная рамка, на которую указал арт-директор
+ *     в восемнадцатой итерации, и проверять её надо отдельно: браузер
+ *     рисует кольцо на программный focus() и после касания, а эвристика
+ *     :focus-visible у Chrome и Safari разная (Р-53).
  */
 import { launch } from './browser.mjs';
 import { serveOut, PREFIX } from './serve-out.mjs';
@@ -85,6 +92,46 @@ for (const [w, h, mob] of [[390, 844, true], [1920, 1080, false]]) {
   console.log('%s %s клавиатурой: кольцо %s px, %s  (%s)',
     okKey ? 'OK  ' : 'ПЛОХО', `${w}×${h}`.padEnd(9),
     byKey.width, byKey.color, byKey.tag);
+
+  /* ВОЗВРАТ ФОКУСА ПОСЛЕ ЗАКРЫТИЯ МЕНЮ. Открываем и закрываем ДВАЖДЫ:
+     сперва указателем, потом с клавиатуры. Фокус обязан вернуться
+     на бургер оба раза, а кольцо — только во втором. */
+  if (mob) {
+    const ring = async () => page.evaluate(() => {
+      const el = document.activeElement;
+      const cs = getComputedStyle(el);
+      return {
+        onBurger: el.classList.contains('nav__burger'),
+        visible: el.matches(':focus-visible'),
+        width: cs.outlineStyle === 'none' ? 0 : parseFloat(cs.outlineWidth) || 0,
+      };
+    });
+
+    /* Проверка «указателем» выше уже открыла накладку — закрываем,
+       иначе она перехватывает клик по бургеру. */
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(320);
+
+    await page.click('.nav__burger');
+    await page.waitForTimeout(320);
+    await page.click('.menu__close', { force: true });
+    await page.waitForTimeout(320);
+    const afterTap = await ring();
+    const okTapClose = afterTap.onBurger && afterTap.width === 0;
+    if (!okTapClose) failed += 1;
+    console.log('%s %s закрыли ПАЛЬЦЕМ: фокус на бургере=%s, кольцо %s px',
+      okTapClose ? 'OK  ' : 'ПЛОХО', `${w}×${h}`.padEnd(9), afterTap.onBurger, afterTap.width);
+
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(320);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(320);
+    const afterKey = await ring();
+    const okKeyClose = afterKey.onBurger && afterKey.width >= 1 && afterKey.visible;
+    if (!okKeyClose) failed += 1;
+    console.log('%s %s закрыли С КЛАВИАТУРЫ: фокус на бургере=%s, кольцо %s px',
+      okKeyClose ? 'OK  ' : 'ПЛОХО', `${w}×${h}`.padEnd(9), afterKey.onBurger, afterKey.width);
+  }
 
   await page.close();
 }

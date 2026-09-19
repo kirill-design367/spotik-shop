@@ -35,11 +35,19 @@ export default function SceneSlot({
   seed,
   label,
   className = '',
+  mountMargin = '150px 0px',
 }: {
   kind: SceneKind;
   seed: number;
   label: string;
   className?: string;
+  /**
+   * Запас, на котором поднимается КОНТЕКСТ. В блоке 3 он обязан быть
+   * нулевым: контекст WebGL не должен подниматься до того, как блок
+   * вошёл в кадр. Прогрев модуля идёт отдельным наблюдателем и раньше —
+   * он контекста не создаёт.
+   */
+  mountMargin?: string;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<'idle' | 'ready' | 'flat' | 'unavailable'>('idle');
@@ -116,7 +124,7 @@ export default function SceneSlot({
           if (!dead) setState('unavailable');
         }
       },
-      { rootMargin: '150px 0px' },
+      { rootMargin: mountMargin },
     );
 
     warm.observe(host);
@@ -132,7 +140,7 @@ export default function SceneSlot({
       ro.disconnect();
       handle?.dispose();
     };
-  }, [kind, seed]);
+  }, [kind, seed, mountMargin]);
 
   return (
     <div

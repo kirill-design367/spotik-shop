@@ -120,13 +120,20 @@ for (const dev of SIZES) {
   });
   /* Ход роста ВЫВОДИТСЯ, а не задаётся: это разница раскрытой и сжатой
      высоты чернил. Конец хода — там, где низ слоя пришёл на линию низа. */
-  const travel = Math.round(g.layerH * (1 - INK_TIGHT));
-  const end = Math.round(g.layerBottomDoc - g.vh + GAP);
+  /* ХОД НЕ ОКРУГЛЯЕТСЯ — ни на странице, ни здесь. Округление сбивает
+     связь «пиксель в пиксель» на 0.08 %, и первый же замер попадает
+     на полпикселя НИЖЕ начала хода, где прогресс ещё отсечён нулём.
+     Получался «провал», которого на странице нет: замер ловил clamp,
+     а не форму. */
+  const travel = g.layerH * (1 - INK_TIGHT);
+  const end = g.layerBottomDoc - g.vh + GAP;
   const start = end - travel;
 
   const stops = [];
   stops.push(start - Math.round(travel * 0.6));      // подход: слово ещё сжато
-  for (let i = 0; i <= 12; i += 1) stops.push(start + (travel * i) / 12);
+  /* Полпикселя внутрь с каждого края: на самих границах живёт отсечка
+     прогресса, и она не про закон 1:1. */
+  for (let i = 0; i <= 12; i += 1) stops.push(start + 0.5 + ((travel - 1) * i) / 12);
   stops.push(Math.min(g.doc - g.vh, end + Math.round(travel * 0.6))); // хвост
 
   const rows = [];
@@ -222,8 +229,8 @@ for (const dev of SIZES) {
 const LETTERS = ['S', 'P', 'O', 'T', 'I', 'K'];
 console.log('── ХОД РОСТА: ВЕРХ, НИЗ, ВЫСОТА ────────────────────────────────');
 for (const r of report) {
-  console.log('\n%s   ход роста %d px (= раскрытая минус сжатая высота)',
-    r.dev.w + '×' + r.dev.h, r.travel);
+  console.log('\n%s   ход роста %s px (= раскрытая минус сжатая высота)',
+    r.dev.w + '×' + r.dev.h, r.travel.toFixed(1));
   console.log('   скролл    верх чернил   низ чернил   высота   Δскролл  Δвысота');
   let prev = null;
   for (const q of r.inGrowth) {

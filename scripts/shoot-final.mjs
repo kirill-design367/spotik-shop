@@ -25,9 +25,8 @@ const SPOTS = [
   ['03-хиро-сжат', 'hero', 1],
   ['04-тарифы', 'pricing', null],
   ['05-как-работает', 'how', null],
-  ['06-преимущества', 'benefits', null],
-  ['07-сертификат', 'gift', null],
-  ['08-вопросы', 'faq', null],
+  ['06-тарифы-развёрнут', 'pricing', null],
+  ['07-вопросы', 'faq', null],
   ['09-футер-начало', 'footer', 0],
   ['10-футер-до-текста', 'footer', 0.42],
   ['11-футер-раскрыт', 'footer', 1],
@@ -44,6 +43,12 @@ for (const [sname, w, h, mob] of SIZES) {
       const top = el.offsetTop;
       window.scrollTo(0, f === null ? top - 8 : top + (el.offsetHeight - window.innerHeight) * f);
     }, [id, frac]);
+    /* Развёрнутый ряд — это состояние, а не положение: наводим
+       на второй ряд и ждём конец перехода. */
+    if (name === '06-тарифы-развёрнут') {
+      await page.hover('.plan__head >> nth=1').catch(() => {});
+      await page.waitForTimeout(900);
+    }
     await page.waitForTimeout(950);
     await page.screenshot({ path: `.shots/final/${sname}-${name}.png` });
   }

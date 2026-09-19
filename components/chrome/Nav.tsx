@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { onLayoutChange, scrollToId, scroller } from '@/lib/scroll';
 import WordmarkMark from '@/components/wordmark/WordmarkMark';
+import { glyphShapes, rectShape } from '@/lib/inkshape';
 
 /**
  * Шапка страницы и мобильное меню.
@@ -66,11 +67,15 @@ import WordmarkMark from '@/components/wordmark/WordmarkMark';
 const LINKS: [id: string, label: string][] = [
   ['pricing', 'Тарифы'],
   ['how', 'Как это работает'],
-  ['gift', 'Сертификат'],
   ['faq', 'Вопросы'],
 ];
 
-const NS = 'http://www.w3.org/2000/svg';
+/* Полосы бургера: две по 5 px с просветом 4, общий бокс 26×14. Числа
+   живут здесь и в маске `.nav__burger-bars` — и больше нигде. */
+const BURGER_BARS: [number, number][] = [
+  [0, 5],
+  [9, 14],
+];
 
 export default function Nav() {
   const [open, setOpen] = useState(false);
@@ -122,87 +127,15 @@ export default function Nav() {
       window.setTimeout(markEntered, 2500);
     }
 
-    /* Метрики шрифта берём из канваса тем же объявлением, что у элемента:
-       базовая линия считается по обычному правилу половинного интерлиньяжа
-       от СТРОЧНОГО бокса, а не от бокса элемента (слот под логотип выше
-       самой строки, и отсчёт от бокса уехал бы выше глифов). */
-    const metrics = new Map<string, { asc: number; desc: number }>();
-    const ctx2d = document.createElement('canvas').getContext('2d');
-    const fontBox = (font: string) => {
-      const had = metrics.get(font);
-      if (had) return had;
-      let box = { asc: 0, desc: 0 };
-      if (ctx2d) {
-        ctx2d.font = font;
-        const m = ctx2d.measureText('Нg');
-        box = { asc: m.fontBoundingBoxAscent || 0, desc: m.fontBoundingBoxDescent || 0 };
-      }
-      metrics.set(font, box);
-      return box;
-    };
-
-    /* ФИГУРА СОБИРАЕТСЯ ПОЛИТЕРНО, и это не педантизм. Строка целиком,
-       поставленная одним `<text>`, накапливает расхождение по трекингу:
-       в HTML апрош добавляется после КАЖДОГО знака, включая последний,
-       и к шестой литере набегает почти пиксель — правый штрих K выходил
-       из обрезки, и вдоль него шла недокрашенная колонка. Здесь каждая
-       литера ставится в СВОЁ измеренное место, а апрош в фигуру
-       не попадает вовсе: он уже учтён в измерении.
-
-       Отсчёт идёт от ПОЛОСЫ ШАПКИ, а не от вьюпорта: вход двигает её
-       трансформом на 14 px, и координаты, снятые в тот момент, запеклись
-       бы со сдвигом. */
-    const textShape = (el: HTMLElement, ox: number, oy: number): SVGGElement | null => {
-      const cs = getComputedStyle(el);
-      const raw = (el.textContent ?? '').trim();
-      if (!raw || cs.visibility === 'hidden' || cs.display === 'none') return null;
-      const node = el.firstChild;
-      if (!node || node.nodeType !== 3) return null;
-      const text = node.textContent ?? '';
-      const range = document.createRange();
-      range.selectNodeContents(el);
-      const line = [...range.getClientRects()].find((r) => r.width > 0.5 && r.height > 0.5);
-      if (!line) return null;
-      const font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
-      const { asc, desc } = fontBox(font);
-      const baseline = line.top - oy + (line.height - asc - desc) / 2 + asc;
-      const up = cs.textTransform === 'uppercase';
-
-      const group = document.createElementNS(NS, 'g');
-      for (let i = 0; i < text.length; i += 1) {
-        const ch = text[i];
-        if (!ch.trim()) continue;
-        range.setStart(node, i);
-        range.setEnd(node, i + 1);
-        const r = range.getBoundingClientRect();
-        if (r.width < 0.1) continue;
-        const glyph = document.createElementNS(NS, 'text');
-        glyph.setAttribute('x', (r.left - ox).toFixed(2));
-        glyph.setAttribute('y', baseline.toFixed(2));
-        glyph.setAttribute('font-family', cs.fontFamily);
-        glyph.setAttribute('font-size', cs.fontSize);
-        glyph.setAttribute('font-weight', cs.fontWeight);
-        glyph.setAttribute('font-style', cs.fontStyle);
-        /* Насыщенность логотипа задана ОСЬЮ, а не `font-weight`: без неё
-           фигура выходит на два веса светлее и глифы не накрывает. */
-        if (cs.fontVariationSettings && cs.fontVariationSettings !== 'normal') {
-          glyph.style.fontVariationSettings = cs.fontVariationSettings;
-        }
-        if (cs.fontStretch && cs.fontStretch !== 'normal') glyph.style.fontStretch = cs.fontStretch;
-        glyph.textContent = up ? ch.toLocaleUpperCase('ru') : ch;
-        group.appendChild(glyph);
-      }
-      return group.childNodes.length ? group : null;
-    };
-
+    /* Фигура чернил собирается общим модулем: механизм выворотки
+       на странице один, и собирать фигуру для него надо одинаково
+       в шапке, в бегущей строке и в шагах блока 3. См. lib/inkshape. */
     /* Наведение на пункт меню: его фигура переезжает из приглушённой
        обрезки в яркую. Это два вызова на событие указателя, а не работа
        в кадре. */
     /* `<g>` в модели содержимого `clipPath` нет, и завёрнутые в него
        контуры не обрезают ничего: раскладываем литеры по одной. */
-    const spread = (into: SVGClipPathElement, group: SVGGElement | null) => {
-      if (!group) return [];
-      const kids = [...group.childNodes] as SVGTextElement[];
+    const spread = (into: SVGClipPathElement, kids: SVGTextElement[]) => {
       for (const k of kids) into.appendChild(k);
       return kids;
     };
@@ -236,10 +169,10 @@ export default function Nav() {
       const oy = b.top;
 
       const logo = nav.querySelector<HTMLElement>('.logo-slot__text');
-      if (logo) spread(ink, textShape(logo, ox, oy));
+      if (logo) spread(ink, glyphShapes(logo, ox, oy));
 
       for (const el of nav.querySelectorAll<HTMLElement>('.nav__link')) {
-        const kids = spread(inkDim, textShape(el, ox, oy));
+        const kids = spread(inkDim, glyphShapes(el, ox, oy));
         if (!kids.length) continue;
         shapeOf.set(el, kids);
         el.addEventListener('pointerenter', enter);
@@ -247,19 +180,14 @@ export default function Nav() {
         hooked.push(el);
       }
 
-      /* Бургер рисует один бокс 24×12, две полосы из него вырезает маска
-         на 0…4 и 8…12. Здесь те же две полосы прямоугольниками. */
+      /* Бургер рисует один бокс 26×14, две полосы из него вырезает маска
+         на 0…5 и 9…14. Здесь те же две полосы прямоугольниками, и числа
+         обязаны совпадать с маской в CSS: разойдутся — выворотка встанет
+         не на полосы, а рядом, и цветовой сторож этого не заметит. */
       const bars = nav.querySelector<HTMLElement>('.nav__burger-bars');
       if (bars && bars.offsetParent !== null) {
         const r = bars.getBoundingClientRect();
-        for (const [y0, y1] of [[0, 4], [8, 12]]) {
-          const bar = document.createElementNS(NS, 'rect');
-          bar.setAttribute('x', (r.left - ox).toFixed(2));
-          bar.setAttribute('y', (r.top - oy + y0).toFixed(2));
-          bar.setAttribute('width', r.width.toFixed(2));
-          bar.setAttribute('height', String(y1 - y0));
-          ink.appendChild(bar);
-        }
+        for (const [y0, y1] of BURGER_BARS) ink.appendChild(rectShape(r, ox, oy, y0, y1));
       }
 
       /* Слой выворотки включается ТОЛЬКО когда фигура собрана: пока её нет,
@@ -281,9 +209,33 @@ export default function Nav() {
     };
   }, []);
 
+  /* Модальность запоминаем сами: браузер на programmatic focus() рисует
+     кольцо и после касания, а эвристика у Chrome и Safari разная. */
+  const byPointer = useRef(false);
+  useEffect(() => {
+    const down = () => { byPointer.current = true; };
+    const key = () => {
+      byPointer.current = false;
+      burgerRef.current?.removeAttribute('data-quiet');
+    };
+    document.addEventListener('pointerdown', down, true);
+    document.addEventListener('keydown', key, true);
+    return () => {
+      document.removeEventListener('pointerdown', down, true);
+      document.removeEventListener('keydown', key, true);
+    };
+  }, []);
+
   const close = useCallback(() => {
     setOpen(false);
-    burgerRef.current?.focus();
+    const burger = burgerRef.current;
+    if (!burger) return;
+    /* Фокус возвращается ВСЕГДА — иначе с клавиатуры человек окажется
+       в начале документа. Гасим только кольцо и только когда закрыли
+       пальцем. */
+    if (byPointer.current) burger.setAttribute('data-quiet', '');
+    else burger.removeAttribute('data-quiet');
+    burger.focus();
   }, []);
 
   /* Пока накладка открыта: страница под ней не едет, Esc закрывает,

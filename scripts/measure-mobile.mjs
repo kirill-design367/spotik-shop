@@ -75,7 +75,7 @@ async function run(page, cdp, { label }) {
   await page.evaluate(() => window.scrollTo(0, 0));
   await sleep(700);
   const geo = await page.evaluate(() => {
-    const ids = ['hero', 'pricing', 'how', 'benefits', 'gift', 'faq', 'footer'];
+    const ids = ['hero', 'pricing', 'how', 'faq', 'footer'];
     const secs = ids.map((id) => {
       const el = document.getElementById(id);
       const r = el.getBoundingClientRect();
@@ -169,7 +169,7 @@ console.log('Прокрутка — настоящие тач-события: к
 console.log('«Потеряно» — кадры сверх одного в интервале: 200 мс паузы = 11 потерянных.');
 const NAMES = {
   hero: '1 хиро', pricing: '2 тарифы', how: '3 как работает',
-  benefits: '4 почему мы', gift: '5 сертификат', faq: '6 вопросы', footer: '7 футер',
+  faq: '4 вопросы', footer: '5 футер',
 };
 for (const r of out) {
   console.log('');

@@ -93,8 +93,8 @@ console.log('── ПРЕДЕЛ ПРОКРУТКИ, ЯКОРЯ, НАКЛАДК�
   await page.waitForTimeout(1100);
   await page.click('.nav__link >> nth=2');
   await page.waitForTimeout(1900);
-  const top = await page.evaluate(() => Math.round(document.getElementById('gift').getBoundingClientRect().top));
-  console.log(`  десктоп, пункт «Сертификат»: блок на ${top} px от верха`);
+  const top = await page.evaluate(() => Math.round(document.getElementById('faq').getBoundingClientRect().top));
+  console.log(`  десктоп, пункт «Вопросы»: блок на ${top} px от верха`);
   if (Math.abs(top) > 2) fail(`якорь на десктопе промахнулся на ${top} px`);
   await ctx.close();
 }

@@ -9,7 +9,7 @@ const SIZES = [
   { w: 1920, h: 1080, name: '1920' },
   { w: 2560, h: 1440, name: '2560' },
 ];
-const BLOCKS = ['pricing', 'how', 'benefits', 'gift', 'faq'];
+const BLOCKS = ['pricing', 'how', 'faq'];
 
 mkdirSync('.shots/mid', { recursive: true });
 const server = await serveOut(PORT);

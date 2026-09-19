@@ -1,21 +1,39 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import SectionHead from './SectionHead';
+import { onLayoutChange, onScrollY, scroller } from '@/lib/scroll';
+import { prefersReducedMotion } from '@/lib/motion';
 
 /**
- * БЛОК 6 — ВОПРОСЫ.
+ * БЛОК 4 — ВОПРОСЫ. АККОРДЕОНА БОЛЬШЕ НЕТ.
  *
- * Задача блока — снять главный страх покупателя: что его обманут с деньгами.
- * Поэтому первые вопросы про деньги и риск, а не про то, что такое Spotify,
- * и под списком стоит живой контакт поддержки: блок, который оставляет
- * человека наедине с сомнением, этот страх не снимает, а подтверждает.
+ * Вопросы стоят колонкой по центру крупным кеглем — все сразу, ничего
+ * не спрятано. Ответ появляется НЕ ПО КЛИКУ, А ПО ПРОКРУТКЕ: напротив
+ * того вопроса, который сейчас подошёл к линии отсчёта в экране.
+ * Активный вопрос светлый, остальные приглушены.
+ *
+ * ── ПОЧЕМУ ВЕС НЕПРЕРЫВНЫЙ, А НЕ КЛАСС «АКТИВНЫЙ» ──────────────────────────
+ * Класс переключался бы в одном кадре — это щелчок, а арт-директор просил
+ * без него. Поэтому каждый вопрос получает СВОЙ ВЕС 0…1, посчитанный
+ * от расстояния до линии отсчёта, и вес идёт в CSS одним числом. У веса
+ * есть ПОЛКА: пока вопрос близко к линии, он горит целиком, и только
+ * в узкой зоне посередине между соседями идёт перекрёстное затухание.
+ * Иначе половину времени горели бы два ответа вполсилы.
+ *
+ * ── ЧТО СЧИТАЕТСЯ В КАДРЕ ──────────────────────────────────────────────────
+ * Ничего, кроме вычитания и деления: центры вопросов сняты один раз
+ * при раскладке, в кадре только шесть записей переменной. Ни одного
+ * чтения геометрии — иначе любое чтение после записи выталкивало бы
+ * принудительный пересчёт раскладки.
+ *
+ * ── БЕЗ СКРИПТА И ПРИ «УМЕНЬШИТЬ ДВИЖЕНИЕ» ─────────────────────────────────
+ * Вес по умолчанию равен единице, и задаёт это CSS. Значит без JavaScript
+ * видны ВСЕ ответы сразу, и при «уменьшить движение» тоже: подписки
+ * там просто не заводится. Прятать что-либо безусловно было бы нельзя.
  *
  * Тексты ответов — ЗАГЛУШКИ по две-три строки. Финальные формулировки даёт
  * арт-директор: они затрагивают обязательства перед клиентом.
- *
- * Ответы лежат в DOM всегда (важно для индексации), раскрытие — это
- * состояние, а не анимация: hidden снимается напрямую в state.
  */
 const QA = [
   {
@@ -28,7 +46,7 @@ const QA = [
   },
   {
     q: 'Что если аккаунт перестанет работать?',
-    a: 'Здесь будет ответ про то, что делает сервис, если доступ прервался раньше срока, и в какой срок вопрос решается. Формулировка за арт-директором: это обязательство перед клиентом.',
+    a: 'Здесь будет ответ про то, что делает сервис, если доступ прервался раньше срока, и в какой срок вопрос решается.',
   },
   {
     q: 'Можно ли слушать с нескольких устройств?',
@@ -40,57 +58,83 @@ const QA = [
   },
   {
     q: 'Что если я передумаю?',
-    a: 'Здесь будет ответ про возврат: в какой срок, на каких условиях и каким способом приходят деньги. Формулировка за арт-директором: это обязательство перед клиентом.',
+    a: 'Здесь будет ответ про возврат: в какой срок, на каких условиях и каким способом приходят деньги.',
   },
 ];
 
+/** Линия отсчёта в экране и ширина зоны перекрёстного затухания. */
+const REF = 0.46;
+const BAND = 0.62;
+const PLATEAU = 0.45;
+
 export default function Faq() {
-  const [open, setOpen] = useState<number | null>(0);
+  const listRef = useRef<HTMLDivElement>(null);
   const base = useId();
+
+  useEffect(() => {
+    const list = listRef.current;
+    const sc = scroller();
+    if (!list || !sc || prefersReducedMotion()) return;
+
+    let items: HTMLElement[] = [];
+    let mids: number[] = [];
+    let band = 1;
+
+    const measure = () => {
+      const shift = sc.getBoundingClientRect().top - sc.scrollTop;
+      items = Array.from(list.querySelectorAll<HTMLElement>('.qa__item'));
+      mids = items.map((el) => {
+        const r = el.getBoundingClientRect();
+        return r.top - shift + r.height / 2;
+      });
+      const step =
+        mids.length > 1 ? (mids[mids.length - 1] - mids[0]) / (mids.length - 1) : sc.clientHeight;
+      band = Math.max(1, step * BAND);
+    };
+
+    const read = (y: number) => {
+      const line = y + sc.clientHeight * REF;
+      for (let i = 0; i < items.length; i += 1) {
+        const raw = 1 - Math.abs(mids[i] - line) / band;
+        const w = raw <= 0 ? 0 : raw >= PLATEAU ? 1 : raw / PLATEAU;
+        items[i].style.setProperty('--w', w.toFixed(3));
+      }
+    };
+
+    measure();
+    const offLayout = onLayoutChange(measure);
+    const offScroll = onScrollY(read);
+    return () => {
+      offLayout();
+      offScroll();
+      for (const el of items) el.style.removeProperty('--w');
+    };
+  }, []);
 
   return (
     <section id="faq" className="section">
       <div className="shell">
         <SectionHead
-          num="06"
+          num="04"
           kicker="Вопросы"
           title="Что обычно спрашивают"
-          lead="Если ответа здесь нет, напишите — отвечаем тем же языком, каким написано тут."
+          lead="Если ответа здесь нет, напишите — отвечаем тем же языком, каким написано тут."
           meta="6 вопросов"
+          center
         />
 
-        <div className="faq">
+        <div ref={listRef} className="qa">
           {QA.map((item, i) => {
-            const isOpen = open === i;
-            const qid = `${base}-q-${i}`;
             const aid = `${base}-a-${i}`;
             return (
-              <div
-                key={item.q}
-                className="faq__item rv"
-                style={{ ['--rv-d' as string]: `${i * 60}ms` }}
-              >
-                <h3 style={{ margin: 0 }}>
-                  <button
-                    type="button"
-                    id={qid}
-                    className="faq__q"
-                    aria-expanded={isOpen}
-                    aria-controls={aid}
-                    onClick={() => setOpen(isOpen ? null : i)}
-                  >
-                    <span>{item.q}</span>
-                    <span className="faq__mark" aria-hidden="true" />
-                  </button>
-                </h3>
-                <div id={aid} role="region" aria-labelledby={qid} className="faq__a" hidden={!isOpen}>
-                  {/* Пометка, а не слово ЗАГЛУШКА внутри абзаца: она видна
-                      арт-директору и не читается посетителем как сломанный текст. */}
-                  <p className="faq__draft">
-                    <span className="faq__draft-mark">черновик</span>
-                    {item.a}
-                  </p>
-                </div>
+              <div key={item.q} className="qa__item">
+                <h3 className="qa__q">{item.q}</h3>
+                {/* Ответ лежит в разметке ВСЕГДА — и для индексации,
+                    и для скринридера: прокрутка меняет только его вид. */}
+                <p id={aid} className="qa__a">
+                  <span className="faq__draft-mark">черновик</span>
+                  {item.a}
+                </p>
               </div>
             );
           })}

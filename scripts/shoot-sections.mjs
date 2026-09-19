@@ -1,7 +1,7 @@
 /** Скриншоты каждой секции на мобильном и десктопе. */
 import { launch } from './browser.mjs';
 const URL = process.env.SHOT_URL || 'http://localhost:3000/';
-const IDS = ['pricing', 'how', 'benefits', 'gift', 'faq', 'footer'];
+const IDS = ['pricing', 'how', 'faq', 'footer'];
 const browser = await launch();
 for (const [name, w, h] of [['mobile', 390, 844], ['desktop', 1920, 1080]]) {
   const page = await browser.newPage({
