@@ -84,7 +84,7 @@ jobs:
       - name: Проверить прокрутку, шапку и фокус
         run: |
           node scripts/verify-smooth.mjs
-          node scripts/verify-navpaint.mjs
+          node scripts/verify-navsweep.mjs
           node scripts/verify-focus.mjs
 
       # Закон проекта: three.js не попадает в бандл первого экрана.

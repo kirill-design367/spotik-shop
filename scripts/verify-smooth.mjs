@@ -20,14 +20,16 @@ import { launch } from './browser.mjs';
 import { serveOut, PREFIX } from './serve-out.mjs';
 
 const PORT = 4237;
-/* Потолок выбега страницы, мс. */
-const COAST_MAX = 150;
+/* Окно выбега страницы, мс. Потолок 150 был ориентиром пятнадцатой
+   итерации, и арт-директор его отменил: при 133 мс сглаживания на глаз
+   нет вовсе. Новый ориентир — 350…450 мс. */
+const COAST = [350, 450];
 /* Окно схождения формы после руки, мс. На точном указателе позицию ведёт
    Lenis и форма идёт за ней, поэтому окно узкое. На касаниях позицию
    не сглаживает никто, и всю работу делает демпфер формы с τ = 120 мс:
    95 % пути это 3τ, то есть около 360 мс, и это норма — арт-директор
    разрешил на телефоне отставание 100…200 мс. */
-const SETTLE = { fine: [40, 250], touch: [150, 500] };
+const SETTLE = { fine: [200, 650], touch: [150, 500] };
 
 const PROBE = `
 window.__sm = { rows: [], on: false, wheel: 0, touch: 0 };
@@ -43,11 +45,17 @@ window.__smStart = () => {
     const ps = document.querySelectorAll('.wm--hero .wm__letter path');
     const fs = document.querySelectorAll('.wm--footer .wm__letter path');
     if (ps.length === 6) {
+      /* Литера I — прямоугольник: у неё ординаты только 0 и низ, поэтому
+         по ней видно ВЫСОТУ, но не форму. Для формы берётся весь набор
+         контуров: у S, P, O, T, K есть промежуточные ординаты, и они
+         зависят от сглаженного прогресса отдельно от высоты. */
       window.__sm.rows.push({
         t: now,
         y: window.scrollY,
         d: ps[4].getAttribute('d'),
         f: fs.length === 6 ? fs[4].getAttribute('d') : '',
+        dAll: ps[0].getAttribute('d') + ps[3].getAttribute('d'),
+        fAll: fs.length === 6 ? fs[0].getAttribute('d') + fs[3].getAttribute('d') : '',
       });
     }
     requestAnimationFrame(tick);
@@ -124,7 +132,7 @@ for (const [w, h, mob] of [[390, 844, true], [1920, 1080, false]]) {
     }
   }
   const win = SETTLE[mob ? 'touch' : 'fine'];
-  const okPage = movePage <= COAST_MAX;
+  const okPage = mob ? movePage <= 60 : movePage >= COAST[0] && movePage <= COAST[1];
   const okForm = moveForm >= win[0] && moveForm <= win[1];
   if (!okPage) { failed += 1; }
   if (!okForm) { failed += 1; }
@@ -135,7 +143,7 @@ for (const [w, h, mob] of [[390, 844, true], [1920, 1080, false]]) {
     ' '.repeat(2),
     (steps[Math.floor(steps.length / 2)] ?? 0).toFixed(3),
     (steps[steps.length - 1] ?? 0).toFixed(3),
-    okPage && okForm ? '' : `   ← ПРОВАЛ (выбег ≤${COAST_MAX}, схождение ${win[0]}…${win[1]})`);
+    okPage && okForm ? '' : `   ← ПРОВАЛ (выбег ${mob ? "≤60" : `${COAST[0]}…${COAST[1]}`}, схождение ${win[0]}…${win[1]})`);
 }
 
 /* ══ 3. ИНЕРЦИЯ ПАЛЬЦА: ИДЁТ ЛИ ФОРМА СТУПЕНЬКАМИ ════════════════════ */
@@ -286,61 +294,76 @@ for (const [w, h, mob] of [[390, 844, true], [414, 896, true]]) {
    сколько шагов; демпфер обязан довести их до числа кадров. */
 console.log('');
 console.log('── ДИСКРЕТНАЯ ИНЕРЦИЯ: 20 ШАГОВ ПО 50 мс (МОБИЛЬНЫЙ ПРОФИЛЬ) ────');
-console.log('размер       кадров   разных состояний   форма стояла   наибольший шаг');
+console.log('Это фаза ПОСЛЕ ОТПУСКАНИЯ пальца, разыгранная точно: пока палец');
+console.log('на экране, iOS отдаёт позицию каждый кадр, а инерцию считает');
+console.log('системный компоновщик и отдаёт её ступенями реже кадровой');
+console.log('частоты. Форма обязана идти к цели на КАЖДОМ кадре, а не только');
+console.log('на шагах позиции.');
+console.log('Считается САМА ФОРМА — строка контура целиком, а не высота:');
+console.log('в футере высота идёт за сырым прогрессом и обязана ступать');
+console.log('вместе с позицией, а форма обязана двигаться каждый кадр.');
+console.log('сцена   размер       кадров   разных состояний   форма стояла');
 for (const [w, h] of [[390, 844], [414, 896]]) {
-  const page = await browser.newPage({
-    viewport: { width: w, height: h }, isMobile: true, hasTouch: true, deviceScaleFactor: 1,
-  });
-  const cdp = await page.context().newCDPSession(page);
-  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
-  await page.addInitScript(PROBE);
-  await page.goto(`http://localhost:${PORT}${PREFIX}/`, { waitUntil: 'networkidle' });
-  await page.evaluate(() => document.fonts.ready);
-  await page.waitForSelector('.hero__stage[data-entered]');
-  const travel = await page.evaluate(() =>
-    document.getElementById('hero').offsetHeight - document.getElementById('scroller').clientHeight);
-  await page.evaluate((v) => { document.getElementById('scroller').scrollTop = v; }, Math.round(travel * 0.12));
-  await page.waitForTimeout(500);
-  await page.evaluate(() => window.__smStart());
-  await page.evaluate(() => new Promise((res) => {
-    const sc = document.getElementById('scroller');
-    let step = 34;
-    let n = 0;
-    const id = setInterval(() => {
-      if (n >= 20) { clearInterval(id); setTimeout(res, 500); return; }
-      sc.scrollTop += step;
-      step *= 0.88;
-      n += 1;
-    }, 50);
-  }));
-  await page.evaluate(() => { window.__sm.on = false; });
-  const rows = await page.evaluate(() => window.__sm.rows.slice());
-  await page.close();
+  for (const scene of ['хиро', 'футер']) {
+    const page = await browser.newPage({
+      viewport: { width: w, height: h }, isMobile: true, hasTouch: true, deviceScaleFactor: 1,
+    });
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+    await page.addInitScript(PROBE);
+    await page.goto(`http://localhost:${PORT}${PREFIX}/`, { waitUntil: 'networkidle' });
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForSelector('.hero__stage[data-entered]');
+    const from = await page.evaluate((s) => {
+      const sc = document.getElementById('scroller');
+      if (s === 'хиро') {
+        const hero = document.getElementById('hero');
+        return (hero.offsetHeight - sc.clientHeight) * 0.12;
+      }
+      /* Футер: встаём в начало роста — нижний край слоя на ход ниже линии. */
+      const base = sc.getBoundingClientRect().top - sc.scrollTop;
+      const svg = document.querySelector('.wm--footer .wm__svg');
+      const r = svg.getBoundingClientRect();
+      const top = r.top - base;
+      const span = r.height * 0.418;
+      return top + r.height - (sc.clientHeight - 6) - span;
+    }, scene);
+    await page.evaluate((v) => { document.getElementById('scroller').scrollTop = Math.round(v); }, from);
+    await page.waitForTimeout(500);
+    await page.evaluate(() => window.__smStart());
+    await page.evaluate(() => new Promise((res) => {
+      const sc = document.getElementById('scroller');
+      let step = 34;
+      let n = 0;
+      const id = setInterval(() => {
+        if (n >= 20) { clearInterval(id); setTimeout(res, 500); return; }
+        sc.scrollTop += step;
+        step *= 0.88;
+        n += 1;
+      }, 50);
+    }));
+    await page.evaluate(() => { window.__sm.on = false; });
+    const rows = await page.evaluate(() => window.__sm.rows.slice());
+    await page.close();
 
-  /* Берём только кадры ХОДА: от первого движения позиции до последнего. */
-  let a = 0;
-  let b = rows.length - 1;
-  while (a < b && Math.abs(rows[a + 1].y - rows[a].y) < 1) a += 1;
-  while (b > a && Math.abs(rows[b].y - rows[b - 1].y) < 1) b -= 1;
-  const hs = rows.slice(a, b + 1).map((r) => inkHeight(r.d));
-  const span = Math.abs(hs[hs.length - 1] - hs[0]) || 1;
-  const seen = new Set();
-  let still = 0;
-  let biggest = 0;
-  for (let i = 1; i < hs.length; i += 1) {
-    seen.add(hs[i].toFixed(4));
-    const d = Math.abs(hs[i] - hs[i - 1]);
-    if (d < 1e-4) still += 1;
-    if (d > biggest) biggest = d;
+    const key = scene === 'хиро' ? 'dAll' : 'fAll';
+    let a = 0;
+    let b = rows.length - 1;
+    while (a < b && Math.abs(rows[a + 1].y - rows[a].y) < 1) a += 1;
+    while (b > a && Math.abs(rows[b].y - rows[b - 1].y) < 1) b -= 1;
+    const win = rows.slice(a, b + 1).map((r) => r[key]);
+    const seen = new Set(win);
+    let still = 0;
+    for (let i = 1; i < win.length; i += 1) if (win[i] === win[i - 1]) still += 1;
+    const frames = win.length - 1;
+    const bad = frames >= 10 && still / frames > 0.2;
+    if (bad) failed += 1;
+    console.log('%s %s %s %s %s%s',
+      scene.padEnd(7), `${w}×${h}`.padEnd(12), String(frames).padStart(6),
+      String(seen.size).padStart(18),
+      `${still} (${frames ? Math.round((still / frames) * 100) : 0} %)`.padStart(15),
+      bad ? '   ← форма идёт ступеньками' : '');
   }
-  const frames = hs.length - 1;
-  const bad = frames >= 10 && still / frames > 0.2;
-  if (bad) failed += 1;
-  console.log('%s %s %s %s %s%s',
-    `${w}×${h}`.padEnd(12), String(frames).padStart(6), String(seen.size).padStart(18),
-    `${still} (${frames ? Math.round((still / frames) * 100) : 0} %)`.padStart(15),
-    `${((biggest / span) * 100).toFixed(0)} %`.padStart(16),
-    bad ? '   ← форма идёт ступеньками' : '');
 }
 
 await browser.close();

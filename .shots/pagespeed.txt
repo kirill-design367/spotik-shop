@@ -1,31 +1,11 @@
-LanternError: NO_LCP
-    at LargestContentfulPaint.getOptimisticGraph (file:///home/user/spotik-shop/node_modules/@paulirish/trace_engine/models/trace/lantern/metrics/LargestContentfulPaint.js:30:19)
-    at LargestContentfulPaint.compute (file:///home/user/spotik-shop/node_modules/@paulirish/trace_engine/models/trace/lantern/metrics/Metric.js:46:38)
-    at LargestContentfulPaint.compute (file:///home/user/spotik-shop/node_modules/@paulirish/trace_engine/models/trace/lantern/metrics/LargestContentfulPaint.js:63:36)
-    at #createLanternContext (file:///home/user/spotik-shop/node_modules/@paulirish/trace_engine/models/trace/Processor.js:253:66)
-    at #computeInsightsForNavigation (file:///home/user/spotik-shop/node_modules/@paulirish/trace_engine/models/trace/Processor.js:477:49)
-    at #computeInsights (file:///home/user/spotik-shop/node_modules/@paulirish/trace_engine/models/trace/Processor.js:445:47)
-    at TraceProcessor.parse (file:///home/user/spotik-shop/node_modules/@paulirish/trace_engine/models/trace/Processor.js:126:38)
-    at async TraceEngineResult.runTraceEngine (file:///home/user/spotik-shop/node_modules/lighthouse/core/computed/trace-engine-result.js:43:5)
-    at async TraceEngineResult.compute_ (file:///home/user/spotik-shop/node_modules/lighthouse/core/computed/trace-engine-result.js:256:7)
 
 === МОБИЛЬНЫЙ ===
-производительность  97   доступность 100   практики 100   SEO 100
+производительность  99   доступность 100   практики 100   SEO 100
   First Contentful Paint            0.9 s
-  Largest Contentful Paint          2.2 s
-  Total Blocking Time              160 ms
+  Largest Contentful Paint          2.1 s
+  Total Blocking Time               60 ms
   Cumulative Layout Shift               0
-  Speed Index                       1.2 s
-LanternError: NO_LCP
-    at LargestContentfulPaint.getOptimisticGraph (file:///home/user/spotik-shop/node_modules/@paulirish/trace_engine/models/trace/lantern/metrics/LargestContentfulPaint.js:30:19)
-    at LargestContentfulPaint.compute (file:///home/user/spotik-shop/node_modules/@paulirish/trace_engine/models/trace/lantern/metrics/Metric.js:46:38)
-    at LargestContentfulPaint.compute (file:///home/user/spotik-shop/node_modules/@paulirish/trace_engine/models/trace/lantern/metrics/LargestContentfulPaint.js:63:36)
-    at #createLanternContext (file:///home/user/spotik-shop/node_modules/@paulirish/trace_engine/models/trace/Processor.js:253:66)
-    at #computeInsightsForNavigation (file:///home/user/spotik-shop/node_modules/@paulirish/trace_engine/models/trace/Processor.js:477:49)
-    at #computeInsights (file:///home/user/spotik-shop/node_modules/@paulirish/trace_engine/models/trace/Processor.js:445:47)
-    at TraceProcessor.parse (file:///home/user/spotik-shop/node_modules/@paulirish/trace_engine/models/trace/Processor.js:126:38)
-    at async TraceEngineResult.runTraceEngine (file:///home/user/spotik-shop/node_modules/lighthouse/core/computed/trace-engine-result.js:43:5)
-    at async TraceEngineResult.compute_ (file:///home/user/spotik-shop/node_modules/lighthouse/core/computed/trace-engine-result.js:256:7)
+  Speed Index                       0.9 s
 
 === ДЕСКТОП ===
 производительность 100   доступность 100   практики 100   SEO 100

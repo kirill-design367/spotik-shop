@@ -26,7 +26,7 @@ for (const [w, h] of [[390, 844], [1920, 1080]]) {
     return {
       stickEnd: heroTop + hero.offsetHeight - stage.offsetHeight,
       footTop: document.getElementById('footer').getBoundingClientRect().top - base,
-      navH: document.querySelector('.nav--plain .nav__row').offsetHeight,
+      navH: document.querySelector('.nav .nav__row').offsetHeight,
       max: sc.scrollHeight - sc.clientHeight,
     };
   });

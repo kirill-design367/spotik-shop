@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import {
   buildPaths,
   buildPathsE,
+  buildPathsSplit,
   footRise,
   ease,
   easeFooter,
@@ -82,22 +83,29 @@ export default function Wordmark({ mode, sectionId, followSelector }: Props) {
       ? wrap.parentElement?.querySelector<HTMLElement>(followSelector) ?? null
       : null;
     let progress = 0;
+    /* Сырой прогресс нужен ТОЛЬКО футеру: из него берётся высота чернил,
+       чтобы рост остался один к одному с прокруткой, пока форма штрихов
+       догоняет цель с демпфером (Р-48). */
+    let progressRaw = 0;
     let painted = NaN;
+    let paintedRaw = NaN;
     let disposed = false;
 
     const paint = () => {
       if (disposed) return;
       // hero: 0 → 1 (раскрыт → сжат).  footer: зеркально, 1 → 0.
       const t = mode === 'hero' ? progress : 1 - progress;
-      if (t === painted) return;
+      const tRaw = mode === 'hero' ? t : 1 - progressRaw;
+      if (t === painted && tRaw === paintedRaw) return;
       painted = t;
+      paintedRaw = tRaw;
 
       // Смягчение у хиро и футера разное: хиро трогается мягко с покоя,
       // а футер идёт ЛИНЕЙНО — там рост обязан быть один к одному
       // с прокруткой, иначе низ чернил поедет (см. lib/wordmark).
       const e = mode === 'hero' ? ease(t) : easeFooter(t);
 
-      const d = buildPathsE(e);
+      const d = mode === 'hero' ? buildPathsE(e) : buildPathsSplit(e, easeFooter(tRaw));
       for (let i = 0; i < d.length; i += 1) paths[i]!.setAttribute('d', d[i]);
 
       if (follow) {
@@ -177,14 +185,16 @@ export default function Wordmark({ mode, sectionId, followSelector }: Props) {
       off();
       if (mq.matches) {
         progress = mode === 'hero' ? 0 : 1;
+        progressRaw = progress;
         off = () => {};
         paint();
       } else {
         off = onScrollProgress(
           sectionId,
           mode,
-          (p) => {
-            progress = origin(p);
+          (form, raw) => {
+            progress = origin(form);
+            progressRaw = origin(raw);
             paint();
           },
           wrap,

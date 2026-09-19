@@ -2,14 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { onLayoutChange, onScrollY, scrollToId, scroller } from '@/lib/scroll';
-import {
-  footRise,
-  WM_BOX_HEIGHT,
-  WM_PAD,
-  WM_VIEW_HEIGHT,
-  WM_WIDTH,
-} from '@/lib/wordmark';
+import { onLayoutChange, scrollToId, scroller } from '@/lib/scroll';
 import WordmarkMark from '@/components/wordmark/WordmarkMark';
 
 /**
@@ -22,50 +15,39 @@ import WordmarkMark from '@/components/wordmark/WordmarkMark';
  * никуда. Высота у неё ноль, полосу рисует абсолютный .nav__band,
  * поэтому в потоке она места не занимает.
  *
- * ── ИНВЕРСИЯ РАБОТАЕТ ВЕЗДЕ, И КОПИЙ ДЛЯ ЭТОГО ТРИ ─────────────────────────
- * Под шапкой бывает три разных фона, и каждому нужен свой ответ:
+ * ── ИНВЕРСИЯ: ШАПКА НИЧЕГО НЕ ЗНАЕТ О СТРАНИЦЕ ─────────────────────────────
+ * Три итерации подряд шапка ПЫТАЛАСЬ УГАДАТЬ, что под ней: список
+ * селекторов «что считать зелёным», габариты светлых строк, контуры слова,
+ * кромка поля футера. Любая дырка в этой модели — зелёное, которого нет
+ * в списке, — давала белый логотип на зелёном, и сторож молчал, потому
+ * что проверял ровно те места, которые называла та же модель. Разбор
+ * в Р-47.
  *
- *   ЗЕЛЁНОЕ — слово в хиро, поле футера, акценты середины. Цвет известен,
- *             поэтому копия просто ТЁМНАЯ, `--ink` на зелёном 7.2:1.
- *   СПЛОШНОЙ ТЁМНЫЙ ФОН — тоже известен, копия просто СВЕТЛАЯ, `--white`
- *             на `--ink` 18.7:1. Это большая часть страницы.
- *   КРУПНЫЙ СВЕТЛЫЙ НАБОР блоков 2–6 — а вот тут фон НЕ ОДИН: внутри
- *             строки чередуются светлые глифы и тёмные просветы, и по
- *             габариту строки его не разгадать. Здесь копия НЕ РИСУЕТ
- *             НИЧЕГО: она выворачивает наизнанку собственный фон,
- *             вырезанный по контурам чернил шапки. Над глифом выходит
- *             тёмное, над просветом светлое — попиксельно и точно.
+ * Теперь модели нет вообще. Чернила шапки не красятся: их рисует слой,
+ * который берёт СВОЙ СОБСТВЕННЫЙ ФОН и прогоняет его через ахроматическую
+ * выворотку. Что под ним лежит — неважно и не спрашивается:
  *
- * Розового, которым расплачивалось смешивание в Р-39, не возникает нигде:
- * над зелёным выворотка просто не рисуется, её области там нет. Само
- * смешивание убрано и по цене: оно заставляет перечитывать подложку целой
- * группой и стоило на 2560 от 27 до 40 % кадров дороже 16.9 мс против
- * 0.2 % у выворотки фона.
+ *     тёмный фон  #121212 → #FFFFFF   (18.7:1)
+ *     зелёное     #1DB954 → #000000   (8.1:1)
+ *     белый набор #FFFFFF → #000000   (21:1)
  *
- * ── МАСКИ ДЛЯ КРАСКИ, ОБРЕЗКА ДЛЯ ВЫВОРОТКИ ────────────────────────────────
- * У `clipPath` дети ОБЪЕДИНЯЮТСЯ, поэтому дырки приходится собирать
- * в один путь с `evenodd`. Маска складывается ПОРЯДКОМ РИСОВАНИЯ: белое
- * добавляет, чёрное вычитает, и `<use>` внутри неё работает (в `clipPath` —
- * нет). Поэтому у КРАШЕНЫХ копий маски, фигуры лежат в одном месте
- * и пишутся один раз.
+ * Цвета ахроматические по построению: `grayscale` стоит первым, поэтому
+ * розового не получить ни над чем. В кадре прокрутки шапка не делает
+ * НИЧЕГО — фигура статична, и пересчитывается она только при смене
+ * раскладки.
  *
- * А выворотку фона маской не обрезать вовсе: `mask-image` над элементом
- * с `backdrop-filter` не ограничивает эффект, а ГАСИТ его целиком —
- * проверено опытом. Там работает `clip-path`, и пересечение двух областей
- * выражается ВЛОЖЕНИЕМ: снаружи светлый набор, внутри контуры чернил.
- * В саму обрезку фигуры кладутся напрямую: `<g>` в её модели содержимого
- * нет, и завёрнутые в группу контуры молча не обрезают ничего.
+ * ── ЧЕРНИЛА КАК ФИГУРА ─────────────────────────────────────────────────────
+ * Выворотку надо ограничить формой чернил, а `backdrop-filter` обрезается
+ * только `clip-path` (маска его ГАСИТ, Р-46). Поэтому в обрезку кладётся
+ * тот же текст тем же шрифтом, кеглем, начертанием, осью насыщенности
+ * и трекингом, поставленный по строчному боксу из `Range`. Полосы бургера —
+ * два прямоугольника.
  *
- * Тёмная маска берёт зелёное с обводкой: её область на пиксель ШИРЕ,
- * чем вычитание у двух других. Перекрытие нужно, чтобы на сглаженном
- * краю глифа не осталось полоски, где светлая копия уже рисует, а тёмная
- * ещё нет. Тёмная непрозрачна и лежит выше — она это перекрытие закрывает.
- * У светлого набора то же самое сделано с другой стороны: светлая копия
- * вычитается по габариту, ПОДЖАТОМУ на пиксель, а выворотка обрезается
- * по точному.
- *
- * Геометрия считается АНАЛИТИЧЕСКИ из величин, снятых один раз: в кадре
- * не читается ни одного прямоугольника. Подробности в CLAUDE.md, Р-46.
+ * ── ЕСЛИ ВЫВОРОТКА НЕ ПОДДЕРЖИВАЕТСЯ ───────────────────────────────────────
+ * Живые элементы шапки остаются на месте и красятся обычным белым. Слой
+ * выворотки включается только под `@supports` И только после того, как
+ * фигура собрана (атрибут `data-ink`). Не выполнился скрипт, не поддержан
+ * `backdrop-filter` — шапка просто светлая, как была, и ничего не пропадает.
  *
  * ── БУРГЕР В ДВЕ ПОЛОСЫ ────────────────────────────────────────────────────
  * Две, а не три: так просил арт-директор. Полосы короткие и плотные,
@@ -88,51 +70,13 @@ const LINKS: [id: string, label: string][] = [
   ['faq', 'Вопросы'],
 ];
 
-/**
- * Кандидаты в «зелёные акценты». Список ЯВНЫЙ, но решает не он, а замер:
- * в него попадает только то, у чего фактический фон оказался зелёным.
- * Поэтому переключатель срока отдаёт ровно активную кнопку, а выключенная
- * «Оформить» не отдаёт ничего.
- */
-const GREEN_CANDIDATES = '.btn, .seg__btn, .row__hot';
-const GREEN_RGB = 'rgb(29, 185, 84)';
-
-/**
- * Что считать СВЕТЛЫМ НАБОРОМ. Здесь список не решает почти ничего:
- * он только сужает обход, а отбирает ЯРКОСТЬ фактического цвета текста.
- * Поэтому тёмные подписи на зелёном (реквизиты футера, надпись на кнопке)
- * сюда не попадают сами собой, и список не приходится держать в голове
- * при каждой правке блоков.
- */
-const TEXT_CANDIDATES =
-  'h1,h2,h3,h4,p,li,span,a,button,em,b,strong,dt,dd,small,time,label,summary,figcaption';
-/** Порог яркости: выше — считаем светлым. `--dim` (#B3B3B3) = 0.45. */
-const LIGHT_LUM = 0.22;
-
-type Rect = { top: number; left: number; w: number; h: number; hero: boolean };
-
-/** Относительная яркость по WCAG — по ней и решаем, светлый текст или нет. */
-function luminance(css: string): number {
-  const m = css.match(/\d+(\.\d+)?/g);
-  if (!m || m.length < 3) return 0;
-  const [r, g, b] = m.slice(0, 3).map((v) => {
-    const s = +v / 255;
-    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
+const NS = 'http://www.w3.org/2000/svg';
 
 export default function Nav() {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const plainRef = useRef<HTMLElement>(null);
-  const invertRef = useRef<HTMLDivElement>(null);
-  const darkRef = useRef<HTMLDivElement>(null);
-  const litRef = useRef<HTMLDivElement>(null);
-  const greenRef = useRef<SVGGElement>(null);
-  const greenPathRef = useRef<SVGPathElement>(null);
-  const lightPathRef = useRef<SVGPathElement>(null);
-  const lightClipRef = useRef<SVGPathElement>(null);
+  const navRef = useRef<HTMLElement>(null);
+  const inkRootRef = useRef<HTMLDivElement>(null);
   const inkRef = useRef<SVGClipPathElement>(null);
   const inkDimRef = useRef<SVGClipPathElement>(null);
   const burgerRef = useRef<HTMLButtonElement>(null);
@@ -141,67 +85,47 @@ export default function Nav() {
   useEffect(() => setMounted(true), []);
 
   useEffect(() => {
-    const plain = plainRef.current;
-    const invert = invertRef.current;
-    const dark = darkRef.current;
-    const sc = scroller();
-    const lit = litRef.current;
-    const greenG = greenRef.current;
-    const greenPath = greenPathRef.current;
-    const lightPath = lightPathRef.current;
-    const lightClip = lightClipRef.current;
+    const nav = navRef.current;
+    const inkRoot = inkRootRef.current;
     const ink = inkRef.current;
     const inkDim = inkDimRef.current;
-    if (!plain || !invert || !dark || !sc || !lit) return;
-    if (!greenG || !greenPath || !lightPath || !lightClip || !ink || !inkDim) return;
+    if (!nav || !inkRoot || !ink || !inkDim) return;
 
-    let navH = 0;
-    let vw = 0;
-    /* хиро: где стоит слой слова, пока сцена прилипла, и где она отлипает */
-    let heroLeft = 0;
-    let heroW = 0;
-    let heroH = 0;
-    let heroTopStuck = 0;
-    let stickEnd = 0;
-    /* футер: слой и верхний край зелёного поля — в координатах содержимого */
-    let footLeft = 0;
-    let footW = 0;
-    let footH = 0;
-    let footWmTop = 0;
-    let footTop = Infinity;
-    /* сдвиг текстов хиро к концу хода: всё, что в них лежит, едет с ними */
-    let heroShift = 0;
-    let greens: Rect[] = [];
-    let lights: Rect[] = [];
-    let heroPaths: SVGPathElement[] = [];
-    let footPaths: SVGPathElement[] = [];
-    let lastLetters = '';
-    let lastRaw = '';
-    let lastGreen = '';
-    let lastLight = '';
-    let lastTf = '';
-    let lastFlags = '';
+    /* ── СЛОЙ ВЫВОРОТКИ ЛЕЖИТ ВНЕ ШАПКИ, И ЭТО НЕ ВКУСОВЩИНА ────────────
+       У `.nav` есть анимация входа, а она трогает `opacity`. Элемент
+       с такой анимацией становится BACKDROP ROOT: фон для `backdrop-filter`
+       внутри него ПУСТОЙ, и слой не рисует вообще ничего. Анимация
+       с `fill-mode: both` остаётся «заполняющей» навсегда, поэтому после
+       входа это не проходит само. Слой вынесен в соседний липкий элемент
+       без единой анимации. См. Р-47.
 
-    const boxOf = (el: Element, base: number): Rect => {
-      const r = el.getBoundingClientRect();
-      return {
-        top: r.top - base,
-        left: r.left,
-        w: r.width,
-        h: r.height,
-        hero: !!el.closest('.hero__foot'),
-      };
+       Пока вход играет, слой выключен: иначе чернила появились бы сразу,
+       а живые элементы — только на 0.78 с. Включается он по концу входа,
+       и подмена незаметна: над тёмным фоном выворотка даёт ровно #FFFFFF,
+       то есть тот же цвет, которым красится живой текст. */
+    let entered = false;
+    let shaped = false;
+    const apply = () => {
+      const on = entered && shaped;
+      nav.toggleAttribute('data-ink', on);
+      inkRoot.toggleAttribute('data-ink', on);
     };
+    const markEntered = () => { entered = true; apply(); };
+    const running = nav.getAnimations
+      ? nav.getAnimations().filter((a) => a.playState !== 'finished')
+      : [];
+    if (!running.length) entered = true;
+    else {
+      Promise.all(running.map((a) => a.finished.catch(() => {}))).then(markEntered);
+      /* Страховка: если анимация не доиграет (вкладка в фоне), чернила
+         всё равно обязаны появиться. */
+      window.setTimeout(markEntered, 2500);
+    }
 
-    /* ── ЧЕРНИЛА ШАПКИ КАК ФИГУРА ─────────────────────────────────────
-       Инвертирующая копия ничего не рисует: она показывает СВОЙ ФОН,
-       вывернутый наизнанку, и вырезан этот фон ровно по контурам
-       глифов. Значит контуры надо иметь фигурой, а обрезка в SVG
-       умеет `<text>` (в отличие от `<use>`, Р-46). Мы кладём в неё
-       тот же текст тем же шрифтом и кеглем, что рисует живая копия,
-       и ставим его по ТОЙ ЖЕ строке: базовая линия берётся из Range,
-       то есть из настоящего строчного бокса, а не из бокса элемента.
-       Метрики шрифта — из канваса, тем же объявлением шрифта. */
+    /* Метрики шрифта берём из канваса тем же объявлением, что у элемента:
+       базовая линия считается по обычному правилу половинного интерлиньяжа
+       от СТРОЧНОГО бокса, а не от бокса элемента (слот под логотип выше
+       самой строки, и отсчёт от бокса уехал бы выше глифов). */
     const metrics = new Map<string, { asc: number; desc: number }>();
     const ctx2d = document.createElement('canvas').getContext('2d');
     const fontBox = (font: string) => {
@@ -217,67 +141,115 @@ export default function Nav() {
       return box;
     };
 
-    const NS = 'http://www.w3.org/2000/svg';
-    /* Отсчёт идёт ОТ ПОЛОСЫ ЖИВОЙ КОПИИ, а не от вьюпорта, и это не
-       мелочь: вход двигает светлую копию трансформом на 14 px, и если
-       снять координаты в тот момент, вся фигура запечётся со сдвигом —
-       выворотка встанет ниже настоящих глифов. Полоса инвертирующей
-       копии стоит на нуле и трансформа не знает, поэтому разность
-       с полосой живой копии и есть её система координат. */
-    const textShape = (el: HTMLElement, ox: number, oy: number): SVGTextElement | null => {
+    /* ФИГУРА СОБИРАЕТСЯ ПОЛИТЕРНО, и это не педантизм. Строка целиком,
+       поставленная одним `<text>`, накапливает расхождение по трекингу:
+       в HTML апрош добавляется после КАЖДОГО знака, включая последний,
+       и к шестой литере набегает почти пиксель — правый штрих K выходил
+       из обрезки, и вдоль него шла недокрашенная колонка. Здесь каждая
+       литера ставится в СВОЁ измеренное место, а апрош в фигуру
+       не попадает вовсе: он уже учтён в измерении.
+
+       Отсчёт идёт от ПОЛОСЫ ШАПКИ, а не от вьюпорта: вход двигает её
+       трансформом на 14 px, и координаты, снятые в тот момент, запеклись
+       бы со сдвигом. */
+    const textShape = (el: HTMLElement, ox: number, oy: number): SVGGElement | null => {
       const cs = getComputedStyle(el);
       const raw = (el.textContent ?? '').trim();
-      if (!raw || cs.visibility === 'hidden') return null;
+      if (!raw || cs.visibility === 'hidden' || cs.display === 'none') return null;
+      const node = el.firstChild;
+      if (!node || node.nodeType !== 3) return null;
+      const text = node.textContent ?? '';
       const range = document.createRange();
       range.selectNodeContents(el);
       const line = [...range.getClientRects()].find((r) => r.width > 0.5 && r.height > 0.5);
       if (!line) return null;
       const font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
       const { asc, desc } = fontBox(font);
-      const node = document.createElementNS(NS, 'text');
-      node.setAttribute('x', (line.left - ox).toFixed(2));
-      node.setAttribute('y', (line.top - oy + (line.height - asc - desc) / 2 + asc).toFixed(2));
-      node.setAttribute('font-family', cs.fontFamily);
-      node.setAttribute('font-size', cs.fontSize);
-      node.setAttribute('font-weight', cs.fontWeight);
-      node.setAttribute('font-style', cs.fontStyle);
-      if (cs.letterSpacing && cs.letterSpacing !== 'normal') {
-        node.setAttribute('letter-spacing', cs.letterSpacing);
+      const baseline = line.top - oy + (line.height - asc - desc) / 2 + asc;
+      const up = cs.textTransform === 'uppercase';
+
+      const group = document.createElementNS(NS, 'g');
+      for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+        if (!ch.trim()) continue;
+        range.setStart(node, i);
+        range.setEnd(node, i + 1);
+        const r = range.getBoundingClientRect();
+        if (r.width < 0.1) continue;
+        const glyph = document.createElementNS(NS, 'text');
+        glyph.setAttribute('x', (r.left - ox).toFixed(2));
+        glyph.setAttribute('y', baseline.toFixed(2));
+        glyph.setAttribute('font-family', cs.fontFamily);
+        glyph.setAttribute('font-size', cs.fontSize);
+        glyph.setAttribute('font-weight', cs.fontWeight);
+        glyph.setAttribute('font-style', cs.fontStyle);
+        /* Насыщенность логотипа задана ОСЬЮ, а не `font-weight`: без неё
+           фигура выходит на два веса светлее и глифы не накрывает. */
+        if (cs.fontVariationSettings && cs.fontVariationSettings !== 'normal') {
+          glyph.style.fontVariationSettings = cs.fontVariationSettings;
+        }
+        if (cs.fontStretch && cs.fontStretch !== 'normal') glyph.style.fontStretch = cs.fontStretch;
+        glyph.textContent = up ? ch.toLocaleUpperCase('ru') : ch;
+        group.appendChild(glyph);
       }
-      /* Насыщенность у логотипа задана ОСЬЮ, а не `font-weight`: без этой
-         строки фигура выходит на два веса светлее настоящих глифов
-         и перестаёт их накрывать. Проверяется следом на растре. */
-      if (cs.fontVariationSettings && cs.fontVariationSettings !== 'normal') {
-        node.style.fontVariationSettings = cs.fontVariationSettings;
-      }
-      if (cs.fontStretch && cs.fontStretch !== 'normal') {
-        node.style.fontStretch = cs.fontStretch;
-      }
-      node.textContent = cs.textTransform === 'uppercase' ? raw.toLocaleUpperCase('ru') : raw;
-      return node;
+      return group.childNodes.length ? group : null;
     };
 
-    const buildInk = () => {
+    /* Наведение на пункт меню: его фигура переезжает из приглушённой
+       обрезки в яркую. Это два вызова на событие указателя, а не работа
+       в кадре. */
+    /* `<g>` в модели содержимого `clipPath` нет, и завёрнутые в него
+       контуры не обрезают ничего: раскладываем литеры по одной. */
+    const spread = (into: SVGClipPathElement, group: SVGGElement | null) => {
+      if (!group) return [];
+      const kids = [...group.childNodes] as SVGTextElement[];
+      for (const k of kids) into.appendChild(k);
+      return kids;
+    };
+    const shapeOf = new Map<HTMLElement, SVGTextElement[]>();
+    const move = (el: HTMLElement, into: SVGClipPathElement) => {
+      for (const k of shapeOf.get(el) ?? []) into.appendChild(k);
+    };
+    const enter = (e: Event) => move(e.currentTarget as HTMLElement, ink);
+    const leave = (e: Event) => move(e.currentTarget as HTMLElement, inkDim);
+    let hooked: HTMLElement[] = [];
+
+    const build = () => {
+      for (const el of hooked) {
+        el.removeEventListener('pointerenter', enter);
+        el.removeEventListener('pointerleave', leave);
+      }
+      hooked = [];
+      shapeOf.clear();
       ink.replaceChildren();
       inkDim.replaceChildren();
-      const band = plain.querySelector<HTMLElement>('.nav__band');
+
+      const band = nav.querySelector<HTMLElement>('.nav__band');
       if (!band) return;
+      /* Высота уходит ПЕРЕМЕННОЙ, а не в сам элемент: у корня слоя
+         высота обязана остаться нулевой, иначе он занимает место
+         в потоке и сдвигает хиро на высоту шапки. */
+      const row = band.querySelector<HTMLElement>('.nav__row');
+      inkRoot.style.setProperty('--nav-ink-h', `${row?.offsetHeight ?? 0}px`);
       const b = band.getBoundingClientRect();
       const ox = b.left;
       const oy = b.top;
-      const logo = plain.querySelector<HTMLElement>('.logo-slot__text');
-      const logoShape = logo ? textShape(logo, ox, oy) : null;
-      if (logoShape) ink.appendChild(logoShape);
-      /* Пункты меню приглушены (`--dim`), и приглушение обязано пережить
-         инверсию — поэтому у них своя фигура и своя, чуть притушенная,
-         выворотка. Подробности величины — в CSS. */
-      for (const el of plain.querySelectorAll<HTMLElement>('.nav__link')) {
-        const shape = textShape(el, ox, oy);
-        if (shape) inkDim.appendChild(shape);
+
+      const logo = nav.querySelector<HTMLElement>('.logo-slot__text');
+      if (logo) spread(ink, textShape(logo, ox, oy));
+
+      for (const el of nav.querySelectorAll<HTMLElement>('.nav__link')) {
+        const kids = spread(inkDim, textShape(el, ox, oy));
+        if (!kids.length) continue;
+        shapeOf.set(el, kids);
+        el.addEventListener('pointerenter', enter);
+        el.addEventListener('pointerleave', leave);
+        hooked.push(el);
       }
+
       /* Бургер рисует один бокс 24×12, две полосы из него вырезает маска
          на 0…4 и 8…12. Здесь те же две полосы прямоугольниками. */
-      const bars = plain.querySelector<HTMLElement>('.nav__burger-bars');
+      const bars = nav.querySelector<HTMLElement>('.nav__burger-bars');
       if (bars && bars.offsetParent !== null) {
         const r = bars.getBoundingClientRect();
         for (const [y0, y1] of [[0, 4], [8, 12]]) {
@@ -289,205 +261,23 @@ export default function Nav() {
           ink.appendChild(bar);
         }
       }
+
+      /* Слой выворотки включается ТОЛЬКО когда фигура собрана: пока её нет,
+         живые элементы красятся обычным белым и шапка не пропадает. */
+      shaped = ink.childNodes.length > 0;
+      apply();
     };
 
-    const measure = () => {
-      const row = plain.querySelector<HTMLElement>('.nav__row');
-      navH = row?.offsetHeight ?? 0;
-      vw = sc.clientWidth;
-      lit.style.height = `${navH}px`;
-      buildInk();
-      const base = sc.getBoundingClientRect().top - sc.scrollTop;
-
-      const hero = document.getElementById('hero');
-      const stage = hero?.querySelector<HTMLElement>('.hero__stage');
-      const heroSvg = hero?.querySelector<SVGSVGElement>('.wm--hero .wm__svg');
-      if (hero && stage && heroSvg) {
-        const heroTop = hero.getBoundingClientRect().top - base;
-        stickEnd = heroTop + hero.offsetHeight - stage.offsetHeight;
-        const r = heroSvg.getBoundingClientRect();
-        heroLeft = r.left;
-        heroW = r.width;
-        heroH = r.height;
-        /* Пока сцена прилипла, её верх на нуле, значит верх слоя — это
-           поле сцены под шапку. Дальше слой уезжает вместе со сценой. */
-        heroTopStuck = parseFloat(getComputedStyle(stage).paddingTop) || 0;
-        heroPaths = [...heroSvg.querySelectorAll<SVGPathElement>('.wm__letter path')];
-        /* Тексты хиро к концу хода подняты на долю высоты слоя. В полосу
-           шапки они попадают только после отлипания, то есть уже с дожатым
-           ходом, — значит сдвиг постоянный и читать его в кадре не нужно. */
-        const wmH = heroH / (WM_VIEW_HEIGHT / WM_BOX_HEIGHT);
-        heroShift = wmH * footRise(1);
-      }
-
-      const footer = document.getElementById('footer');
-      const footSvg = footer?.querySelector<SVGSVGElement>('.wm--footer .wm__svg');
-      footTop = footer ? footer.getBoundingClientRect().top - base : Infinity;
-      if (footSvg) {
-        const r = footSvg.getBoundingClientRect();
-        footLeft = r.left;
-        footW = r.width;
-        footH = r.height;
-        footWmTop = r.top - base;
-        footPaths = [...footSvg.querySelectorAll<SVGPathElement>('.wm__letter path')];
-      }
-
-      greens = [...document.querySelectorAll<HTMLElement>(GREEN_CANDIDATES)]
-        .filter((el) => getComputedStyle(el).backgroundColor === GREEN_RGB)
-        .map((el) => boxOf(el, base));
-
-      /* Светлый набор. Шапку и накладку исключаем: иначе она сама себе
-         фон и инвертируется относительно собственных копий. */
-      lights = [];
-      for (const el of document.querySelectorAll<HTMLElement>(TEXT_CANDIDATES)) {
-        if (el.closest('.nav') || el.closest('.menu')) continue;
-        const r = el.getBoundingClientRect();
-        if (r.width < 2 || r.height < 2) continue;
-        if (luminance(getComputedStyle(el).color) < LIGHT_LUM) continue;
-        /* только элементы с СОБСТВЕННЫМ текстом: обёртки дали бы
-           прямоугольник во весь блок и стёрли бы весь смысл */
-        let own = false;
-        for (const n of el.childNodes) {
-          if (n.nodeType === 3 && (n.textContent ?? '').trim()) { own = true; break; }
-        }
-        if (!own) continue;
-        lights.push(boxOf(el, base));
-      }
-
-      lastGreen = lastLight = lastTf = lastLetters = lastRaw = lastFlags = '';
-    };
-
-    /** Живые контуры литер — их же рисует морф, второй копии данных нет. */
-    const letters = (paths: SVGPathElement[]): string => {
-      const raw = paths[0]?.getAttribute('d') ?? '';
-      if (raw === lastRaw) return lastLetters;
-      lastRaw = raw;
-      let out = '';
-      for (let i = 0; i < paths.length; i += 1) out += paths[i].getAttribute('d') ?? '';
-      lastLetters = out;
-      return out;
-    };
-
-    const paint = (y: number) => {
-      /* ── КАКОЕ СЛОВО СЕЙЧАС В ПОЛОСЕ ──────────────────────────────────
-         Хиро и футер не пересекаются во времени, поэтому набор путей
-         один на оба. */
-      const heroTop = (y <= stickEnd ? 0 : stickEnd - y) + heroTopStuck;
-      const heroIn = heroPaths.length === 6 && heroTop < navH && heroTop + heroH > 0;
-      const footWmY = footWmTop - y;
-      const footIn = !heroIn && footPaths.length === 6 && footWmY < navH && footWmY + footH > 0;
-
-      /* Общий масштаб и сдвиг: контуры кладутся в маску как есть,
-         а в экранные пиксели их переводит transform группы. */
-      let sx = 1;
-      let sy = 1;
-      let tx = 0;
-      let ty = 0;
-      let green = '';
-      if (heroIn) {
-        sx = heroW / WM_WIDTH;
-        sy = heroH / WM_VIEW_HEIGHT;
-        tx = heroLeft;
-        ty = heroTop + WM_PAD * sy;
-        green = letters(heroPaths);
-      } else if (footIn) {
-        sx = footW / WM_WIDTH;
-        sy = footH / WM_BOX_HEIGHT;
-        tx = footLeft;
-        ty = footWmY;
-        green = letters(footPaths);
-      }
-
-      /* Габариты зелёного в пикселях полосы: по ним из светлого набора
-         вычёркиваются строки, которые на зелёное налезли. Точность тут
-         не нужна и вредна — это сторож от розового, а не рисунок. */
-      const gBox: number[][] = [];
-      if (heroIn || footIn) gBox.push([tx, ty, tx + WM_WIDTH * sx, ty + WM_VIEW_HEIGHT * sy]);
-
-      /* Прямоугольники зелёного пересчитываются в ту же систему. */
-      const boxG = (x: number, top: number, w: number, h: number) => {
-        const y0 = top < 0 ? 0 : top;
-        const y1 = top + h > navH ? navH : top + h;
-        if (y1 <= y0 || w <= 0) return;
-        gBox.push([x, y0, x + w, y1]);
-        const ux = (x - tx) / sx;
-        const uy = (y0 - ty) / sy;
-        green += `M${ux.toFixed(2)} ${uy.toFixed(2)}h${(w / sx).toFixed(2)}v${((y1 - y0) / sy).toFixed(2)}h${(-w / sx).toFixed(2)}Z`;
-      };
-      const fieldTop = footTop - y;
-      if (fieldTop < navH) boxG(0, fieldTop, vw, navH - fieldTop + 1);
-      for (let i = 0; i < greens.length; i += 1) {
-        const r = greens[i];
-        const top = r.top - y + (r.hero ? heroShift : 0);
-        if (top < navH && top + r.h > 0) boxG(r.left, top, r.w, r.h);
-      }
-
-      /* Светлый набор — прямо в пикселях полосы, ему система координат
-         слова не нужна. Строк две: по ТОЧНОЙ обрезается инвертирующая
-         копия, по ПОДЖАТОЙ на пиксель вычитается светлая. Так на кромке
-         области получается перекрытие, а не щель: обе копии рисуют один
-         и тот же глиф, и верхняя его закрывает. */
-      let light = '';
-      let lightIn = '';
-      for (let i = 0; i < lights.length; i += 1) {
-        const r = lights[i];
-        const top = r.top - y + (r.hero ? heroShift : 0);
-        if (top >= navH || top + r.h <= 0) continue;
-        const y0 = top < 0 ? 0 : top;
-        const y1 = top + r.h > navH ? navH : top + r.h;
-        let onGreen = false;
-        for (let k = 0; k < gBox.length; k += 1) {
-          const b = gBox[k];
-          if (r.left < b[2] && r.left + r.w > b[0] && y0 < b[3] && y1 > b[1]) { onGreen = true; break; }
-        }
-        if (onGreen) continue;
-        light += `M${r.left.toFixed(1)} ${y0.toFixed(1)}h${r.w.toFixed(1)}v${(y1 - y0).toFixed(1)}h${(-r.w).toFixed(1)}Z`;
-        const iw = r.w - 2;
-        const ih = y1 - y0 - 2;
-        if (iw > 0 && ih > 0) {
-          lightIn += `M${(r.left + 1).toFixed(1)} ${(y0 + 1).toFixed(1)}h${iw.toFixed(1)}v${ih.toFixed(1)}h${(-iw).toFixed(1)}Z`;
-        }
-      }
-
-      const flags = `${green ? 1 : 0}${light ? 1 : 0}`;
-      if (flags !== lastFlags) {
-        lastFlags = flags;
-        plain.toggleAttribute('data-mask', !!(green || light));
-        invert.toggleAttribute('data-on', !!light);
-        dark.toggleAttribute('data-on', !!green);
-      }
-      if (!green && !light) return;
-
-      const tf = `translate(${tx.toFixed(2)} ${ty.toFixed(2)}) scale(${sx.toFixed(6)} ${sy.toFixed(6)})`;
-      if (tf !== lastTf) {
-        lastTf = tf;
-        greenG.setAttribute('transform', tf);
-      }
-      if (green !== lastGreen) {
-        lastGreen = green;
-        greenPath.setAttribute('d', green);
-      }
-      if (light !== lastLight) {
-        lastLight = light;
-        lightPath.setAttribute('d', lightIn);
-        lightClip.setAttribute('d', light);
-      }
-    };
-
-    measure();
-    const offLayout = onLayoutChange(measure);
-    const offScroll = onScrollY(paint);
-    /* Переключатель срока красит кнопку зелёным на лету, а высоту страницы
-       при этом не меняет — наблюдатель размера такого не видит. Пересчёт
-       откладываем на кадр: к нему состояние уже применено. */
-    const onTap = () => requestAnimationFrame(() => { measure(); paint(sc.scrollTop); });
-    document.addEventListener('pointerup', onTap, true);
-    document.addEventListener('keyup', onTap, true);
+    build();
+    const offLayout = onLayoutChange(build);
+    /* Шрифты доезжают после первой раскладки и двигают строчные боксы. */
+    document.fonts?.ready.then(build).catch(() => {});
     return () => {
       offLayout();
-      offScroll();
-      document.removeEventListener('pointerup', onTap, true);
-      document.removeEventListener('keyup', onTap, true);
+      for (const el of hooked) {
+        el.removeEventListener('pointerenter', enter);
+        el.removeEventListener('pointerleave', leave);
+      }
     };
   }, []);
 
@@ -555,116 +345,63 @@ export default function Nav() {
     </div>
   );
 
-  /**
-   * Одна и та же полоса рисуется трижды. Смысл и вся интерактивность —
-   * только у первой копии; две другие декоративны, у них нет ни фокуса,
-   * ни обработчиков, ни имени в дереве доступности.
-   */
-  const band = (live: boolean) => (
-    <div className="nav__band">
-      <div className="nav__row shell">
-        <div className="logo-slot" data-logo-slot="reserved">
-          <a
-            className="logo-slot__text"
-            href="#hero"
-            tabIndex={live ? undefined : -1}
-            onClick={(e) => {
-              e.preventDefault();
-              if (live) scrollToId('hero');
-            }}
-          >
-            SPOTIK
-          </a>
-        </div>
-
-        <div className="nav__links">
-          {LINKS.map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              className="nav__link"
-              tabIndex={live ? undefined : -1}
-              onClick={() => {
-                if (live) scrollToId(id);
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        <button
-          ref={live ? burgerRef : undefined}
-          type="button"
-          className="nav__burger"
-          tabIndex={live ? undefined : -1}
-          aria-expanded={live ? open : undefined}
-          aria-haspopup={live ? 'dialog' : undefined}
-          onClick={() => {
-            if (live) setOpen(true);
-          }}
-        >
-          <span className="sr-only">Открыть меню</span>
-          <span className="nav__burger-bars" aria-hidden="true" />
-        </button>
-      </div>
-    </div>
-  );
-
   return (
     <>
-      <nav ref={plainRef} className="nav nav--plain" aria-label="Основная навигация">
-        {band(true)}
-      </nav>
-      {/* Инвертирующая копия НИЧЕГО НЕ РИСУЕТ: она показывает свой же фон,
-          вывернутый наизнанку, и вырезан он по контурам чернил шапки. */}
-      <div ref={invertRef} className="nav nav--invert" aria-hidden="true">
-        <div ref={litRef} className="nav__band nav__lit">
-          <div className="nav__ink" />
-          <div className="nav__ink nav__ink--dim" />
+      <nav ref={navRef} className="nav" aria-label="Основная навигация">
+        <div className="nav__band">
+          <div className="nav__row shell">
+            <div className="logo-slot" data-logo-slot="reserved">
+              <a
+                className="logo-slot__text"
+                href="#hero"
+                onClick={(e) => {
+                  e.preventDefault();
+                  scrollToId('hero');
+                }}
+              >
+                SPOTIK
+              </a>
+            </div>
+
+            <div className="nav__links">
+              {LINKS.map(([id, label]) => (
+                <button key={id} type="button" className="nav__link" onClick={() => scrollToId(id)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <button
+              ref={burgerRef}
+              type="button"
+              className="nav__burger"
+              aria-expanded={open}
+              aria-haspopup="dialog"
+              onClick={() => setOpen(true)}
+            >
+              <span className="sr-only">Открыть меню</span>
+              <span className="nav__burger-bars" aria-hidden="true" />
+            </button>
+          </div>
         </div>
+      </nav>
+
+      {/* Два слоя выворотки: яркий для знака и бургера, приглушённый
+          для пунктов меню. Оба ничего не рисуют — они показывают
+          собственный фон, вывернутый наизнанку. Лежат ВНЕ шапки:
+          её анимация входа сделала бы их фон пустым. */}
+      <div ref={inkRootRef} className="nav-ink" aria-hidden="true">
+        <div className="nav-ink__layer nav-ink__layer--bright" />
+        <div className="nav-ink__layer nav-ink__layer--dim" />
       </div>
-      <div ref={darkRef} className="nav nav--dark" aria-hidden="true">{band(false)}</div>
+
       <svg className="nav__clip" aria-hidden="true" focusable="false">
-        <defs>
-          {/* Фигуры лежат ОДИН раз; маски ссылаются на них с разной
-              заливкой. Обводка у зелёного не масштабируется вместе
-              со словом — иначе по вертикали она растянулась бы вчетверо. */}
-          {/* evenodd: контуры литер, наложенные на прямоугольник зелёного
-              поля футера, становятся в нём ДЫРКАМИ — над чёрным словом
-              шапка обязана остаться светлой. В хиро прямоугольника нет,
-              и правило там ни на что не влияет, кроме просветов внутри
-              самих литер, где оно как раз и нужно. */}
-          <g ref={greenRef} id="nav-shape-green">
-            <path ref={greenPathRef} d="" fillRule="evenodd" vectorEffect="non-scaling-stroke" />
-          </g>
-          <g id="nav-shape-light">
-            <path ref={lightPathRef} d="" />
-          </g>
-        </defs>
-        {/* Светлая копия: вся полоса минус зелёное минус светлый набор. */}
-        <mask id="nav-m-plain" maskUnits="userSpaceOnUse" x="-500" y="-500" width="20000" height="2000">
-          <rect x="-500" y="-500" width="20000" height="2000" fill="#fff" />
-          <use href="#nav-shape-light" fill="#000" />
-          <use href="#nav-shape-green" fill="#000" />
-        </mask>
-        {/* Инвертирующая копия обрезается ДВАЖДЫ и в двух местах сразу:
-            снаружи — светлым набором, внутри — контурами чернил шапки.
-            Пересечение выражается только вложением: у обрезки дети
-            объединяются, а маской выворотку не обрезать вовсе — она
-            её просто гасит (проверено опытом, Р-46). */}
-        <clipPath id="nav-c-light" clipPathUnits="userSpaceOnUse">
-          <path ref={lightClipRef} d="" />
-        </clipPath>
         {/* Фигуры кладутся ПРЯМО в обрезку: `<g>` в её модели содержимого
             нет, и завёрнутые в него контуры молча не обрезают ничего. */}
         <clipPath ref={inkRef} id="nav-c-ink" clipPathUnits="userSpaceOnUse" />
         <clipPath ref={inkDimRef} id="nav-c-ink-dim" clipPathUnits="userSpaceOnUse" />
-        {/* Тёмная копия: зелёное, расширенное обводкой на пиксель. */}
-        <mask id="nav-m-dark" maskUnits="userSpaceOnUse" x="-500" y="-500" width="20000" height="2000">
-          <use href="#nav-shape-green" fill="#fff" stroke="#fff" strokeWidth="2" />
-        </mask>
       </svg>
+
       {mounted ? createPortal(overlay, document.body) : null}
     </>
   );

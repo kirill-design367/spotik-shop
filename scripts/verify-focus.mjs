@@ -49,7 +49,7 @@ for (const [w, h, mob] of [[390, 844, true], [1920, 1080, false]]) {
 
   /* Указателем: фокус ставится, кольцо не рисуется. Бургер есть только
      на мобильной, на десктопе берём первый пункт меню. */
-  const target = mob ? '.nav--plain .nav__burger' : '.nav--plain .nav__link';
+  const target = mob ? '.nav .nav__burger' : '.nav .nav__link';
   await page.click(target, { force: true });
   const byPointer = await page.evaluate(() => {
     const el = document.activeElement;

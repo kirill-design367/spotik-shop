@@ -94,6 +94,12 @@ function fire() {
   for (let i = 0; i < readers.length; i += 1) readers[i](y);
 }
 
+/** Нативное событие прокрутки: сначала сверка с Lenis, потом читатели. */
+function fireNative() {
+  resync();
+  fire();
+}
+
 /**
  * Пересчёт границ. Раскладка меняется и после первого кадра: приехали
  * шрифты и переверстались абзацы, раскрылся ответ в блоке вопросов, встала
@@ -125,7 +131,7 @@ function attach() {
   if (attached || typeof window === 'undefined') return;
   attached = true;
   // passive: браузеру не нужно ждать наш обработчик, чтобы прокрутить
-  scrollSource().addEventListener('scroll', fire, { passive: true });
+  scrollSource().addEventListener('scroll', fireNative, { passive: true });
   window.addEventListener('resize', relayout);
   const sc = scroller();
   if (sc && typeof ResizeObserver !== 'undefined') {
@@ -140,14 +146,16 @@ function attach() {
  * не уезжает вовсе, поэтому ни критический путь, ни мобильный PageSpeed
  * от него не страдают.
  *
- * Параметры подобраны под один потолок — выбег после последнего события
- * колеса не больше 150 мс:
+ * Параметры подобраны под окно выбега после последнего события колеса
+ * 350…450 мс:
  *
- *   lerp 0.55   — доля пути за кадр, и она подобрана ЗАМЕРОМ под потолок,
- *                 а не на глаз: 0.28 дало выбег 299 мс, 0.45 — 166,
- *                 0.50 — 149 (ровно на потолке, без запаса на шум),
- *                 0.55 — 133, 0.60 — 116. Взято 0.55: самое мягкое
- *                 значение, у которого остаётся запас до 150 мс.
+ *   lerp 0.22   — доля пути за кадр, и она подобрана ЗАМЕРОМ под окно,
+ *                 а не на глаз. Прежний потолок 150 мс арт-директор
+ *                 отменил: при 133 мс сглаживания на глаз нет вовсе.
+ *                 Новый ориентир — 350…450 мс, и лестница такая:
+ *                 0.16 → 550 мс, 0.18 → 483, 0.20 → 433, 0.22 → 383,
+ *                 0.24 → 350 (край), 0.28 → 299, 0.55 → 133.
+ *                 Взято 0.22: середина окна, с запасом с обеих сторон.
  *   smoothWheel — собственно то, ради чего он здесь.
  *   syncTouch: false — на касаниях он не поднимается вовсе (см. ниже),
  *                 но флаг оставлен явно: это не умолчание, а решение.
@@ -159,6 +167,34 @@ function attach() {
  * оно приходит синхронно сразу после записи позиции.
  */
 let lenisUp = false;
+/* Живой Lenis нужен снаружи ровно для одного: сверить его цель
+   с фактической позицией, если её подвинул не он. */
+type LenisLike = {
+  animatedScroll: number;
+  scrollTo: (t: number, o?: { immediate?: boolean; force?: boolean }) => void;
+  on: (e: string, f: () => void) => void;
+};
+let lenis: LenisLike | null = null;
+
+/**
+ * ПОЗИЦИЮ МОЖЕТ ПОДВИНУТЬ НЕ ТОЛЬКО LENIS.
+ *
+ * Якорный переход, восстановление позиции, замерный стенд — все они пишут
+ * `scrollTop` напрямую. Lenis об этом не знает и на следующем же кадре
+ * тянет страницу назад, к своей устаревшей цели. На коротком выбеге
+ * (lerp 0.55) это была доля секунды и мелочь, на длинном (0.22) —
+ * заметный откат, и сторожа начали падать по всей странице.
+ *
+ * Сверка стоит одно сравнение и делается там же, где читается позиция.
+ * Ровно эти же грабли описаны в Р-31 для прежнего Lenis.
+ */
+function resync() {
+  const sc = scroller();
+  if (!lenis || !sc) return;
+  if (Math.abs(sc.scrollTop - lenis.animatedScroll) > 2) {
+    lenis.scrollTo(sc.scrollTop, { immediate: true, force: true });
+  }
+}
 
 export function bootScroll(): () => void {
   attach();
@@ -169,15 +205,16 @@ export function bootScroll(): () => void {
   lenisUp = true;
   import('lenis')
     .then(({ default: Lenis }) => {
-      const lenis = new Lenis({
+      const made = new Lenis({
         wrapper: sc,
         content: (sc.firstElementChild as HTMLElement) ?? sc,
-        lerp: 0.55,
+        lerp: 0.22,
         smoothWheel: true,
         syncTouch: false,
         autoRaf: true,
       });
-      lenis.on('scroll', fire);
+      lenis = made as unknown as LenisLike;
+      made.on('scroll', fire);
     })
     .catch(() => {
       // не доехал — страница просто катится нативно, это рабочее состояние
@@ -265,7 +302,7 @@ const DAMP_EPS = 1e-4;
 export function onScrollProgress(
   sectionId: string,
   mode: ProgressMode,
-  cb: (p: number) => void,
+  cb: (form: number, raw: number) => void,
   layer?: HTMLElement | null,
 ): () => void {
   const sc = scroller();
@@ -289,10 +326,15 @@ export function onScrollProgress(
     }
   };
 
-  /* Демпфер живёт только у хиро И только на касаниях: на точном
-     указателе позицию уже ведёт Lenis, и второе сглаживание поверх
-     первого — это ровно та тяжесть, из-за которой его снимали. */
-  const damp = mode === 'hero' && !finePointer();
+  /* Демпфер живёт только на касаниях: на точном указателе позицию уже
+     ведёт Lenis, и второе сглаживание поверх первого — это ровно та
+     тяжесть, из-за которой его снимали.
+
+     В ФУТЕРЕ ОН ТОЖЕ ЕСТЬ, и это не нарушает закон 1:1. Подписка отдаёт
+     ДВА числа: сглаженное (форма штрихов) и сырое (высота чернил).
+     Высота идёт за сырым, то есть пиксель в пиксель, и низ по-прежнему
+     стоит на линии; отстаёт только рисунок. См. Р-48. */
+  const damp = !finePointer();
   let target = 0;
   let cur = NaN;
   let raf = 0;
@@ -318,7 +360,7 @@ export function onScrollProgress(
     prev = now;
     cur += (target - cur) * (1 - Math.exp(-dt / MORPH_DAMP_TOUCH_MS));
     if (Math.abs(target - cur) < DAMP_EPS) cur = target;
-    cb(cur);
+    cb(cur, target);
     if (cur !== target) raf = requestAnimationFrame(tick);
   };
 
@@ -326,16 +368,22 @@ export function onScrollProgress(
     const p0 = span > 0 ? (y - start) / span : 0;
     const p = p0 < 0 ? 0 : p0 > 1 ? 1 : p0;
     if (!damp) {
-      cb(p);
+      cb(p, p);
       return;
     }
     target = p;
     // первое значение берётся как есть: догонять на монтировании нечего
     if (Number.isNaN(cur)) {
       cur = p;
-      cb(cur);
+      cb(cur, p);
       return;
     }
+    /* Сырое значение отдаётся В ТОМ ЖЕ КАДРЕ, где пришло событие: из него
+       берётся высота чернил в футере, а она обязана идти пиксель в пиксель.
+       Если ждать кадра догона, высота отстаёт ровно на кадр — низ чернил
+       начинает гулять на быстром движении (замерено 43 px). Форма же
+       по-прежнему идёт из цикла догона. */
+    cb(cur, p);
     if (cur === target || raf) return;
     prev = performance.now();
     raf = requestAnimationFrame(tick);
@@ -365,6 +413,13 @@ export function scrollToId(id: string) {
   const behavior: ScrollBehavior = prefersReducedMotion() ? 'auto' : 'smooth';
   if (sc) {
     const top = sc.scrollTop + el.getBoundingClientRect().top - sc.getBoundingClientRect().top;
+    /* Пока Lenis ведёт позицию, переход обязан идти ЧЕРЕЗ НЕГО: иначе
+       собственная плавная прокрутка браузера и его кривая тянут страницу
+       в разные стороны, и она дёргается. */
+    if (lenis && behavior === 'smooth') {
+      lenis.scrollTo(top);
+      return;
+    }
     sc.scrollTo({ top, behavior });
     return;
   }
