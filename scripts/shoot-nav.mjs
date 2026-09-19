@@ -26,9 +26,16 @@ for (const [w, h] of [[390, 844], [1920, 1080]]) {
     return {
       stickEnd: heroTop + hero.offsetHeight - stage.offsetHeight,
       footTop: document.getElementById('footer').getBoundingClientRect().top - base,
-      navH: document.querySelector('.nav__inner').offsetHeight,
+      navH: document.querySelector('.nav__row').offsetHeight,
       max: sc.scrollHeight - sc.clientHeight,
     };
+  });
+  const seg = await page.evaluate(() => {
+    const sc = document.getElementById('scroller');
+    const base = sc.getBoundingClientRect().top - sc.scrollTop;
+    const el = [...document.querySelectorAll('.seg__btn')]
+      .find((b) => getComputedStyle(b).backgroundColor === 'rgb(29, 185, 84)');
+    return el ? el.getBoundingClientRect().top - base : null;
   });
   const stops = [
     ['1-верх', 0],
@@ -37,6 +44,7 @@ for (const [w, h] of [[390, 844], [1920, 1080]]) {
     ['4-кромка', Math.round(m.footTop - m.navH / 2)],
     ['5-футер', Math.round(m.max)],
   ];
+  if (seg != null) stops.push(['6-акцент', Math.round(seg - m.navH * 0.45)]);
   for (const [name, y] of stops) {
     await page.evaluate((v) => { document.getElementById('scroller').scrollTop = v; }, y);
     await page.waitForTimeout(120);

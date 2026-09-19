@@ -1,14 +1,14 @@
 чанки первого экрана:
     169.9 KB  255-38f762852691873f.js
     169.0 KB  4bd1b696-c023c6e3521b1417.js
-      7.2 KB  795-4a28224daa8a4c5e.js
-      4.8 KB  app/layout-5192128ab4d9a9db.js
+      7.5 KB  795-333982ffef69faa1.js
+      7.2 KB  app/layout-ee9028021e7a36fe.js
       8.5 KB  app/not-found-20e4dd2756df0969.js
      17.3 KB  app/page-5b8ad236302a36e1.js
       0.5 KB  main-app-430fdc162aee449b.js
     110.0 KB  polyfills-42372ed130431b0a.js
       3.4 KB  webpack-6e4a798a1ae05660.js
 
-всего в критическом пути: 490.7 KB
+всего в критическом пути: 493.4 KB
 three.js лежит в асинхронных чанках: b536a0f1.dc709807bbeaa759.js (348 KB), bd904a5c.aa98c996a3b1ca66.js (196 KB)
 ОК: в первом экране WebGL нет
