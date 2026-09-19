@@ -992,12 +992,25 @@
   font-variation-settings: 'wght' 620;
   color: var(--white);
 }
+/* ЦЕНА СТОИТ РЯДОМ С НАЗВАНИЕМ, а не под ним, — так просил арт-директор.
+   Под ним она уходит только там, где строка перестаёт помещаться:
+   «Сертификат в подарок» с ценой — это 20 знаков крупным кеглем плюс
+   подпись, и ниже 900 px они в строку не встают. */
 .plan__tag {
   display: block;
   margin-top: clamp(5px, 1vh, 10px);
   font-size: 13px;
   letter-spacing: 0.02em;
   color: var(--dim);
+}
+@media (min-width: 900px) {
+  .plan__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: clamp(12px, 1.4vw, 22px);
+  }
+  .plan__tag { margin-top: 0; white-space: nowrap; }
 }
 .plan__hot {
   display: inline-block;
