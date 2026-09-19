@@ -186,6 +186,119 @@ for (const [w, h] of SIZES) {
   await page.close();
 }
 
+/* ══ ФИГУРА ОБРЕЗКИ СОВПАДАЕТ С НАСТОЯЩИМИ ЧЕРНИЛАМИ ═══════════════════
+   Выворотка вырезана по СВОЕЙ КОПИИ текста шапки, и если копия разойдётся
+   с оригиналом — по положению или по насыщенности, — инверсия встанет
+   мимо глифов. Заметить это по цвету нельзя: цвет останется правильным,
+   просто не там. Поэтому сравниваются СЛЕДЫ: где рисует светлая копия
+   без маски и где рисует выворотка без внешней обрезки.
+
+   На этих граблях уже постояли дважды: вход двигает светлую копию
+   трансформом на 14 px, и снятые в тот момент координаты запекались
+   со сдвигом; а насыщенность логотипа задана ОСЬЮ (`font-variation-settings`),
+   и без неё фигура выходила на два веса светлее. */
+console.log('');
+console.log('── ФИГУРА ВЫВОРОТКИ ПРОТИВ НАСТОЯЩИХ ЧЕРНИЛ ────────────────────');
+console.log('Замер идёт на СПЛОШНОМ ТЁМНОМ фоне: там светлая копия даёт');
+console.log('#FFFFFF, а выворотка #EDEDED, и обе видны против фона. Над');
+console.log('светлым набором белое по белому в след не попадает вовсе.');
+console.log('размер       место        след копии   след выворотки   накрыто');
+const SHAPE = [
+  ['логотип', '.nav--plain .logo-slot__text'],
+  ['пункты меню', '.nav--plain .nav__link'],
+  ['бургер', '.nav--plain .nav__burger-bars'],
+];
+for (const [w, h] of SIZES) {
+  const page0 = await browser.newPage({
+    viewport: { width: w, height: h }, isMobile: w < 700, hasTouch: w < 700, deviceScaleFactor: 1,
+  });
+  await page0.goto(`http://localhost:${PORT}${PREFIX}/`, { waitUntil: 'networkidle' });
+  await page0.evaluate(() => document.fonts.ready);
+  await page0.waitForSelector('.hero__stage[data-entered]');
+  const g = await page0.evaluate(() => {
+    const sc = document.getElementById('scroller');
+    const hero = document.getElementById('hero');
+    const stage = document.querySelector('.hero__stage');
+    const base = sc.getBoundingClientRect().top - sc.scrollTop;
+    const heroTop = hero.getBoundingClientRect().top - base;
+    return {
+      from: heroTop + hero.offsetHeight - stage.offsetHeight,
+      to: document.getElementById('footer').getBoundingClientRect().top - base,
+      navH: document.querySelector('.nav--plain .nav__row').offsetHeight,
+    };
+  });
+  /* Сплошной тёмный фон под полосой: ни зелёного, ни светлого набора. */
+  let y = Math.round((g.from + g.to) / 2);
+  for (let v = Math.round(g.from + g.navH * 2); v < g.to - g.navH; v += 60) {
+    await page0.evaluate((q) => { document.getElementById('scroller').scrollTop = q; }, v);
+    await page0.waitForTimeout(40);
+    const clean = await page0.evaluate(() => !document.querySelector('.nav--invert').hasAttribute('data-on')
+      && !document.querySelector('.nav--dark').hasAttribute('data-on'));
+    if (clean) { y = v; break; }
+  }
+  await page0.close();
+
+  const shotOf = async (css, sel) => {
+    const page = await browser.newPage({
+      viewport: { width: w, height: h }, isMobile: w < 700, hasTouch: w < 700, deviceScaleFactor: 1,
+    });
+    await page.goto(`http://localhost:${PORT}${PREFIX}/`, { waitUntil: 'networkidle' });
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForSelector('.hero__stage[data-entered]');
+    const box = await page.evaluate((q) => {
+      const els = [...document.querySelectorAll(q)].filter((e) => e.getBoundingClientRect().width > 1);
+      if (!els.length) return null;
+      return { l: Math.min(...els.map((e) => e.getBoundingClientRect().left)) - 4,
+        r: Math.max(...els.map((e) => e.getBoundingClientRect().right)) + 4 };
+    }, sel);
+    if (!box) { await page.close(); return null; }
+    await page.evaluate((q) => { document.getElementById('scroller').scrollTop = q; }, y);
+    if (css) await page.addStyleTag({ content: css });
+    await page.waitForTimeout(220);
+    const png = PNG.sync.read(await page.screenshot({ clip: { x: 0, y: 0, width: w, height: g.navH } }));
+    await page.close();
+    return { png, box };
+  };
+
+  for (const [label, sel] of SHAPE) {
+    const bare = await shotOf('.nav{display:none!important}', sel);
+    if (!bare) continue;
+    const lightOnly = await shotOf(
+      '.nav--invert,.nav--dark{display:none!important} .nav--plain .nav__band{-webkit-mask-image:none!important;mask-image:none!important}', sel);
+    /* Копию выворотки поднимаем ПРИНУДИТЕЛЬНО: на сплошном тёмном фоне
+       ей нечего инвертировать, и в обычной жизни её там нет вовсе.
+       Здесь проверяется не поведение, а СОВПАДЕНИЕ ФИГУРЫ. */
+    const invOnly = await shotOf(
+      '.nav--plain,.nav--dark{display:none!important} .nav--invert{display:block!important} .nav--invert .nav__lit{clip-path:none!important}', sel);
+    const x0 = Math.max(0, Math.floor(bare.box.l));
+    const x1 = Math.min(w, Math.ceil(bare.box.r));
+    const foot = (a) => {
+      const set = new Set();
+      for (let yy = 0; yy < g.navH; yy += 1) {
+        for (let x = x0; x < x1; x += 1) {
+          const i = (a.png.width * yy + x) << 2;
+          const j = (bare.png.width * yy + x) << 2;
+          if (Math.abs(a.png.data[i] - bare.png.data[j]) > 24) set.add(yy * 100000 + x);
+        }
+      }
+      return set;
+    };
+    const A = foot(lightOnly);
+    const B = foot(invOnly);
+    let both = 0;
+    for (const k of B) if (A.has(k)) both += 1;
+    const inside = B.size ? both / B.size : 0;
+    const covers = A.size ? both / A.size : 0;
+    const ok = A.size > 50 && B.size > 50 && inside >= 0.95 && covers >= 0.9;
+    if (!ok) failed += 1;
+    console.log('%s %s %s %s %s%s',
+      `${w}×${h}`.padEnd(12), label.padEnd(12),
+      String(A.size).padStart(10), String(B.size).padStart(16),
+      `${(covers * 100).toFixed(1)} %`.padStart(9),
+      ok ? '' : '   ← ФИГУРА РАЗОШЛАСЬ С ЧЕРНИЛАМИ');
+  }
+}
+
 await browser.close();
 server.close();
 console.log(failed

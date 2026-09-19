@@ -218,7 +218,13 @@ export default function Nav() {
     };
 
     const NS = 'http://www.w3.org/2000/svg';
-    const textShape = (el: HTMLElement): SVGTextElement | null => {
+    /* Отсчёт идёт ОТ ПОЛОСЫ ЖИВОЙ КОПИИ, а не от вьюпорта, и это не
+       мелочь: вход двигает светлую копию трансформом на 14 px, и если
+       снять координаты в тот момент, вся фигура запечётся со сдвигом —
+       выворотка встанет ниже настоящих глифов. Полоса инвертирующей
+       копии стоит на нуле и трансформа не знает, поэтому разность
+       с полосой живой копии и есть её система координат. */
+    const textShape = (el: HTMLElement, ox: number, oy: number): SVGTextElement | null => {
       const cs = getComputedStyle(el);
       const raw = (el.textContent ?? '').trim();
       if (!raw || cs.visibility === 'hidden') return null;
@@ -229,14 +235,23 @@ export default function Nav() {
       const font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
       const { asc, desc } = fontBox(font);
       const node = document.createElementNS(NS, 'text');
-      node.setAttribute('x', line.left.toFixed(2));
-      node.setAttribute('y', (line.top + (line.height - asc - desc) / 2 + asc).toFixed(2));
+      node.setAttribute('x', (line.left - ox).toFixed(2));
+      node.setAttribute('y', (line.top - oy + (line.height - asc - desc) / 2 + asc).toFixed(2));
       node.setAttribute('font-family', cs.fontFamily);
       node.setAttribute('font-size', cs.fontSize);
       node.setAttribute('font-weight', cs.fontWeight);
       node.setAttribute('font-style', cs.fontStyle);
       if (cs.letterSpacing && cs.letterSpacing !== 'normal') {
         node.setAttribute('letter-spacing', cs.letterSpacing);
+      }
+      /* Насыщенность у логотипа задана ОСЬЮ, а не `font-weight`: без этой
+         строки фигура выходит на два веса светлее настоящих глифов
+         и перестаёт их накрывать. Проверяется следом на растре. */
+      if (cs.fontVariationSettings && cs.fontVariationSettings !== 'normal') {
+        node.style.fontVariationSettings = cs.fontVariationSettings;
+      }
+      if (cs.fontStretch && cs.fontStretch !== 'normal') {
+        node.style.fontStretch = cs.fontStretch;
       }
       node.textContent = cs.textTransform === 'uppercase' ? raw.toLocaleUpperCase('ru') : raw;
       return node;
@@ -245,14 +260,19 @@ export default function Nav() {
     const buildInk = () => {
       ink.replaceChildren();
       inkDim.replaceChildren();
+      const band = plain.querySelector<HTMLElement>('.nav__band');
+      if (!band) return;
+      const b = band.getBoundingClientRect();
+      const ox = b.left;
+      const oy = b.top;
       const logo = plain.querySelector<HTMLElement>('.logo-slot__text');
-      const logoShape = logo ? textShape(logo) : null;
+      const logoShape = logo ? textShape(logo, ox, oy) : null;
       if (logoShape) ink.appendChild(logoShape);
       /* Пункты меню приглушены (`--dim`), и приглушение обязано пережить
          инверсию — поэтому у них своя фигура и своя, чуть притушенная,
          выворотка. Подробности величины — в CSS. */
       for (const el of plain.querySelectorAll<HTMLElement>('.nav__link')) {
-        const shape = textShape(el);
+        const shape = textShape(el, ox, oy);
         if (shape) inkDim.appendChild(shape);
       }
       /* Бургер рисует один бокс 24×12, две полосы из него вырезает маска
@@ -262,8 +282,8 @@ export default function Nav() {
         const r = bars.getBoundingClientRect();
         for (const [y0, y1] of [[0, 4], [8, 12]]) {
           const bar = document.createElementNS(NS, 'rect');
-          bar.setAttribute('x', r.left.toFixed(2));
-          bar.setAttribute('y', (r.top + y0).toFixed(2));
+          bar.setAttribute('x', (r.left - ox).toFixed(2));
+          bar.setAttribute('y', (r.top - oy + y0).toFixed(2));
           bar.setAttribute('width', r.width.toFixed(2));
           bar.setAttribute('height', String(y1 - y0));
           ink.appendChild(bar);
