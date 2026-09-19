@@ -22,10 +22,12 @@ import { serveOut, PREFIX } from './serve-out.mjs';
 const PORT = 4237;
 /* Потолок выбега страницы, мс. */
 const COAST_MAX = 150;
-/* Окно схождения формы после руки, мс: ниже — сглаживания нет вовсе,
-   выше — это уже тяжесть. */
-const SETTLE_MIN = 40;
-const SETTLE_MAX = 300;
+/* Окно схождения формы после руки, мс. На точном указателе позицию ведёт
+   Lenis и форма идёт за ней, поэтому окно узкое. На касаниях позицию
+   не сглаживает никто, и всю работу делает демпфер формы с τ = 120 мс:
+   95 % пути это 3τ, то есть около 360 мс, и это норма — арт-директор
+   разрешил на телефоне отставание 100…200 мс. */
+const SETTLE = { fine: [40, 250], touch: [150, 500] };
 
 const PROBE = `
 window.__sm = { rows: [], on: false, wheel: 0, touch: 0 };
@@ -121,8 +123,9 @@ for (const [w, h, mob] of [[390, 844, true], [1920, 1080, false]]) {
       }
     }
   }
+  const win = SETTLE[mob ? 'touch' : 'fine'];
   const okPage = movePage <= COAST_MAX;
-  const okForm = moveForm >= SETTLE_MIN && moveForm <= SETTLE_MAX;
+  const okForm = moveForm >= win[0] && moveForm <= win[1];
   if (!okPage) { failed += 1; }
   if (!okForm) { failed += 1; }
   console.log('%s %s %s %s   мед. %s, макс %s%s',
@@ -132,7 +135,7 @@ for (const [w, h, mob] of [[390, 844, true], [1920, 1080, false]]) {
     ' '.repeat(2),
     (steps[Math.floor(steps.length / 2)] ?? 0).toFixed(3),
     (steps[steps.length - 1] ?? 0).toFixed(3),
-    okPage && okForm ? '' : `   ← ПРОВАЛ (выбег ≤${COAST_MAX}, схождение ${SETTLE_MIN}…${SETTLE_MAX})`);
+    okPage && okForm ? '' : `   ← ПРОВАЛ (выбег ≤${COAST_MAX}, схождение ${win[0]}…${win[1]})`);
 }
 
 /* ══ 3. ИНЕРЦИЯ ПАЛЬЦА: ИДЁТ ЛИ ФОРМА СТУПЕНЬКАМИ ════════════════════ */
@@ -235,9 +238,11 @@ console.log('сцена        кадров с движением   форма �
    раскладывает на кадры. Стенд прыжок воспроизводит точно: позиция
    меняется разом. */
 console.log('');
-console.log('── ОДИН ПРЫЖОК ПОЗИЦИИ НА 120 px ───────────────────────────────');
+console.log('── ОДИН ПРЫЖОК ПОЗИЦИИ НА 120 px (ТОЛЬКО КАСАНИЯ) ──────────────');
+console.log('Это модель дискретной инерции: на точном указателе таких прыжков');
+console.log('не бывает — там позицию ведёт Lenis и она непрерывна по кадрам.');
 console.log('размер       кадров на прыжок   наибольшая доля за кадр');
-for (const [w, h, mob] of [[390, 844, true], [1920, 1080, false]]) {
+for (const [w, h, mob] of [[390, 844, true], [414, 896, true]]) {
   const page = await browser.newPage({
     viewport: { width: w, height: h }, isMobile: mob, hasTouch: mob, deviceScaleFactor: 1,
   });
@@ -269,6 +274,73 @@ for (const [w, h, mob] of [[390, 844, true], [1920, 1080, false]]) {
   const share = total > 0 ? biggest / total : 1;
   console.log('%s %s %s', `${w}×${h}`.padEnd(12), String(frames).padStart(18),
     `${(share * 100).toFixed(0)} %`.padStart(24));
+}
+
+/* ══ 5. ДИСКРЕТНАЯ ИНЕРЦИЯ 20 Гц ═════════════════════════════════════
+   Настоящая инерция iOS в контейнере не воспроизводится, а она и есть
+   источник дрожания: позиция приходит не каждый кадр, а очередью шагов
+   с затуханием. Здесь эта очередь разыграна точно — двадцать шагов
+   по 50 мс с затуханием 0.88, то есть треть кадровой частоты. Вопрос
+   ровно тот, что задал арт-директор: сколько РАЗНЫХ СОСТОЯНИЙ ФОРМЫ
+   приходится на сколько кадров. Без демпфера состояний столько же,
+   сколько шагов; демпфер обязан довести их до числа кадров. */
+console.log('');
+console.log('── ДИСКРЕТНАЯ ИНЕРЦИЯ: 20 ШАГОВ ПО 50 мс (МОБИЛЬНЫЙ ПРОФИЛЬ) ────');
+console.log('размер       кадров   разных состояний   форма стояла   наибольший шаг');
+for (const [w, h] of [[390, 844], [414, 896]]) {
+  const page = await browser.newPage({
+    viewport: { width: w, height: h }, isMobile: true, hasTouch: true, deviceScaleFactor: 1,
+  });
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+  await page.addInitScript(PROBE);
+  await page.goto(`http://localhost:${PORT}${PREFIX}/`, { waitUntil: 'networkidle' });
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForSelector('.hero__stage[data-entered]');
+  const travel = await page.evaluate(() =>
+    document.getElementById('hero').offsetHeight - document.getElementById('scroller').clientHeight);
+  await page.evaluate((v) => { document.getElementById('scroller').scrollTop = v; }, Math.round(travel * 0.12));
+  await page.waitForTimeout(500);
+  await page.evaluate(() => window.__smStart());
+  await page.evaluate(() => new Promise((res) => {
+    const sc = document.getElementById('scroller');
+    let step = 34;
+    let n = 0;
+    const id = setInterval(() => {
+      if (n >= 20) { clearInterval(id); setTimeout(res, 500); return; }
+      sc.scrollTop += step;
+      step *= 0.88;
+      n += 1;
+    }, 50);
+  }));
+  await page.evaluate(() => { window.__sm.on = false; });
+  const rows = await page.evaluate(() => window.__sm.rows.slice());
+  await page.close();
+
+  /* Берём только кадры ХОДА: от первого движения позиции до последнего. */
+  let a = 0;
+  let b = rows.length - 1;
+  while (a < b && Math.abs(rows[a + 1].y - rows[a].y) < 1) a += 1;
+  while (b > a && Math.abs(rows[b].y - rows[b - 1].y) < 1) b -= 1;
+  const hs = rows.slice(a, b + 1).map((r) => inkHeight(r.d));
+  const span = Math.abs(hs[hs.length - 1] - hs[0]) || 1;
+  const seen = new Set();
+  let still = 0;
+  let biggest = 0;
+  for (let i = 1; i < hs.length; i += 1) {
+    seen.add(hs[i].toFixed(4));
+    const d = Math.abs(hs[i] - hs[i - 1]);
+    if (d < 1e-4) still += 1;
+    if (d > biggest) biggest = d;
+  }
+  const frames = hs.length - 1;
+  const bad = frames >= 10 && still / frames > 0.2;
+  if (bad) failed += 1;
+  console.log('%s %s %s %s %s%s',
+    `${w}×${h}`.padEnd(12), String(frames).padStart(6), String(seen.size).padStart(18),
+    `${still} (${frames ? Math.round((still / frames) * 100) : 0} %)`.padStart(15),
+    `${((biggest / span) * 100).toFixed(0)} %`.padStart(16),
+    bad ? '   ← форма идёт ступеньками' : '');
 }
 
 await browser.close();

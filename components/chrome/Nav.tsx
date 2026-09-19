@@ -22,32 +22,37 @@ import WordmarkMark from '@/components/wordmark/WordmarkMark';
  * никуда. Высота у неё ноль, полосу рисует абсолютный .nav__band,
  * поэтому в потоке она места не занимает.
  *
- * ── ИНВЕРСИЯ: ДВЕ КОПИИ И ОБРЕЗКА, А НЕ СМЕШИВАНИЕ ─────────────────────────
- * Копий две, светлая и тёмная, наложены пиксель в пиксель. Обрезки тоже
- * две и взаимодополняющие: тёмная видна ровно над зелёным, светлая ровно
- * над остальным. Общей границы у них нет и наложения нет, поэтому нет
- * ни шва, ни ореола.
+ * ── ИНВЕРСИЯ РАБОТАЕТ ВЕЗДЕ, И КОПИЙ ДЛЯ ЭТОГО ТРИ ─────────────────────────
+ * Под шапкой бывает три разных фона, и каждому нужен свой ответ:
  *
- * Зелёное считается ТРЕМЯ источниками:
- *   • слово в хиро — по КОНТУРАМ литер. Габарит не годится: между литерами
- *     фон тёмный, и тёмная шапка там пропала бы. Контуры берутся живыми,
- *     из тех же атрибутов d, что рисует морф, — рассинхрону взяться неоткуда;
- *   • поле футера — прямоугольник от его верхнего края, МИНУС чёрное слово
- *     на нём: над словом шапка обязана остаться светлой;
- *   • зелёные акценты середины — прямоугольники, снятые один раз
- *     при раскладке.
+ *   ЗЕЛЁНОЕ — слово в хиро, поле футера, акценты середины. Цвет известен,
+ *             поэтому копия просто ТЁМНАЯ, `--ink` на зелёном 7.2:1.
+ *   СПЛОШНОЙ ТЁМНЫЙ ФОН — тоже известен, копия просто СВЕТЛАЯ, `--white`
+ *             на `--ink` 18.7:1. Это большая часть страницы.
+ *   КРУПНЫЙ СВЕТЛЫЙ НАБОР блоков 2–6 — а вот тут фон НЕ ОДИН: внутри
+ *             строки чередуются светлые глифы и тёмные просветы, и по
+ *             габариту строки его не разгадать. Здесь работает копия
+ *             с `difference`: над глифом она уходит в тёмное, над
+ *             просветом в светлое — попиксельно и точно.
  *
- * Всё это складывается в ОДИН атрибут d на обрезку, с правилом evenodd:
- * дочерние элементы clipPath объединяются, а не вычитаются, поэтому дырки
- * можно получить только внутри одного пути. Общий масштаб и сдвиг несёт
- * `transform` самого clipPath — тогда контуры литер кладутся в обрезку
- * ровно как есть, без пересчёта координат в кадре.
+ * Розового, которым расплачивалось смешивание в Р-39, не возникает нигде:
+ * над зелёным `difference`-копия просто не рисуется, её маска там пустая.
+ *
+ * ── ПОЧЕМУ МАСКИ, А НЕ ОБРЕЗКА ─────────────────────────────────────────────
+ * У `clipPath` дети ОБЪЕДИНЯЮТСЯ, поэтому дырки приходилось собирать
+ * в один путь с `evenodd`, а три взаимодополняющие области так не выразить
+ * вовсе. Маска складывается ПОРЯДКОМ РИСОВАНИЯ: белое добавляет, чёрное
+ * вычитает, и `<use>` внутри неё работает (в `clipPath` — нет). Поэтому
+ * фигуры лежат в ОДНОМ месте и пишутся один раз, а три маски ссылаются
+ * на них с разной заливкой.
+ *
+ * Тёмная маска берёт зелёное с обводкой: её область на пиксель ШИРЕ,
+ * чем вычитание у двух других. Перекрытие нужно, чтобы на сглаженном
+ * краю глифа не осталось полоски, где светлая копия уже рисует, а тёмная
+ * ещё нет. Тёмная непрозрачна и лежит выше — она это перекрытие закрывает.
  *
  * Геометрия считается АНАЛИТИЧЕСКИ из величин, снятых один раз: в кадре
- * не читается ни одного прямоугольника. Читать их здесь было бы дороже
- * всего остального вместе взятого — морф в том же кадре пишет шесть
- * атрибутов d, и любое чтение после записи выталкивает принудительный
- * пересчёт раскладки. Подробности в CLAUDE.md, Р-43.
+ * не читается ни одного прямоугольника. Подробности в CLAUDE.md, Р-46.
  *
  * ── БУРГЕР В ДВЕ ПОЛОСЫ ────────────────────────────────────────────────────
  * Две, а не три: так просил арт-директор. Полосы короткие и плотные,
@@ -78,34 +83,64 @@ const LINKS: [id: string, label: string][] = [
  */
 const GREEN_CANDIDATES = '.btn, .seg__btn, .row__hot';
 const GREEN_RGB = 'rgb(29, 185, 84)';
-/** Прямоугольник заведомо больше любого экрана: светлая копия до JS цела. */
-const ALL = 'M-9999 -9999H9999V9999H-9999Z';
+
+/**
+ * Что считать СВЕТЛЫМ НАБОРОМ. Здесь список не решает почти ничего:
+ * он только сужает обход, а отбирает ЯРКОСТЬ фактического цвета текста.
+ * Поэтому тёмные подписи на зелёном (реквизиты футера, надпись на кнопке)
+ * сюда не попадают сами собой, и список не приходится держать в голове
+ * при каждой правке блоков.
+ */
+const TEXT_CANDIDATES =
+  'h1,h2,h3,h4,p,li,span,a,button,em,b,strong,dt,dd,small,time,label,summary,figcaption';
+/** Порог яркости: выше — считаем светлым. `--dim` (#B3B3B3) = 0.45. */
+const LIGHT_LUM = 0.22;
 
 type Rect = { top: number; left: number; w: number; h: number; hero: boolean };
+
+/** Относительная яркость по WCAG — по ней и решаем, светлый текст или нет. */
+function luminance(css: string): number {
+  const m = css.match(/\d+(\.\d+)?/g);
+  if (!m || m.length < 3) return 0;
+  const [r, g, b] = m.slice(0, 3).map((v) => {
+    const s = +v / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
 
 export default function Nav() {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const lightRef = useRef<HTMLElement>(null);
+  const plainRef = useRef<HTMLElement>(null);
+  const invertRef = useRef<HTMLDivElement>(null);
   const darkRef = useRef<HTMLDivElement>(null);
-  const greenRef = useRef<SVGClipPathElement>(null);
-  const restRef = useRef<SVGClipPathElement>(null);
+  const litRef = useRef<HTMLDivElement>(null);
+  const greenRef = useRef<SVGGElement>(null);
   const greenPathRef = useRef<SVGPathElement>(null);
-  const restPathRef = useRef<SVGPathElement>(null);
+  const lightPathRef = useRef<SVGPathElement>(null);
+  const lightClipRef = useRef<SVGPathElement>(null);
+  const inkRef = useRef<SVGClipPathElement>(null);
+  const inkDimRef = useRef<SVGClipPathElement>(null);
   const burgerRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => setMounted(true), []);
 
   useEffect(() => {
-    const nav = lightRef.current;
+    const plain = plainRef.current;
+    const invert = invertRef.current;
     const dark = darkRef.current;
     const sc = scroller();
-    const greenClip = greenRef.current;
-    const restClip = restRef.current;
+    const lit = litRef.current;
+    const greenG = greenRef.current;
     const greenPath = greenPathRef.current;
-    const restPath = restPathRef.current;
-    if (!nav || !dark || !sc || !greenClip || !restClip || !greenPath || !restPath) return;
+    const lightPath = lightPathRef.current;
+    const lightClip = lightClipRef.current;
+    const ink = inkRef.current;
+    const inkDim = inkDimRef.current;
+    if (!plain || !invert || !dark || !sc || !lit) return;
+    if (!greenG || !greenPath || !lightPath || !lightClip || !ink || !inkDim) return;
 
     let navH = 0;
     let vw = 0;
@@ -121,22 +156,114 @@ export default function Nav() {
     let footH = 0;
     let footWmTop = 0;
     let footTop = Infinity;
-    /* сдвиг текстов хиро к концу хода: зелёная кнопка едет вместе с ними */
+    /* сдвиг текстов хиро к концу хода: всё, что в них лежит, едет с ними */
     let heroShift = 0;
-    let rects: Rect[] = [];
+    let greens: Rect[] = [];
+    let lights: Rect[] = [];
     let heroPaths: SVGPathElement[] = [];
     let footPaths: SVGPathElement[] = [];
     let lastLetters = '';
     let lastRaw = '';
     let lastGreen = '';
-    let lastRest = '';
+    let lastLight = '';
     let lastTf = '';
-    let lastHas = true;
+    let lastFlags = '';
+
+    const boxOf = (el: Element, base: number): Rect => {
+      const r = el.getBoundingClientRect();
+      return {
+        top: r.top - base,
+        left: r.left,
+        w: r.width,
+        h: r.height,
+        hero: !!el.closest('.hero__foot'),
+      };
+    };
+
+    /* ── ЧЕРНИЛА ШАПКИ КАК ФИГУРА ─────────────────────────────────────
+       Инвертирующая копия ничего не рисует: она показывает СВОЙ ФОН,
+       вывернутый наизнанку, и вырезан этот фон ровно по контурам
+       глифов. Значит контуры надо иметь фигурой, а обрезка в SVG
+       умеет `<text>` (в отличие от `<use>`, Р-46). Мы кладём в неё
+       тот же текст тем же шрифтом и кеглем, что рисует живая копия,
+       и ставим его по ТОЙ ЖЕ строке: базовая линия берётся из Range,
+       то есть из настоящего строчного бокса, а не из бокса элемента.
+       Метрики шрифта — из канваса, тем же объявлением шрифта. */
+    const metrics = new Map<string, { asc: number; desc: number }>();
+    const ctx2d = document.createElement('canvas').getContext('2d');
+    const fontBox = (font: string) => {
+      const had = metrics.get(font);
+      if (had) return had;
+      let box = { asc: 0, desc: 0 };
+      if (ctx2d) {
+        ctx2d.font = font;
+        const m = ctx2d.measureText('Нg');
+        box = { asc: m.fontBoundingBoxAscent || 0, desc: m.fontBoundingBoxDescent || 0 };
+      }
+      metrics.set(font, box);
+      return box;
+    };
+
+    const NS = 'http://www.w3.org/2000/svg';
+    const textShape = (el: HTMLElement): SVGTextElement | null => {
+      const cs = getComputedStyle(el);
+      const raw = (el.textContent ?? '').trim();
+      if (!raw || cs.visibility === 'hidden') return null;
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const line = [...range.getClientRects()].find((r) => r.width > 0.5 && r.height > 0.5);
+      if (!line) return null;
+      const font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      const { asc, desc } = fontBox(font);
+      const node = document.createElementNS(NS, 'text');
+      node.setAttribute('x', line.left.toFixed(2));
+      node.setAttribute('y', (line.top + (line.height - asc - desc) / 2 + asc).toFixed(2));
+      node.setAttribute('font-family', cs.fontFamily);
+      node.setAttribute('font-size', cs.fontSize);
+      node.setAttribute('font-weight', cs.fontWeight);
+      node.setAttribute('font-style', cs.fontStyle);
+      if (cs.letterSpacing && cs.letterSpacing !== 'normal') {
+        node.setAttribute('letter-spacing', cs.letterSpacing);
+      }
+      node.textContent = cs.textTransform === 'uppercase' ? raw.toLocaleUpperCase('ru') : raw;
+      return node;
+    };
+
+    const buildInk = () => {
+      ink.replaceChildren();
+      inkDim.replaceChildren();
+      const logo = plain.querySelector<HTMLElement>('.logo-slot__text');
+      const logoShape = logo ? textShape(logo) : null;
+      if (logoShape) ink.appendChild(logoShape);
+      /* Пункты меню приглушены (`--dim`), и приглушение обязано пережить
+         инверсию — поэтому у них своя фигура и своя, чуть притушенная,
+         выворотка. Подробности величины — в CSS. */
+      for (const el of plain.querySelectorAll<HTMLElement>('.nav__link')) {
+        const shape = textShape(el);
+        if (shape) inkDim.appendChild(shape);
+      }
+      /* Бургер рисует один бокс 24×12, две полосы из него вырезает маска
+         на 0…4 и 8…12. Здесь те же две полосы прямоугольниками. */
+      const bars = plain.querySelector<HTMLElement>('.nav__burger-bars');
+      if (bars && bars.offsetParent !== null) {
+        const r = bars.getBoundingClientRect();
+        for (const [y0, y1] of [[0, 4], [8, 12]]) {
+          const bar = document.createElementNS(NS, 'rect');
+          bar.setAttribute('x', r.left.toFixed(2));
+          bar.setAttribute('y', (r.top + y0).toFixed(2));
+          bar.setAttribute('width', r.width.toFixed(2));
+          bar.setAttribute('height', String(y1 - y0));
+          ink.appendChild(bar);
+        }
+      }
+    };
 
     const measure = () => {
-      const row = nav.querySelector<HTMLElement>('.nav__row');
+      const row = plain.querySelector<HTMLElement>('.nav__row');
       navH = row?.offsetHeight ?? 0;
       vw = sc.clientWidth;
+      lit.style.height = `${navH}px`;
+      buildInk();
       const base = sc.getBoundingClientRect().top - sc.scrollTop;
 
       const hero = document.getElementById('hero');
@@ -153,10 +280,9 @@ export default function Nav() {
            поле сцены под шапку. Дальше слой уезжает вместе со сценой. */
         heroTopStuck = parseFloat(getComputedStyle(stage).paddingTop) || 0;
         heroPaths = [...heroSvg.querySelectorAll<SVGPathElement>('.wm__letter path')];
-        /* Тексты хиро (а с ними и зелёная кнопка) к концу хода подняты
-           на долю высоты слоя. В полосу шапки они попадают только после
-           отлипания, то есть уже с дожатым ходом, — значит сдвиг здесь
-           постоянный и читать его в кадре не нужно. */
+        /* Тексты хиро к концу хода подняты на долю высоты слоя. В полосу
+           шапки они попадают только после отлипания, то есть уже с дожатым
+           ходом, — значит сдвиг постоянный и читать его в кадре не нужно. */
         const wmH = heroH / (WM_VIEW_HEIGHT / WM_BOX_HEIGHT);
         heroShift = wmH * footRise(1);
       }
@@ -173,20 +299,29 @@ export default function Nav() {
         footPaths = [...footSvg.querySelectorAll<SVGPathElement>('.wm__letter path')];
       }
 
-      rects = [...document.querySelectorAll<HTMLElement>(GREEN_CANDIDATES)]
+      greens = [...document.querySelectorAll<HTMLElement>(GREEN_CANDIDATES)]
         .filter((el) => getComputedStyle(el).backgroundColor === GREEN_RGB)
-        .map((el) => {
-          const r = el.getBoundingClientRect();
-          return {
-            top: r.top - base,
-            left: r.left,
-            w: r.width,
-            h: r.height,
-            hero: !!el.closest('.hero__foot'),
-          };
-        });
-      lastGreen = lastRest = lastTf = lastLetters = lastRaw = '';
-      lastHas = true;
+        .map((el) => boxOf(el, base));
+
+      /* Светлый набор. Шапку и накладку исключаем: иначе она сама себе
+         фон и инвертируется относительно собственных копий. */
+      lights = [];
+      for (const el of document.querySelectorAll<HTMLElement>(TEXT_CANDIDATES)) {
+        if (el.closest('.nav') || el.closest('.menu')) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2) continue;
+        if (luminance(getComputedStyle(el).color) < LIGHT_LUM) continue;
+        /* только элементы с СОБСТВЕННЫМ текстом: обёртки дали бы
+           прямоугольник во весь блок и стёрли бы весь смысл */
+        let own = false;
+        for (const n of el.childNodes) {
+          if (n.nodeType === 3 && (n.textContent ?? '').trim()) { own = true; break; }
+        }
+        if (!own) continue;
+        lights.push(boxOf(el, base));
+      }
+
+      lastGreen = lastLight = lastTf = lastLetters = lastRaw = lastFlags = '';
     };
 
     /** Живые контуры литер — их же рисует морф, второй копии данных нет. */
@@ -203,84 +338,106 @@ export default function Nav() {
     const paint = (y: number) => {
       /* ── КАКОЕ СЛОВО СЕЙЧАС В ПОЛОСЕ ──────────────────────────────────
          Хиро и футер не пересекаются во времени, поэтому набор путей
-         обрезки один на оба. */
+         один на оба. */
       const heroTop = (y <= stickEnd ? 0 : stickEnd - y) + heroTopStuck;
       const heroIn = heroPaths.length === 6 && heroTop < navH && heroTop + heroH > 0;
       const footWmY = footWmTop - y;
       const footIn = !heroIn && footPaths.length === 6 && footWmY < navH && footWmY + footH > 0;
 
-      /* Общий масштаб и сдвиг: контуры кладутся в обрезку как есть,
-         а в экранные пиксели их переводит transform самого clipPath. */
+      /* Общий масштаб и сдвиг: контуры кладутся в маску как есть,
+         а в экранные пиксели их переводит transform группы. */
       let sx = 1;
       let sy = 1;
       let tx = 0;
       let ty = 0;
-      let d = '';
+      let green = '';
       if (heroIn) {
         sx = heroW / WM_WIDTH;
         sy = heroH / WM_VIEW_HEIGHT;
         tx = heroLeft;
         ty = heroTop + WM_PAD * sy;
-        d = letters(heroPaths);
+        green = letters(heroPaths);
       } else if (footIn) {
         sx = footW / WM_WIDTH;
         sy = footH / WM_BOX_HEIGHT;
         tx = footLeft;
         ty = footWmY;
-        d = letters(footPaths);
+        green = letters(footPaths);
       }
 
-      /* ── ПРЯМОУГОЛЬНИКИ, ПЕРЕСЧИТАННЫЕ В ТУ ЖЕ СИСТЕМУ ────────────────── */
-      const box = (x: number, top: number, w: number, h: number) => {
+      /* Габариты зелёного в пикселях полосы: по ним из светлого набора
+         вычёркиваются строки, которые на зелёное налезли. Точность тут
+         не нужна и вредна — это сторож от розового, а не рисунок. */
+      const gBox: number[][] = [];
+      if (heroIn || footIn) gBox.push([tx, ty, tx + WM_WIDTH * sx, ty + WM_VIEW_HEIGHT * sy]);
+
+      /* Прямоугольники зелёного пересчитываются в ту же систему. */
+      const boxG = (x: number, top: number, w: number, h: number) => {
         const y0 = top < 0 ? 0 : top;
         const y1 = top + h > navH ? navH : top + h;
         if (y1 <= y0 || w <= 0) return;
+        gBox.push([x, y0, x + w, y1]);
         const ux = (x - tx) / sx;
         const uy = (y0 - ty) / sy;
-        const uw = w / sx;
-        const uh = (y1 - y0) / sy;
-        d += `M${ux.toFixed(2)} ${uy.toFixed(2)}h${uw.toFixed(2)}v${uh.toFixed(2)}h${(-uw).toFixed(2)}Z`;
+        green += `M${ux.toFixed(2)} ${uy.toFixed(2)}h${(w / sx).toFixed(2)}v${((y1 - y0) / sy).toFixed(2)}h${(-w / sx).toFixed(2)}Z`;
       };
-
-      // поле футера: от его верхнего края и ниже, во всю ширину
       const fieldTop = footTop - y;
-      if (fieldTop < navH) box(0, fieldTop, vw, navH - fieldTop + 1);
-      // зелёные акценты середины
-      for (let i = 0; i < rects.length; i += 1) {
-        const r = rects[i];
+      if (fieldTop < navH) boxG(0, fieldTop, vw, navH - fieldTop + 1);
+      for (let i = 0; i < greens.length; i += 1) {
+        const r = greens[i];
         const top = r.top - y + (r.hero ? heroShift : 0);
-        if (top < navH && top + r.h > 0) box(r.left, top, r.w, r.h);
+        if (top < navH && top + r.h > 0) boxG(r.left, top, r.w, r.h);
       }
 
-      const green = d;
-      /* Светлая копия — дополнение: рамка во всю полосу, и всё зелёное
-         в ней дырки. Правило evenodd делает это одним путём. */
-      const rest = `M${(-tx / sx).toFixed(2)} ${(-ty / sy).toFixed(2)}h${(vw / sx).toFixed(2)}v${(navH / sy).toFixed(2)}h${(-vw / sx).toFixed(2)}Z${d}`;
-
-      /* Зелёного в полосе нет — значит и считать нечего: тёмная копия
-         не рисуется, а светлой снимается обрезка целиком. Так выглядит
-         бо́льшая часть страницы, и платить за неё маской незачем. */
-      const has = green.length > 0;
-      if (has !== lastHas) {
-        lastHas = has;
-        nav.toggleAttribute('data-clip', has);
-        dark.toggleAttribute('data-clip', has);
+      /* Светлый набор — прямо в пикселях полосы, ему система координат
+         слова не нужна. Строк две: по ТОЧНОЙ обрезается инвертирующая
+         копия, по ПОДЖАТОЙ на пиксель вычитается светлая. Так на кромке
+         области получается перекрытие, а не щель: обе копии рисуют один
+         и тот же глиф, и верхняя его закрывает. */
+      let light = '';
+      let lightIn = '';
+      for (let i = 0; i < lights.length; i += 1) {
+        const r = lights[i];
+        const top = r.top - y + (r.hero ? heroShift : 0);
+        if (top >= navH || top + r.h <= 0) continue;
+        const y0 = top < 0 ? 0 : top;
+        const y1 = top + r.h > navH ? navH : top + r.h;
+        let onGreen = false;
+        for (let k = 0; k < gBox.length; k += 1) {
+          const b = gBox[k];
+          if (r.left < b[2] && r.left + r.w > b[0] && y0 < b[3] && y1 > b[1]) { onGreen = true; break; }
+        }
+        if (onGreen) continue;
+        light += `M${r.left.toFixed(1)} ${y0.toFixed(1)}h${r.w.toFixed(1)}v${(y1 - y0).toFixed(1)}h${(-r.w).toFixed(1)}Z`;
+        const iw = r.w - 2;
+        const ih = y1 - y0 - 2;
+        if (iw > 0 && ih > 0) {
+          lightIn += `M${(r.left + 1).toFixed(1)} ${(y0 + 1).toFixed(1)}h${iw.toFixed(1)}v${ih.toFixed(1)}h${(-iw).toFixed(1)}Z`;
+        }
       }
-      if (!has) return;
+
+      const flags = `${green ? 1 : 0}${light ? 1 : 0}`;
+      if (flags !== lastFlags) {
+        lastFlags = flags;
+        plain.toggleAttribute('data-mask', !!(green || light));
+        invert.toggleAttribute('data-on', !!light);
+        dark.toggleAttribute('data-on', !!green);
+      }
+      if (!green && !light) return;
 
       const tf = `translate(${tx.toFixed(2)} ${ty.toFixed(2)}) scale(${sx.toFixed(6)} ${sy.toFixed(6)})`;
       if (tf !== lastTf) {
         lastTf = tf;
-        greenClip.setAttribute('transform', tf);
-        restClip.setAttribute('transform', tf);
+        greenG.setAttribute('transform', tf);
       }
       if (green !== lastGreen) {
         lastGreen = green;
         greenPath.setAttribute('d', green);
       }
-      if (rest !== lastRest) {
-        lastRest = rest;
-        restPath.setAttribute('d', rest);
+      if (light !== lastLight) {
+        lastLight = light;
+        lightPath.setAttribute('d', lightIn);
+        lightClip.setAttribute('d', light);
       }
     };
 
@@ -366,21 +523,21 @@ export default function Nav() {
   );
 
   /**
-   * Одна и та же полоса рисуется дважды. У тёмной копии нет ни обработчиков,
-   * ни фокуса, ни имени в дереве доступности: она декорация, а весь смысл —
-   * у светлой.
+   * Одна и та же полоса рисуется трижды. Смысл и вся интерактивность —
+   * только у первой копии; две другие декоративны, у них нет ни фокуса,
+   * ни обработчиков, ни имени в дереве доступности.
    */
-  const band = (dark: boolean) => (
+  const band = (live: boolean) => (
     <div className="nav__band">
       <div className="nav__row shell">
         <div className="logo-slot" data-logo-slot="reserved">
           <a
             className="logo-slot__text"
             href="#hero"
-            tabIndex={dark ? -1 : undefined}
+            tabIndex={live ? undefined : -1}
             onClick={(e) => {
               e.preventDefault();
-              if (!dark) scrollToId('hero');
+              if (live) scrollToId('hero');
             }}
           >
             SPOTIK
@@ -393,9 +550,9 @@ export default function Nav() {
               key={id}
               type="button"
               className="nav__link"
-              tabIndex={dark ? -1 : undefined}
+              tabIndex={live ? undefined : -1}
               onClick={() => {
-                if (!dark) scrollToId(id);
+                if (live) scrollToId(id);
               }}
             >
               {label}
@@ -404,14 +561,14 @@ export default function Nav() {
         </div>
 
         <button
-          ref={dark ? undefined : burgerRef}
+          ref={live ? burgerRef : undefined}
           type="button"
           className="nav__burger"
-          tabIndex={dark ? -1 : undefined}
-          aria-expanded={dark ? undefined : open}
-          aria-haspopup={dark ? undefined : 'dialog'}
+          tabIndex={live ? undefined : -1}
+          aria-expanded={live ? open : undefined}
+          aria-haspopup={live ? 'dialog' : undefined}
           onClick={() => {
-            if (!dark) setOpen(true);
+            if (live) setOpen(true);
           }}
         >
           <span className="sr-only">Открыть меню</span>
@@ -423,19 +580,57 @@ export default function Nav() {
 
   return (
     <>
-      <nav ref={lightRef} className="nav nav--light" aria-label="Основная навигация">
-        {band(false)}
+      <nav ref={plainRef} className="nav nav--plain" aria-label="Основная навигация">
+        {band(true)}
       </nav>
-      <div ref={darkRef} className="nav nav--dark" aria-hidden="true">{band(true)}</div>
+      {/* Инвертирующая копия НИЧЕГО НЕ РИСУЕТ: она показывает свой же фон,
+          вывернутый наизнанку, и вырезан он по контурам чернил шапки. */}
+      <div ref={invertRef} className="nav nav--invert" aria-hidden="true">
+        <div ref={litRef} className="nav__band nav__lit">
+          <div className="nav__ink" />
+          <div className="nav__ink nav__ink--dim" />
+        </div>
+      </div>
+      <div ref={darkRef} className="nav nav--dark" aria-hidden="true">{band(false)}</div>
       <svg className="nav__clip" aria-hidden="true" focusable="false">
-        {/* Пока JS не выполнился, зелёного нет, а «остального» — весь экран:
-            светлая шапка видна целиком, и это верное состояние покоя. */}
-        <clipPath ref={greenRef} id="nav-green" clipPathUnits="userSpaceOnUse">
-          <path ref={greenPathRef} clipRule="evenodd" d="" />
+        <defs>
+          {/* Фигуры лежат ОДИН раз; маски ссылаются на них с разной
+              заливкой. Обводка у зелёного не масштабируется вместе
+              со словом — иначе по вертикали она растянулась бы вчетверо. */}
+          {/* evenodd: контуры литер, наложенные на прямоугольник зелёного
+              поля футера, становятся в нём ДЫРКАМИ — над чёрным словом
+              шапка обязана остаться светлой. В хиро прямоугольника нет,
+              и правило там ни на что не влияет, кроме просветов внутри
+              самих литер, где оно как раз и нужно. */}
+          <g ref={greenRef} id="nav-shape-green">
+            <path ref={greenPathRef} d="" fillRule="evenodd" vectorEffect="non-scaling-stroke" />
+          </g>
+          <g id="nav-shape-light">
+            <path ref={lightPathRef} d="" />
+          </g>
+        </defs>
+        {/* Светлая копия: вся полоса минус зелёное минус светлый набор. */}
+        <mask id="nav-m-plain" maskUnits="userSpaceOnUse" x="-500" y="-500" width="20000" height="2000">
+          <rect x="-500" y="-500" width="20000" height="2000" fill="#fff" />
+          <use href="#nav-shape-light" fill="#000" />
+          <use href="#nav-shape-green" fill="#000" />
+        </mask>
+        {/* Инвертирующая копия обрезается ДВАЖДЫ и в двух местах сразу:
+            снаружи — светлым набором, внутри — контурами чернил шапки.
+            Пересечение выражается только вложением: у обрезки дети
+            объединяются, а маской выворотку не обрезать вовсе — она
+            её просто гасит (проверено опытом, Р-46). */}
+        <clipPath id="nav-c-light" clipPathUnits="userSpaceOnUse">
+          <path ref={lightClipRef} d="" />
         </clipPath>
-        <clipPath ref={restRef} id="nav-rest" clipPathUnits="userSpaceOnUse">
-          <path ref={restPathRef} clipRule="evenodd" d={ALL} />
-        </clipPath>
+        {/* Фигуры кладутся ПРЯМО в обрезку: `<g>` в её модели содержимого
+            нет, и завёрнутые в него контуры молча не обрезают ничего. */}
+        <clipPath ref={inkRef} id="nav-c-ink" clipPathUnits="userSpaceOnUse" />
+        <clipPath ref={inkDimRef} id="nav-c-ink-dim" clipPathUnits="userSpaceOnUse" />
+        {/* Тёмная копия: зелёное, расширенное обводкой на пиксель. */}
+        <mask id="nav-m-dark" maskUnits="userSpaceOnUse" x="-500" y="-500" width="20000" height="2000">
+          <use href="#nav-shape-green" fill="#fff" stroke="#fff" strokeWidth="2" />
+        </mask>
       </svg>
       {mounted ? createPortal(overlay, document.body) : null}
     </>
