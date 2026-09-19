@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import './components.css';
 import ScrollProvider from '@/components/ScrollProvider';
+import Nav from '@/components/chrome/Nav';
 import { siteFontFaces, BASE_PATH as BASE } from '@/lib/fontface';
 
 export const metadata: Metadata = {
@@ -83,11 +84,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           а едет .scroller. Подробности в globals.css и в CLAUDE.md, Р-37.
         */}
         <div id="scroller" className="scroller">
-          {/* Единая обёртка нужна Lenis: он меряет высоту содержимого
-              по ОДНОМУ элементу. Без неё content оказывался бы первым
-              ребёнком, то есть <main>, и футер не попадал бы в предел
-              прокрутки. */}
-          <div className="scroller__inner">{children}</div>
+          {/* Единая обёртка: по ней ResizeObserver следит за высотой
+              страницы и пересчитывает границы хода. ШАПКА ЛЕЖИТ ВНУТРИ
+              НЕЁ, первой: она липкая, а не прибитая к вьюпорту, и потому
+              обязана быть в потоке прокручиваемого содержимого — иначе
+              колесо и палец над ней не сдвинули бы страницу вовсе. */}
+          <div className="scroller__inner">
+            <Nav />
+            {children}
+          </div>
         </div>
         {/*
           Восстановление позиции. Скрипт стоит СРАЗУ ПОСЛЕ контейнера,

@@ -152,6 +152,21 @@ for (const dev of [
   console.log(`          шаг на кадрах с движением (${steps.length} шт.): ` +
     `мин ${(steps[0] ?? 0).toFixed(4)}, медиана ${(q(steps, 0.5) ?? 0).toFixed(4)}, ` +
     `макс ${(steps[steps.length - 1] ?? 0).toFixed(4)} ед.`);
+  /* ГЛАВНОЕ ЧИСЛО ПОСЛЕ СНЯТИЯ ПЛАВНОГО СКРОЛЛА. Площадки формы сами
+     по себе больше ничего не говорят: плавный скролл двигал позицию
+     КАЖДЫЙ кадр по своей кривой, а нативный стоит между событиями ввода
+     и едет рывками. Спрашивать надо не «менялась ли форма», а «менялась
+     ли она там, где ехал скролл». */
+  let still = 0;
+  let moved = 0;
+  for (let i = 1; i < H.length; i += 1) {
+    if (Math.abs(Y[i] - Y[i - 1]) < 1) continue;
+    if (H[i] > hMin + range * 0.02 && H[i] < hMax - range * 0.02) {
+      moved += 1;
+      if (Math.abs(H[i] - H[i - 1]) < 1e-6) still += 1;
+    }
+  }
+  console.log(`          кадров, где скролл ехал, а форма стояла: ${still} из ${moved}`);
   console.log(`  СКРОЛЛ: ${new Set(Y).size} разных значений scrollY на ${Y.length} кадров`);
   console.log(`          рывок |Δ²y|: медиана ${q(jerk, 0.5).toFixed(3)}, ` +
     `95-й ${q(jerk, 0.95).toFixed(3)}, макс ${jerk[jerk.length - 1].toFixed(3)} px/кадр²`);

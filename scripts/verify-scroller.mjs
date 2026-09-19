@@ -59,8 +59,8 @@ for (const [w, h] of SIZES) {
 console.log('');
 console.log('── ПРЕДЕЛ ПРОКРУТКИ, ЯКОРЯ, НАКЛАДКА, ВОССТАНОВЛЕНИЕ ───────────');
 
-/* Колесом до самого низа: если Lenis меряет содержимое не тем элементом,
-   предел выходит короче страницы и футер становится недостижим. */
+/* Колесом до самого низа: если предел считается не по тому элементу,
+   он выходит короче страницы и футер становится недостижим. */
 {
   const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
   const page = await ctx.newPage();
@@ -76,6 +76,18 @@ console.log('── ПРЕДЕЛ ПРОКРУТКИ, ЯКОРЯ, НАКЛАДК�
   const y = await scrollY(page);
   console.log(`  колесом доехали до ${Math.round(y)} из ${Math.round(max)}`);
   if (max - y > 2) fail(`колесо не доводит до низа: не хватает ${Math.round(max - y)} px`);
+
+  /* НАД ШАПКОЙ КОЛЕСО ОБЯЗАНО КРУТИТЬ СТРАНИЦУ. Прибитая к вьюпорту
+     шапка чинит цепочку прокрутки в ДОКУМЕНТ, а он неподвижен, — и весь
+     верх экрана становится мёртвой зоной. Замерено: было 0 px из 500. */
+  await page.evaluate(() => { document.getElementById('scroller').scrollTop = 0; });
+  await page.waitForTimeout(600);
+  await page.mouse.move(400, 24);
+  for (let i = 0; i < 5; i += 1) { await page.mouse.wheel(0, 100); await page.waitForTimeout(40); }
+  await page.waitForTimeout(300);
+  const overNav = await scrollY(page);
+  console.log(`  колесо НАД ШАПКОЙ сдвинуло на ${Math.round(overNav)} из 500 px`);
+  if (overNav < 480) fail(`над шапкой колесо не крутит страницу: ${Math.round(overNav)} px из 500`);
 
   await page.evaluate(() => { document.getElementById('scroller').scrollTop = 0; });
   await page.waitForTimeout(1100);

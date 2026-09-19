@@ -37,9 +37,6 @@ window.__csStart = () => {
         y: window.scrollY,
         d: ps.map((p) => p.getAttribute('d')).join(''),
         ent: document.querySelector('.hero__stage').dataset.entered || '',
-        // Lenis вешает класс lenis на <html> — по нему видно, с какого
-        // кадра плавный скролл вообще существует
-        lenis: document.documentElement.classList.contains('lenis') ? 1 : 0,
       });
     }
     requestAnimationFrame(tick);
@@ -76,9 +73,8 @@ for (const warm of [false, true]) {
   await page.goto(`http://localhost:${PORT}${PREFIX}/`, { waitUntil: 'domcontentloaded' });
 
   /* Оба случая — СВЕЖАЯ загрузка, разница только в паузе перед колесом.
-     Прогревать скроллом нельзя: window.scrollTo обходит Lenis и оставляет
-     его внутреннюю цель рассинхронизированной, после чего первое же колесо
-     даёт мгновенный доворот — и замер показывает не лаг, а артефакт. */
+     Прогревать страницу скроллом нельзя: сравнивать надо две СВЕЖИЕ
+     загрузки, иначе замер показывает не лаг, а артефакт прогрева. */
   if (warm) {
     await page.evaluate(() => document.fonts.ready);
     await page.waitForSelector('.hero__stage[data-entered]');
@@ -113,7 +109,7 @@ for (const warm of [false, true]) {
   const entAt = rows.findIndex((r) => r.ent === '1');
   out.push({ warm, frames, jump, wheel, total: rows.length, steps, ys,
     scrolled: rows[first]?.y ?? 0, entAt: entAt < 0 ? -1 : entAt - wheel,
-    lenisAt: (() => { const i = rows.findIndex((r) => r.lenis); return i < 0 ? -1 : i - wheel; })() });
+  });
 }
 
 console.log('── ОТ ПЕРВОГО КОЛЕСА ДО ПЕРВОГО ИЗМЕНЕНИЯ ФОРМЫ ────────────────');
@@ -131,10 +127,10 @@ console.log('первые шаги САМОГО СКРОЛЛА после ста
 for (const r of out)
   console.log('  %s %s', (r.warm ? 'прогретая' : 'холодная ').padEnd(12), r.ys.join(' '));
 console.log('');
-console.log('Lenis появился на кадре / вход букв снят на кадре (от первого колеса):');
+console.log('Вход букв снят на кадре (от первого колеса):');
 for (const r of out)
-  console.log('  %s Lenis %s, вход %s',
-    (r.warm ? 'прогретая' : 'холодная ').padEnd(12), r.lenisAt, r.entAt);
+  console.log('  %s вход %s',
+    (r.warm ? 'прогретая' : 'холодная ').padEnd(12), r.entAt);
 
 await browser.close();
 server.close();
