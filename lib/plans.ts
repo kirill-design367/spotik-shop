@@ -14,6 +14,14 @@ export const PERIODS: { key: PeriodKey; label: string; short: string }[] = [
 export type Plan = {
   id: string;
   name: string;
+  /**
+   * Имя НА КАРТОЧКЕ. Сетка 2×2 держится на всех размерах, и на 390
+   * карточка выходит около 185 px: «Сертификат в подарок» туда
+   * не встаёт ни одним кеглем, который ещё читается. Сокращаем
+   * НАЗВАНИЕ, а не сетку — так велел арт-директор. Полное имя
+   * остаётся в области под сеткой и в дереве доступности.
+   */
+  short?: string;
   people: number;
   note: string;
   prices: Partial<Record<PeriodKey, number>>;
@@ -53,6 +61,7 @@ export const PLANS: Plan[] = [
   {
     id: 'gift',
     name: 'Сертификат в подарок',
+    short: 'Сертификат',
     people: 1,
     note: 'Подписка вместо очередной коробки: её открывают один раз и слушают весь срок.',
     prices: {},

@@ -2,41 +2,45 @@
 
 import { useId, useState } from 'react';
 import SectionHead from './SectionHead';
-import SceneSlot from '@/components/three/SceneSlot';
+import CardWave from '@/components/wave/CardWave';
 import { PERIODS, PLANS, formatPrice, perMonth, savings, type PeriodKey } from '@/lib/plans';
 
 /**
- * БЛОК ТАРИФОВ — ОБЪЁМНЫЕ КАРТОЧКИ.
+ * БЛОК ТАРИФОВ — ЧЕТЫРЕ КАРТОЧКИ СЕТКОЙ ДВА НА ДВА.
  *
- * Разворот ряда (Р-49) снят арт-директором целиком: приём не зашёл.
- * Вместо него четыре карточки, и каждая несёт свой объёмный предмет —
- * отрезок звуковой дорожки, рядов столько, на скольких человек тариф;
- * у сертификата плита с зелёным торцом. Геометрия не абстрактная:
- * это тот же материал страницы, что нумерация и огибающая в хиро.
+ * Двадцатая итерация пересобрала карточки целиком:
  *
- * ── ЧТО СТОИТ КАРТОЧКА ────────────────────────────────────────────────────
- * Все четыре слота делят ОДИН WebGL-контекст, и он поднимается только
- * когда блок подходит к кадру. Компиляция программы идёт ТАМ ЖЕ, пока
- * блок ещё за кадром, а сама программа крошечная: света в сцене нет,
- * объём запечён в вершинные цвета (Р-54). Из-за этого объём работает
- * и на касаниях — там он медленно вращается сам, и крутятся только
- * карточки, которые сейчас на экране.
+ *   • сетка 2×2 НА ВСЕХ РАЗМЕРАХ, включая 390. Столбика больше нет;
+ *   • карточка несёт РОВНО ТРИ вещи: название, цену за выбранный срок
+ *     и волну. Всё остальное уехало вниз блока;
+ *   • объёмный отрезок дорожки снят, вместо него звуковая волна
+ *     на Canvas 2D — та самая, что придумывали для хиро (Р-59);
+ *   • углы скруглены: арт-директор снял правило «радиус везде 0»
+ *     для карточек отдельным требованием.
  *
- * ── НАКЛОН ────────────────────────────────────────────────────────────────
- * На точном указателе карточка наклоняется под курсор, а предмет внутри
- * доворачивается в сцене. Карточку двигает CSS по двум переменным —
- * это компоновщик, — и ни то, ни другое не проходит через React:
- * слушатели живут в слоте и пишут прямо в стиль. См. SceneSlot.
+ * ── ВЫБОР КАРТОЧКИ ВЕДЁТ ОБЛАСТЬ ПОД СЕТКОЙ ───────────────────────────────
+ * Карточки — настоящий radiogroup со стрелками на клавиатуре
+ * и `aria-checked`, а не крашеные div. По умолчанию выбрана первая.
+ * Под сеткой стоит выбор аккаунта и кнопка с ценой ВЫБРАННОЙ карточки;
+ * у сертификата вместо выбора аккаунта строка про подарок.
  *
- * Состояния интерфейса прежние: выбор срока и выбор типа аккаунта.
- * Обе группы — настоящие radiogroup со стрелками на клавиатуре
- * и aria-checked, а не крашеные div.
+ * Почему управление снаружи, а не в каждой карточке: четыре одинаковых
+ * набора радиокнопок и четыре кнопки «Оформить» — это четыре призыва
+ * к действию в одном кадре. Приём карточек держится на том, что они
+ * лаконичные, и первое же управление внутри это ломает.
  */
 export default function Pricing() {
   const [period, setPeriod] = useState<PeriodKey>(12);
+  const [planId, setPlanId] = useState<string>(PLANS[0].id);
   const [account, setAccount] = useState<Record<string, 'new' | 'renew'>>({});
   const statusId = useId();
   const noteId = useId();
+
+  const plan = PLANS.find((p) => p.id === planId) ?? PLANS[0];
+  const total = plan.prices[period];
+  const monthOnly = !plan.pending && !total ? plan.prices[1] : undefined;
+  const acc = account[plan.id] ?? 'new';
+  const save = total ? savings(plan, period) : 0;
 
   /**
    * Стрелки внутри radiogroup. Без них roving tabindex делает только хуже:
@@ -55,21 +59,19 @@ export default function Pricing() {
     const next = (current + dir + count) % count;
     apply(next);
     const group = e.currentTarget as HTMLElement;
-    group.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus();
+    group.querySelectorAll<HTMLElement>('[role="radio"]')[next]?.focus();
   };
 
   const announce = (() => {
     const p = PERIODS.find((x) => x.key === period)!;
-    // про тариф без цены на этот срок тоже надо сказать: иначе он просто
-    // пропадает из объявления, и человек не понимает, куда он делся
-    const parts = PLANS.map((pl) =>
-      pl.pending
-        ? `${pl.name} — ${pl.pending}`
-        : pl.prices[period]
-          ? `${pl.name} — ${formatPrice(pl.prices[period]!)} рублей`
-          : `${pl.name} — на этот срок не оформляется`,
-    );
-    return `${p.label}: ${parts.join(', ')}`;
+    const price = plan.pending
+      ? plan.pending
+      : total
+        ? `${formatPrice(total)} рублей`
+        : monthOnly
+          ? `${formatPrice(monthOnly)} рублей за месяц, другие сроки по запросу`
+          : 'на этот срок не оформляется';
+    return `${p.label}, тариф «${plan.name}»: ${price}`;
   })();
 
   return (
@@ -114,121 +116,132 @@ export default function Pricing() {
           {announce}
         </p>
 
-        <div className="cards">
-          {PLANS.map((plan, i) => {
-            const total = plan.prices[period];
-            const unavailable = !plan.pending && !total;
-            const acc = account[plan.id] ?? 'new';
-            const save = total ? savings(plan, period) : 0;
-
+        <div
+          className="cards rv"
+          role="radiogroup"
+          aria-label="Тариф"
+          onKeyDown={(e) =>
+            rove(
+              e,
+              PLANS.length,
+              PLANS.findIndex((p) => p.id === planId),
+              (i) => setPlanId(PLANS[i].id),
+            )
+          }
+        >
+          {PLANS.map((p) => {
+            const t = p.prices[period];
+            const m = !p.pending && !t ? p.prices[1] : undefined;
             return (
-              <div key={plan.id} className="card-wrap rv" style={{ ['--rv-d' as string]: `${i * 80}ms` }}>
-                {/* data-tilt — точка, за которую слот берёт наклон: целиться
-                    в маленький слот было бы неверно, наклоняется карточка. */}
-                <article className="card" data-tilt data-hot={plan.hot ? '1' : undefined}>
-                  <SceneSlot
-                    kind={plan.gift ? 'gift' : 'card'}
-                    seed={plan.gift ? 7 : plan.people}
-                    label={`Тариф «${plan.name}» в объёме`}
-                    className="card__slot"
-                  />
-
-                  <div className="card__body">
-                    <h3 className="card__name">{plan.name}</h3>
-
-                    <p className="card__price tnum">
-                      {plan.pending ? (
-                        <em>{plan.pending}</em>
-                      ) : unavailable ? (
-                        <>
-                          <b>{formatPrice(plan.prices[1]!)} ₽</b>
-                          <span> за месяц · другие сроки по запросу</span>
-                        </>
-                      ) : (
-                        <>
-                          <b>{formatPrice(total!)} ₽</b>
-                          <span>
-                            {' '}
-                            за {period} мес · {formatPrice(perMonth(total!, period))} ₽ в месяц
-                            {plan.people > 1
-                              ? ` · ${formatPrice(Math.round(total! / period / plan.people))} ₽ на человека`
-                              : ''}
-                          </span>
-                        </>
-                      )}
-                    </p>
-
-                    {save > 0 ? (
-                      <p className="card__save tnum">Экономия {formatPrice(save)} ₽</p>
-                    ) : null}
-
-                    <p className="card__note">{plan.note}</p>
-
-                    <div className="card__foot">
-                      {plan.gift ? (
-                        /* У сертификата выбора аккаунта нет: его делает
-                           не тот, кто платит, а тот, кому дарят. */
-                        <p className="card__gift">{plan.gift}</p>
-                      ) : (
-                        <div
-                          role="radiogroup"
-                          aria-label={`Аккаунт для тарифа «${plan.name}»`}
-                          className="card__opts"
-                          onKeyDown={(e) =>
-                            rove(e, 2, acc === 'new' ? 0 : 1, (i2) =>
-                              setAccount((st) => ({
-                                ...st,
-                                [plan.id]: i2 === 0 ? 'new' : 'renew',
-                              })),
-                            )
-                          }
-                        >
-                          {(
-                            [
-                              ['new', 'Новый аккаунт'],
-                              ['renew', 'Продлить существующий'],
-                            ] as const
-                          ).map(([key, title]) => (
-                            <button
-                              key={key}
-                              type="button"
-                              role="radio"
-                              aria-checked={acc === key}
-                              tabIndex={acc === key ? 0 : -1}
-                              className="row__opt"
-                              onClick={() => setAccount((s) => ({ ...s, [plan.id]: key }))}
-                            >
-                              {title}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
-                      {/*
-                        Оплата — следующий этап разработки. Кнопка, которая
-                        фокусируется, объявляется кнопкой и молча ничего
-                        не делает, хуже честно выключенной: человек решает,
-                        что сайт сломан.
-                      */}
-                      <button
-                        type="button"
-                        className={`btn btn--sm btn--wide${plan.hot ? '' : ' btn--ghost'}`}
-                        disabled
-                        aria-describedby={noteId}
-                      >
-                        Оформить{unavailable ? ' на месяц' : ''}
-                      </button>
-                    </div>
-                  </div>
-                </article>
-              </div>
+              /* data-wave — точка, за которую слой волны берёт указатель:
+                 оживать она обязана везде в карточке, а не только там,
+                 где нет текста. */
+              <button
+                key={p.id}
+                type="button"
+                role="radio"
+                aria-checked={planId === p.id}
+                tabIndex={planId === p.id ? 0 : -1}
+                className="card"
+                data-wave
+                onClick={() => setPlanId(p.id)}
+              >
+                <CardWave seed={p.people * 7 + p.id.length * 31} className="card__wave" />
+                <span className="card__face">
+                  <span className="card__name">{p.short ?? p.name}</span>
+                  <span className="card__price tnum">
+                    {p.pending ? (
+                      <em className="card__soon">Цена уточняется</em>
+                    ) : t ? (
+                      <>
+                        <b>{formatPrice(t)} ₽</b>
+                        <span className="card__per"> за {period} мес</span>
+                      </>
+                    ) : (
+                      <>
+                        <b>{formatPrice(m!)} ₽</b>
+                        <span className="card__per"> за месяц</span>
+                      </>
+                    )}
+                  </span>
+                </span>
+              </button>
             );
           })}
         </div>
 
+        {/* Область под сеткой работает для ВЫБРАННОЙ карточки. */}
+        <div className="order rv">
+          <p className="order__plan">
+            <span className="order__label">Выбрано</span>
+            <b>{plan.name}</b>
+            {save > 0 ? <span className="order__save tnum">экономия {formatPrice(save)} ₽</span> : null}
+          </p>
+
+          {plan.gift ? (
+            /* У сертификата выбора аккаунта нет: его делает не тот,
+               кто платит, а тот, кому дарят. */
+            <p className="order__gift">{plan.gift}</p>
+          ) : (
+            <div
+              role="radiogroup"
+              aria-label={`Аккаунт для тарифа «${plan.name}»`}
+              className="order__opts"
+              onKeyDown={(e) =>
+                rove(e, 2, acc === 'new' ? 0 : 1, (i) =>
+                  setAccount((st) => ({ ...st, [plan.id]: i === 0 ? 'new' : 'renew' })),
+                )
+              }
+            >
+              {(
+                [
+                  ['new', 'Новый аккаунт'],
+                  ['renew', 'Продлить существующий'],
+                ] as const
+              ).map(([key, title]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="radio"
+                  aria-checked={acc === key}
+                  tabIndex={acc === key ? 0 : -1}
+                  className="row__opt"
+                  onClick={() => setAccount((s) => ({ ...s, [plan.id]: key }))}
+                >
+                  {title}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/*
+            Оплата — следующий этап разработки. Кнопка, которая
+            фокусируется, объявляется кнопкой и молча ничего не делает,
+            хуже честно выключенной: человек решает, что сайт сломан.
+          */}
+          <button type="button" className="btn btn--wide" disabled aria-describedby={noteId}>
+            {total
+              ? `Оформить за ${formatPrice(total)} ₽`
+              : monthOnly
+                ? `Оформить на месяц за ${formatPrice(monthOnly)} ₽`
+                : 'Оформить'}
+          </button>
+
+          {total ? (
+            <p className="order__unit tnum">
+              {formatPrice(perMonth(total, period))} ₽ в месяц
+              {plan.people > 1
+                ? ` · ${formatPrice(Math.round(total / period / plan.people))} ₽ на человека`
+                : ''}
+            </p>
+          ) : (
+            <p className="order__unit">{plan.note}</p>
+          )}
+        </div>
+
         <p id={noteId} className="plans__note rv">
           Итоговая сумма к оплате показывается до перехода к оплате. Сама оплата появится
-          на следующем этапе разработки, поэтому кнопки оформления пока выключены.
+          на следующем этапе разработки, поэтому кнопка оформления пока выключена.
         </p>
       </div>
     </section>

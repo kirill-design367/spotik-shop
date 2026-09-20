@@ -6,13 +6,13 @@
  * ВКЛЮЧЁННЫМ И ВЫКЛЮЧЕННЫМ на одном и том же движении: разница
  * и есть его цена.
  *
- *   1. ОБЪЁМ В ПОКОЕ. Страница стоит, карточки на экране. На касаниях
- *      предмет там медленно вращается сам — это единственное место
- *      сайта, где в покое работает WebGL, и мерить его надо врозь.
- *   2. ОБЪЁМ ПРИ НАВЕДЕНИИ. Наклон карточки под указателем плюс доворот
- *      предмета в сцене: кадры идут на полной частоте.
+ *   1. ВОЛНА В ПОКОЕ. Страница стоит, четыре карточки на экране.
+ *      На касаниях волна там медленно едет сама — это единственное
+ *      место сайта, где в покое что-то рисуется, и мерить его надо врозь.
+ *   2. ВОЛНА ПРИ НАВЕДЕНИИ. Указатель проходит по всем четырём
+ *      карточкам: кадры идут на полной частоте.
  *   3. БЕГУЩАЯ СТРОКА В ПОКОЕ и 4. НА ПРОКРУТКЕ.
- *   5. ПАНЕЛЬ БЛОКА ПОРЯДКА на прокрутке.
+ *   5. ПОДСВЕТКА МАРШРУТА при БЫСТРОМ скролле.
  *
  * Выключение — ровно одно свойство на приём, раскладка при этом
  * не меняется: иначе сравнивались бы две разные страницы.
@@ -55,9 +55,18 @@ function stats(frames) {
   };
 }
 
-async function scene(page, label, off, drive) {
+/**
+ * `base` выключается в ОБЕИХ строках. Это не перестраховка: сцены
+ * середины перекрываются по прокрутке — прогон «бегущая строка
+ * на прокрутке» неизбежно заезжает в блок порядка, и без общего
+ * выключения сравнивались бы две РАЗНЫЕ страницы, а не приём
+ * с самим собой. Ловится это сразу: выключенная строка выходила
+ * дороже включённой, чего быть не может.
+ */
+async function scene(page, label, off, drive, base = '') {
   const row = async (on) => {
-    await page.evaluate((css) => { document.getElementById('probe-off').textContent = css; }, on ? '' : off);
+    await page.evaluate((css) => { document.getElementById('probe-off').textContent = css; },
+      on ? base : `${base}${off}`);
     await page.waitForTimeout(400);
     await page.evaluate(() => window.__fpsReset());
     await drive();
@@ -117,18 +126,18 @@ for (const [name, w, h, mob, cpu] of [['ДЕСКТОП 1920', 1920, 1080, false,
     }
   };
 
-  /* Выключаем ОБЪЁМ целиком: у слота с display:none нулевая ширина,
+  /* Выключаем ВОЛНУ целиком: у слоя с display:none нулевая ширина,
      и цикл честно пропускает отрисовку, продолжая крутиться. Значит
-     разница между строками — это ровно цена кадра WebGL, а не цена
+     разница между строками — это ровно цена кадра стопки, а не цена
      самого цикла. */
-  const NO3D = '.scene-slot{display:none!important}';
+  const NOWAVE = '.wave{display:none!important}';
 
   await park('.cards', 0.1);
   await page.mouse.move(4, Math.round(h * 0.95));
-  await scene(page, '1. ОБЪЁМ В ПОКОЕ (страница стоит)', NO3D, () => page.waitForTimeout(3000));
+  await scene(page, '1. ВОЛНА В ПОКОЕ (страница стоит)', NOWAVE, () => page.waitForTimeout(3000));
 
   if (!mob) {
-    await scene(page, '2. ОБЪЁМ ПРИ НАВЕДЕНИИ (наклон + доворот предмета)', NO3D, async () => {
+    await scene(page, '2. ВОЛНА ПРИ НАВЕДЕНИИ (отклик под указателем)', NOWAVE, async () => {
       for (let i = 0; i < 4; i += 1) {
         await page.hover(`.card >> nth=${i}`).catch(() => {});
         await page.waitForTimeout(700);
@@ -146,13 +155,15 @@ for (const [name, w, h, mob, cpu] of [['ДЕСКТОП 1920', 1920, 1080, false,
     '.mq{display:none!important}', async () => {
       await park('.mq', 0.9);
       await wheel(h * 1.2, 3000);
-    });
+    }, '.route__svg{display:none!important}');
 
-  await scene(page, '5. ПАНЕЛЬ БЛОКА ПОРЯДКА (поле едет за прокруткой)',
-    '.steps__panel{display:none!important}', async () => {
-      await park('.steps', 0.9);
-      await wheel(h * 1.2, 3000);
-    });
+  /* Подсветка маршрута меряется на БЫСТРОМ скролле: именно там она
+     обязана успевать за позицией, и именно там дорога маска. */
+  await scene(page, '5. ПОДСВЕТКА МАРШРУТА (быстрый скролл)',
+    '.route__svg{display:none!important}', async () => {
+      await park('.route', 0.95);
+      await wheel(h * 3.2, 2400);
+    }, '.mq{display:none!important}');
 
   await browser.close();
 }

@@ -867,29 +867,6 @@
 }
 .seg__btn[aria-disabled='true'] { opacity: 0.35; cursor: not-allowed; }
 
-/* слот под 3D-объект карточки: габариты заданы заранее, чтобы сцена
-   встала без сдвига макета, а до её загрузки лежал плоский запасной слой */
-.scene-slot {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  background: rgba(255, 255, 255, 0.03);
-  overflow: hidden;
-  contain: strict;
-}
-.scene-slot > canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
-.scene-slot__fallback {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  /* не --mid: он даёт 2.4:1 и годится только для декоративных линий */
-  color: var(--dim-2);
-  font-size: 10px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
 /* ═══════════════════════════════════════════════════════ СЕРЕДИНА СТРАНИЦЫ
    Девятнадцатая итерация. Надзаголовков и линий между блоками нет вовсе:
    границу держит воздух. Три блока, три разных голоса.
@@ -903,113 +880,150 @@
    и выключен влево, вопросы снова крупные, но другого характера —
    центрованная колонка без единой линии.                                  */
 
-/* ── КАРТОЧКИ ТАРИФА ─────────────────────────────────────────────────────
-   Четыре в ряд на широком экране, две на среднем, СТОЛБИКОМ на телефоне.
-   Карусели нет намеренно: она прячет три тарифа из четырёх и дерётся
-   с вертикальной прокруткой пальцем. Столбик читается сразу весь,
-   а объём при этом стоит дёшево — крутится только карточка,
-   которая сейчас на экране.                                              */
+/* ── КАРТОЧКИ ТАРИФА: СЕТКА ДВА НА ДВА НА ВСЕХ РАЗМЕРАХ ──────────────────
+   Двадцатая итерация. Столбика больше нет: две сверху, две снизу,
+   и на 390 тоже. Карточка несёт РОВНО ТРИ вещи — название, цену
+   и волну; выбор аккаунта и кнопка уехали вниз блока и работают
+   для выбранной карточки.
+
+   УГЛЫ СКРУГЛЕНЫ, и это снятие прежнего закона «радиус везде 0»:
+   требование арт-директора, отдельной строкой в постановке.           */
 .cards {
   display: grid;
-  gap: clamp(16px, 2.2vw, 28px);
-  margin-top: clamp(28px, 4vw, 48px);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(10px, 1.6vw, 22px);
+  margin-top: clamp(24px, 3.4vw, 42px);
 }
-@media (min-width: 720px) {
-  .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@media (min-width: 1180px) {
-  .cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-}
-
-/* Обёртка несёт появление строки, сама карточка — наклон. Разделены они
-   потому, что и то, и другое живёт в `transform`, и на одном элементе
-   второе затёрло бы первое. */
-.card-wrap { perspective: 900px; }
 
 .card {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
+  position: relative;
+  /* Примерно треть высоты экрана на десктопе — по постановке. Нижний
+     предел держит мобильную: на 390 карточка выходит 185×170. */
+  min-height: clamp(150px, 33svh, 360px);
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--hair);
+  border-radius: clamp(16px, 1.6vw, 26px);
   background: var(--surface);
-  /* Наклон под указателем: две переменные пишет слот, считает
-     компоновщик. В покое обе нули, и трансформ тождественный. */
-  transform: rotateX(calc(var(--tilt-y, 0) * -3.2deg))
-    rotateY(calc(var(--tilt-x, 0) * 3.2deg));
-  transition: transform 420ms var(--ease);
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    border-color var(--t-fast) var(--ease),
+    background-color var(--t-fast) var(--ease);
 }
-.card[data-hot] { outline: 1px solid var(--green); outline-offset: -1px; }
-
-/* Слот — «окно» в карточке: лёгкий градиент отделяет его от тела,
-   и предмет не выглядит наклеенным на ту же плоскость. */
-.card__slot {
-  aspect-ratio: 16 / 10;
-  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.012));
+.card:hover { border-color: rgba(255, 255, 255, 0.28); }
+/* Выбор помечен не одним цветом: кромка зелёная, поле чуть светлее. */
+.card[aria-checked='true'] {
+  border-color: var(--green);
+  background: #262626;
 }
 
-.card__body {
-  flex: 1 1 auto;
+/* Слой волны лежит во весь бокс карточки и НИЧЕГО не перехватывает:
+   указатель нужен самой карточке. */
+.wave {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.wave > canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+
+/* Текст стоит ПОВЕРХ волны, и чтобы он читался без усилия, под ним
+   лежит короткий скат в цвет карточки. Ни тени, ни блюра: они стоят
+   дороже всей отрисовки стопки. */
+.card__face {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: clamp(18px, 2vw, 24px);
+  gap: 4px;
+  height: 100%;
+  justify-content: flex-end;
+  padding: clamp(12px, 1.5vw, 22px);
+  background: linear-gradient(to top, rgba(33, 33, 33, 0.94) 12%, rgba(33, 33, 33, 0) 46%);
 }
 .card__name {
-  margin: 0;
-  font-size: clamp(1.25rem, 1.6vw, 1.5rem);
-  line-height: 1.1;
+  /* Кегль подобран ЗАМЕРОМ по самому длинному названию — «Индивидуальный»,
+     14 знаков. Сетка 2×2 держится и на 320, где карточке достаётся
+     135 px и 111 px под текст: там нижняя граница и связывает.
+     Замер ширины строки (`scrollWidth` против `clientWidth`) по пяти
+     ширинам лежит в отчёте. «Сертификат в подарок» в эту меру
+     не встаёт никаким кеглем — он сокращён до «Сертификат». */
+  font-size: clamp(0.78125rem, 3.5vw, 1.375rem);
+  line-height: 1.12;
   letter-spacing: -0.025em;
   font-variation-settings: 'wght' 680;
   color: var(--white);
+  white-space: nowrap;
 }
-.card__price {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--dim);
-}
+.card__price { font-size: 11px; line-height: 1.4; color: var(--dim); }
 .card__price b {
-  font-size: clamp(1.375rem, 1.9vw, 1.75rem);
+  display: block;
+  font-size: clamp(1.125rem, 4vw, 1.875rem);
+  line-height: 1.1;
   letter-spacing: -0.02em;
   color: var(--white);
   font-variation-settings: 'wght' 700;
 }
-.card__price em { font-style: normal; }
-.card__save {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.02em;
-  color: var(--green);
-  font-variation-settings: 'wght' 650;
+.card__per { font-size: 11px; }
+.card__soon { font-style: normal; font-size: 12px; color: var(--dim-2); }
+
+@media (min-width: 560px) {
+  .card__price, .card__per { font-size: 12px; }
+  .card__name { font-size: clamp(1.0625rem, 1.9vw, 1.5rem); }
 }
-.card__note {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--dim);
-}
-/* Подвал прижат к низу карточки: иначе кнопки в соседних карточках
-   стоят на разной высоте, и ряд читается как сломанный. */
-.card__foot {
-  margin-top: auto;
-  padding-top: 14px;
+
+/* ── ОБЛАСТЬ ПОД СЕТКОЙ: РАБОТАЕТ ДЛЯ ВЫБРАННОЙ КАРТОЧКИ ────────────────
+   Четыре одинаковых набора радиокнопок и четыре кнопки «Оформить» —
+   это четыре призыва к действию в одном кадре; приём карточек держится
+   на том, что они лаконичные.                                          */
+.order {
+  margin-top: clamp(20px, 2.6vw, 32px);
   display: grid;
-  gap: 10px;
+  justify-items: center;
+  gap: 12px;
+  text-align: center;
 }
-.card__gift {
+.order__plan {
   margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--white);
+}
+.order__label {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
   color: var(--dim-2);
 }
-.card__opts { display: flex; flex-wrap: wrap; gap: 2px; }
+.order__plan b { font-variation-settings: 'wght' 680; }
+.order__save { font-size: 12px; color: var(--green); font-variation-settings: 'wght' 650; }
+.order__opts { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 18px; }
+.order__gift {
+  margin: 0;
+  max-width: 52ch;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--dim);
+}
+.order__unit { margin: 0; max-width: 52ch; font-size: 12px; line-height: 1.5; color: var(--dim-2); }
+.order .btn { min-width: min(320px, 100%); }
 
 .plans__note {
-  margin-top: clamp(22px, 3vw, 34px);
+  margin-top: clamp(20px, 2.6vw, 32px);
   font-size: 13px;
   line-height: 1.6;
   color: var(--dim);
   text-align: center;
 }
+
 
 /* выбор аккаунта: состояние помечено не одним цветом — кружок
    заливается, начертание тяжелеет, стоит aria-checked */
@@ -1073,105 +1087,137 @@
   from { transform: translate3d(0, 0, 0); }
   to { transform: translate3d(-50%, 0, 0); }
 }
-
-/* ── ПОРЯДОК: ТИХОЕ СЕРОЕ ПОЛЕ ───────────────────────────────────────────
-   Поле едет за прокруткой и отмечает место, где сейчас читают. Резкой
-   границы у него нет: это градиент, который сходит в фон сверху и снизу.
-   Прямоугольник с чёткой кромкой читался бы как плашка, а нужно едва
-   различимое поле — `--surface` на `--ink` даёт 1.16:1, и это ровно
-   та «слабая различимость», которую просил арт-директор.
-
-   ПОЧЕМУ НЕ `--mid` #535353. По рендерам он читается лучше, но на нём
-   ломается контраст: описание шага идёт `--dim`, и #B3B3B3 на #535353
-   даёт 3.63:1 — ниже нормы для корпуса. Осветлить описание значило бы
-   осветлить его ВЕЗДЕ, а панель ездит. Взят #212121, а работу
-   «где сейчас читают» делает яркость самого шага.
-
-   Активный шаг помечается ЯРКОСТЬЮ, а не инверсией: над серым инверсия
-   не читается. Вес идёт числом --w и двигает только `opacity`.          */
-.steps {
-  --panel-h: clamp(190px, 28svh, 320px);
+/* ── ПОРЯДОК: МАРШРУТ ────────────────────────────────────────────────────
+   Прерывистая зелёная линия петляет по блоку и подсвечивается
+   по прокрутке от начала к концу. Прерывистость и подсветка — две
+   разные вещи, и одним `stroke-dasharray` их не выразить: он
+   на элементе один. Поэтому тусклая линия — обычный пунктир, яркая —
+   СПЛОШНАЯ и обрезана по длине через `pathLength`, а прерывистой её
+   делает СТАТИЧНАЯ маска. В кадре меняется ровно один атрибут.        */
+.route {
   position: relative;
-  margin-top: clamp(28px, 4.4vw, 52px);
+  margin-top: clamp(26px, 4vw, 48px);
 }
-.steps__panel {
+.route__svg {
   position: absolute;
-  left: 50%;
-  translate: -50% 0;
-  width: 100vw;
-  max-width: 1680px;
-  top: 0;
-  height: var(--panel-h);
-  z-index: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
   pointer-events: none;
-  background: linear-gradient(
-    to bottom,
-    transparent 0%,
-    var(--surface) 34%,
-    var(--surface) 66%,
-    transparent 100%
-  );
+}
+.route__dim,
+.route__lit,
+.route__gaps {
+  fill: none;
+  stroke-linejoin: round;
+}
+.route__dim {
+  stroke: var(--green);
+  stroke-width: 2;
+  stroke-dasharray: 9 10;
+  stroke-linecap: round;
+  opacity: 0.2;
+}
+.route__lit { stroke: var(--green); stroke-width: 2.4; }
+/* Противофазный пунктир в цвет фона. Он ШИРЕ яркой линии, иначе
+   на сглаженных краях остаётся зелёный ореол, и `butt` вместо `round`,
+   иначе скруглённые концы съедали бы соседние штрихи. */
+.route__gaps {
+  stroke: var(--ink);
+  stroke-width: 4;
+  stroke-linecap: butt;
+  stroke-dasharray: 10 9;
+  stroke-dashoffset: -9;
 }
 
-.steps__list {
+.route__list {
   position: relative;
   z-index: 1;
   list-style: none;
   margin: 0;
   padding: 0;
 }
-.step {
-  --w: 1;
+
+/* Шаг: слева крупный номер, справа заголовок и описание. Гутер слева
+   отдан петлям — там же стоит точка маршрута. */
+.rstep {
+  --n: 1;
+  /* НЕ `relative`: точка маршрута позиционируется от `.route`, потому что
+     её координаты приходят от генератора пути в системе всего блока.
+     Стоило сделать шаг контейнером — и точки уехали на его отступ. */
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  column-gap: clamp(12px, 1.8vw, 24px);
-  row-gap: 6px;
-  padding: clamp(18px, 2.8vw, 30px) 0;
-  /* Приглушение прозрачностью, а не подменой цвета: цвет пришлось бы
-     перекрашивать в каждом кадре. Нижний предел 0.42 — это белый
-     на 42 % над --ink, 4.0:1 у ЗАГОЛОВКА шага. У описания, которое
-     идёт --dim, та же доля даёт 2.19:1 над полем — ниже нормы,
-     и это осознанный размен: состояние проходящее, вес по умолчанию
-     равен единице, и без скрипта и при «уменьшить движение» все пять
-     шагов стоят на полной яркости. См. открытый вопрос 33. */
-  opacity: calc(0.42 + var(--w) * 0.58);
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  column-gap: clamp(16px, 2.2vw, 32px);
+  align-items: start;
+  padding: clamp(20px, 3.2vw, 38px) 0;
+  margin-left: var(--gutter, 84px);
 }
-.step__n {
-  margin: 0;
-  padding-top: 0.35em;
-  font-size: 12px;
-  letter-spacing: 0.1em;
-  color: var(--green);
+/* Точка НА ЛИНИИ. Координаты приходят от генератора пути, поэтому она
+   стоит ровно на маршруте, а не рядом с ним. */
+.rstep__dot {
+  position: absolute;
+  left: var(--dot-x, 0);
+  top: var(--dot-y, 0);
+  width: 11px;
+  height: 11px;
+  margin: -5.5px 0 0 -5.5px;
+  border-radius: 50%;
+  background: var(--green);
+  opacity: calc(0.22 + var(--n) * 0.78);
+  transform: scale(calc(0.7 + var(--n) * 0.3));
+}
+.rstep__dot::after {
+  content: '';
+  position: absolute;
+  inset: -7px;
+  border-radius: 50%;
+  border: 1px solid var(--green);
+  opacity: calc(var(--n) * 0.55);
+}
+/* Номер появляется, когда подсветка дошла до точки, — не раньше. */
+.rstep__num {
+  font-size: clamp(1.75rem, 5.6vw, 3.25rem);
+  line-height: 0.9;
+  letter-spacing: -0.03em;
   font-variation-settings: 'wght' 700;
+  color: var(--green);
+  opacity: var(--n);
+  transform: translate3d(calc((1 - var(--n)) * -10px), 0, 0);
 }
-.step__t {
-  margin: 0;
+.rstep__body { display: grid; row-gap: 6px; }
+/* Приглушение висит на самих строках, а не на обёртке: на широком экране
+   обёртка становится `display: contents`, и прозрачность с неё пропадает
+   вместе с боксом — молча. */
+.rstep__t,
+.rstep__d { opacity: calc(0.34 + var(--n) * 0.66); }
+.rstep__t {
   font-size: clamp(1.0625rem, 2.2vw, 1.5rem);
   line-height: 1.16;
   letter-spacing: -0.02em;
   font-variation-settings: 'wght' 620;
   color: var(--white);
 }
-.step__d {
-  grid-column: 2;
-  margin: 0;
-  max-width: 46ch;
+.rstep__d {
+  max-width: 44ch;
   font-size: clamp(0.875rem, 0.84rem + 0.15vw, 0.9375rem);
   line-height: 1.6;
   color: var(--dim);
 }
 @media (min-width: 900px) {
-  .step { grid-template-columns: auto minmax(0, 26ch) minmax(0, 1fr); align-items: baseline; }
-  .step__d { grid-column: 3; max-width: 42ch; }
+  .rstep { grid-template-columns: auto minmax(0, 26ch) minmax(0, 1fr); align-items: baseline; }
+  .rstep__body { display: contents; }
+  .rstep__d { max-width: 42ch; }
 }
-.steps__fork {
+.route__fork {
   margin-top: clamp(24px, 3.4vw, 40px);
   max-width: 68ch;
   font-size: clamp(0.875rem, 0.84rem + 0.15vw, 0.9375rem);
   line-height: 1.6;
   color: var(--dim);
 }
-.steps__fork b { color: var(--white); font-variation-settings: 'wght' 650; }
+.route__fork b { color: var(--white); font-variation-settings: 'wght' 650; }
+
 
 /* --- Б: крупный тезис по левому краю ------------------------------------ */
 .stmt {
@@ -1190,12 +1236,13 @@
 .seg--center { justify-content: center; }
 
 /* ═══ УМЕНЬШЕННОЕ ДВИЖЕНИЕ В СЕРЕДИНЕ ═══
-   Наклон карточки мгновенный, бегущая строка стоит. Предмет в карточке
-   при этом не вращается вовсе — об этом знает слот, а не CSS. */
+   Бегущая строка стоит, маршрут подсвечен целиком, волна неподвижна —
+   про волну и про подсветку знают их модули, а не CSS. */
 @media (prefers-reduced-motion: reduce) {
-  .card { transition: none; transform: none; }
   .mq__track { animation: none; }
+  .card { transition: none; }
 }
+
 
 /* ═══════════════════════════════════════════════ ПОЯВЛЕНИЕ СТРОК В КАДРЕ
    Сдержанно, как в эталоне: строка приезжает снизу и проявляется, между
@@ -1226,14 +1273,21 @@
    бы мерить и записывать, а тут раскладка не прыгает ни на пиксель
    и без единого чтения геометрии.
 
-   Переход перекрёстный: вопрос гаснет как (1 − w), ответ разгорается
-   как w. Кадра, где оба видны в полную силу, поэтому не существует.
+   ⚠️ ПЕРЕКРЁСТНОГО ЗАТУХАНИЯ БОЛЬШЕ НЕТ. На медленной прокрутке вопрос
+   и ответ были видны ОДНОВРЕМЕННО, каждый вполсилы, и налезали друг
+   на друга. Теперь фазы идут подряд: вопрос гаснет ДО НУЛЯ, короткая
+   пустая пауза, и только потом проявляется ответ. Обе прозрачности
+   считает JS и отдаёт двумя переменными — кусочная функция из трёх
+   участков в `calc` читалась бы как шифр, а стоит ровно столько же.
 
    ПОДМЕНА ВКЛЮЧАЕТСЯ АТРИБУТОМ `data-swap`, и ставит его скрипт — только
    когда подписался на прокрутку. Нет скрипта, «уменьшить движение» —
    ячейка разворачивается в две строки, и видно И вопрос, И ответ.      */
-.qa { display: grid; gap: clamp(28px, 4.2vw, 56px); }
-.qa__item { --w: 1; }
+/* Воздух между вопросами — это ещё и ХОД: вес считается от расстояния
+   до линии отсчёта, и чем теснее вопросы, тем короче каждая фаза
+   в пикселях прокрутки. */
+.qa { display: grid; gap: clamp(44px, 6vw, 88px); }
+.qa__item { --oq: 1; --oa: 1; }
 .qa__swap { display: grid; row-gap: 14px; }
 
 .qa__q {
@@ -1250,52 +1304,25 @@
   font-variation-settings: 'wght' 620;
   color: var(--white);
 }
+/* Ответ читается как ОСНОВНОЙ текст, а не как подпись, и он белый:
+   активны обе половины в полную яркость. */
 .qa__a {
   margin: 0;
   margin-inline: auto;
-  max-width: 46ch;
+  max-width: 34ch;
   text-align: center;
-  font-size: clamp(0.9375rem, 0.85rem + 0.3vw, 1.125rem);
-  line-height: 1.6;
-  color: var(--dim);
+  font-size: clamp(1.125rem, 0.95rem + 0.85vw, 1.75rem);
+  line-height: 1.38;
+  letter-spacing: -0.015em;
+  color: var(--white);
 }
-
-/* Подмена. Обе половины в одной ячейке, и ни одна не двигает раскладку. */
 .qa[data-swap] .qa__swap { row-gap: 0; align-items: center; }
 .qa[data-swap] .qa__q,
 .qa[data-swap] .qa__a { grid-area: 1 / 1; }
-/* 0.52 — приглушённый вопрос: белый на 52 % над --ink даёт 5.4:1,
-   то есть он по-прежнему читается. Гаснет он КВАДРАТИЧНО, и это
-   не украшение: крупный набор виден призраком даже на 13 % —
-   при линейном спаде за проявляющимся ответом полпути стоял бы
-   полупрозрачный вопрос. */
-.qa[data-swap] .qa__q { opacity: calc(0.52 * (1 - var(--w)) * (1 - var(--w))); }
+.qa[data-swap] .qa__q { opacity: var(--oq); }
 .qa[data-swap] .qa__a {
-  opacity: var(--w);
-  transform: translate3d(0, calc((1 - var(--w)) * 10px), 0);
-}
-
-.faq__draft-mark {
-  display: inline-block;
-  margin-right: 10px;
-  padding: 2px 7px;
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-variation-settings: 'wght' 700;
-  color: var(--ink);
-  background: var(--dim-2);
-  vertical-align: 2px;
-}
-.faq__note {
-  margin-top: clamp(32px, 4.4vw, 56px);
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  color: var(--dim);
+  opacity: var(--oa);
+  transform: translate3d(0, calc((1 - var(--oa)) * 8px), 0);
 }
 
 
