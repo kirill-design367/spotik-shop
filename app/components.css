@@ -330,7 +330,7 @@
     color: transparent;
     -webkit-text-fill-color: transparent;
   }
-  .nav[data-ink] .nav__burger-bars { background-color: transparent; }
+  .nav[data-ink] .nav__burger-bars > span { background-color: transparent; }
   .nav-ink[data-ink] .nav-ink__layer { display: block; }
 }
 .nav-ink__layer--bright {
@@ -470,19 +470,62 @@
    из него вырезает маска. Псевдоэлементами было бы короче, но у каждого
    был бы свой бокс и своё смещение от верха полосы шапки — а смещение
    здесь и есть система координат покраски. */
+/* ── ЗНАК БУРГЕРА И ЕГО ПРЕВРАЩЕНИЕ В КРЕСТИК ───────────────────────────
+   Двадцать первая итерация. Полосы НЕ ПРОПАДАЮТ и не появляются: это две
+   те же самые полосы, которые поворачиваются и съезжаются к середине
+   бокса. Поэтому маска на одном боксе не годилась — повернуть половину
+   градиента нечем, — и полос теперь две настоящие.
+
+   Бокс остался прежним 26×14, полосы прежними 5 px на 0…5 и 9…14:
+   по этим же числам собирается фигура выворотки (BURGER_BARS в Nav.tsx),
+   и разойдись они — знак в шапке встал бы рядом с чернилами.
+
+   ЗНАК ОДИН НА ДВА ЭЛЕМЕНТА. В накладке стоит ровно такой же, пиксель
+   в пиксель, и превращается он ОДНОВРЕМЕННО с бургером: накладка
+   появляется затуханием, и в эти 180 мс видны оба разом. Дай им
+   разойтись формой хоть на кадр — и это читается как подмена знака,
+   а не как поворот.
+
+   Едет ТОЛЬКО transform, поэтому превращение считает компоновщик
+   и в кадре не происходит ни пересчёта раскладки, ни перекраски. */
 .nav__burger-bars {
   display: block;
+  position: relative;
   width: 26px;
   height: 14px;
+}
+.nav__burger-bars > span {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 5px;
   background: currentColor;
-  --nav-burger-mask: linear-gradient(
-    to bottom,
-    #000 0 5px,
-    transparent 5px 9px,
-    #000 9px 14px
-  );
-  -webkit-mask-image: var(--nav-burger-mask);
-  mask-image: var(--nav-burger-mask);
+  transform-origin: 50% 50%;
+}
+.nav__burger-bars > span:first-child { top: 0; }
+.nav__burger-bars > span:last-child { bottom: 0; }
+
+@media (prefers-reduced-motion: no-preference) {
+  /* 340 мс и лёгкий перелёт по углу: полоса доходит примерно до 48°
+     и садится на 45°. Вторая идёт с задержкой 45 мс — движение читается
+     как жест, а не как переключение состояния. */
+  .nav__burger-bars > span {
+    transition: transform 340ms cubic-bezier(0.34, 1.28, 0.44, 1);
+  }
+  .nav__burger-bars > span:last-child { transition-delay: 45ms; }
+}
+
+/* Открыто — крестик. Полосы съезжаются к середине бокса (центры 2.5
+   и 11.5 идут к 7) и расходятся по углу. Состояние читается и с бургера
+   (`aria-expanded`), и с накладки (`data-open`): элементы разные,
+   а знак и его состояние одни. */
+.nav__burger[aria-expanded='true'] .nav__burger-bars > span:first-child,
+.menu[data-open] .nav__burger-bars > span:first-child {
+  transform: translateY(4.5px) rotate(45deg);
+}
+.nav__burger[aria-expanded='true'] .nav__burger-bars > span:last-child,
+.menu[data-open] .nav__burger-bars > span:last-child {
+  transform: translateY(-4.5px) rotate(-45deg);
 }
 
 /* НАКЛАДКА. Плотная, во весь экран, цвет из палитры — выделенная
@@ -501,27 +544,30 @@
   /* закрытое состояние: из дерева фокуса выведено visibility */
   visibility: hidden;
   opacity: 0;
-  transform: translateY(-8px);
   pointer-events: none;
 }
 .menu[data-open] {
   visibility: visible;
   opacity: 1;
-  transform: none;
   pointer-events: auto;
 }
 /* Короткое движение, как просил арт-директор: открытие резче закрытия. */
 @media (prefers-reduced-motion: no-preference) {
+  /* СДВИГА У НАКЛАДКИ НЕТ, и это не упрощение: её крестик обязан стоять
+     ровно на полосах бургера, иначе в кадры затухания попадают два знака
+     в восьми пикселях друг от друга. Осталось затухание, а движение
+     в кадре несут сами полосы и пункты меню.
+
+     Закрытие ждёт полосы: 360 мс против 340 мс поворота, поэтому
+     накладка гаснет уже после того, как крестик стал бургером. */
   .menu {
     transition:
-      opacity 200ms var(--ease),
-      transform 200ms var(--ease),
-      visibility 0s linear 200ms;
+      opacity 360ms var(--ease),
+      visibility 0s linear 360ms;
   }
   .menu[data-open] {
     transition:
       opacity 180ms var(--ease),
-      transform 180ms var(--ease),
       visibility 0s;
   }
   .menu[data-open] .menu__item {
@@ -560,21 +606,6 @@
   color: var(--white);
   touch-action: manipulation;
 }
-.menu__cross { display: block; width: 26px; height: 26px; position: relative; }
-/* Крестик в тон потолстевшему бургеру: он встаёт на его место,
-   и разнобой в толщине читался бы как подмена знака. */
-.menu__cross::before,
-.menu__cross::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 0;
-  right: 0;
-  height: 5px;
-  background: currentColor;
-}
-.menu__cross::before { transform: rotate(45deg); }
-.menu__cross::after { transform: rotate(-45deg); }
 
 .menu__list {
   display: grid;
@@ -841,30 +872,54 @@
   gap: 8px; /* цели не стоят вплотную */
   flex-wrap: wrap;
 }
+/* ПЛАШКИ СРОКА ГОВОРЯТ НА ЯЗЫКЕ КАРТОЧЕК (двадцать первая итерация):
+   скруглённые, серые, с объёмом и с откликом на наведение. Прежние
+   прямоугольники с рамкой были из другой системы — при скруглённых
+   карточках они читались как чужой элемент.
+
+   ОБЪЁМ ЗДЕСЬ ТОЖЕ БЕЗ ТЕНЕЙ: свет сверху даёт градиент в заливке,
+   кромку — внутреннее кольцо. Наведение поднимает плашку на пиксель.
+
+   Кольцо оставлено плотным (0.34) не для красоты: граница
+   интерактивного элемента обязана читаться, норма для нетекстовых
+   элементов 3:1, а заливка #212121 против фона #121212 даёт 1.16:1
+   и сама по себе границей быть не может. */
 .seg__btn {
   appearance: none;
-  background: transparent;
   color: var(--dim);
-  /* 0.14 давало 1.5:1 — граница интерактивного элемента обязана
-     читаться, для нетекстовых элементов норма 3:1 */
-  border: 1px solid rgba(255, 255, 255, 0.34);
-  border-radius: 0;
+  border: 0;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.34);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0) 62%),
+    var(--surface);
   min-height: 44px;
-  padding: 0 16px;
+  padding: 0 20px;
   font: inherit;
   font-size: 14px;
-  font-variation-settings: 'wght' 500;
+  font-variation-settings: 'wght' 550;
   cursor: pointer;
   touch-action: manipulation;
-  transition: color var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+  transition:
+    color var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease);
 }
-.seg__btn:hover { color: var(--white); border-color: rgba(255, 255, 255, 0.62); }
+.seg__btn:hover {
+  color: var(--white);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.62);
+  transform: translateY(-1px);
+}
+.seg__btn:active { transform: translateY(0); }
 .seg__btn[aria-checked='true'] {
-  color: var(--ink);
-  background: var(--green);
-  border-color: var(--green);
+  color: var(--on-green-dim);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0) 62%),
+    var(--green);
+  box-shadow: inset 0 0 0 1px var(--green);
   font-variation-settings: 'wght' 700;
 }
+.seg__btn[aria-checked='true']:hover { box-shadow: inset 0 0 0 1px var(--green); }
 .seg__btn[aria-disabled='true'] { opacity: 0.35; cursor: not-allowed; }
 
 /* ═══════════════════════════════════════════════════════ СЕРЕДИНА СТРАНИЦЫ
@@ -880,14 +935,33 @@
    и выключен влево, вопросы снова крупные, но другого характера —
    центрованная колонка без единой линии.                                  */
 
-/* ── КАРТОЧКИ ТАРИФА: СЕТКА ДВА НА ДВА НА ВСЕХ РАЗМЕРАХ ──────────────────
-   Двадцатая итерация. Столбика больше нет: две сверху, две снизу,
-   и на 390 тоже. Карточка несёт РОВНО ТРИ вещи — название, цену
-   и волну; выбор аккаунта и кнопка уехали вниз блока и работают
-   для выбранной карточки.
+/* ── КАРТОЧКИ ТАРИФА: СЕТКА ДВА НА ДВА, И КАЖДАЯ — ПРЕДМЕТ ──────────────
+   Двадцатая итерация поставила сетку 2×2 на всех размерах и оставила
+   в карточке ровно три вещи: название, цену и волну.
 
-   УГЛЫ СКРУГЛЕНЫ, и это снятие прежнего закона «радиус везде 0»:
-   требование арт-директора, отдельной строкой в постановке.           */
+   ДВАДЦАТЬ ПЕРВАЯ ДАЛА ИМ ОБЪЁМ — БЕЗ WEBGL. Three.js из проекта
+   выброшен и возврату не подлежит, а объём собирается из четырёх вещей,
+   и все четыре считает компоновщик:
+
+     • НАКЛОН С ПЕРСПЕКТИВОЙ. `perspective()` стоит ПЕРВОЙ в списке
+       трансформов самой карточки, поэтому дальняя кромка честно уходит
+       и сужается. Это поворот, а не сдвиг плоскости.
+     • СОДЕРЖИМОЕ НА СВОЕЙ ГЛУБИНЕ. Волна лежит в плоскости карточки,
+       название с ценой подняты на 26 px к зрителю. Параллакс между ними
+       не считается вовсе — за него отвечает та же матрица.
+     • БЛИК НА КРОМКЕ ЗА КУРСОРОМ. Пятно света лежит под кольцом кромки
+       и ездит трансформом; кольцо вырезано маской. Ни градиента в кадре,
+       ни перекраски.
+     • ДЫХАНИЕ на отдельном элементе. И наклон, и дыхание живут
+       в `transform`, и на одном элементе второе затёрло бы первое (Р-55).
+
+   ⚠️ `overflow` У КАРТОЧКИ БОЛЬШЕ НЕТ, И ЭТО ОБЯЗАТЕЛЬНО. Любое значение
+   кроме `visible` делает `transform-style: preserve-3d` недействительным,
+   слои схлопываются в плоскость, и глубины не остаётся вовсе. Волну
+   обрезает свой слой `.card__clip`.
+
+   УГЛЫ СКРУГЛЕНЫ — снятие прежнего закона «радиус везде 0» отдельным
+   требованием арт-директора.                                            */
 .cards {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -895,85 +969,210 @@
   margin-top: clamp(24px, 3.4vw, 42px);
 }
 
+/* Подъём выбранной карточки идёт ПЛАВНО, а для этого величина обязана
+   быть типизированной: нерегистрированные переменные переключаются
+   скачком. Там, где @property не поддержан, подъём просто мгновенный. */
+@property --liftz {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
 .card {
   position: relative;
+  display: grid;
+  grid-template: 1fr / 1fr;
   /* Примерно треть высоты экрана на десктопе — по постановке. Нижний
      предел держит мобильную: на 390 карточка выходит 185×170. */
   min-height: clamp(150px, 33svh, 360px);
-  display: block;
   width: 100%;
-  overflow: hidden;
-  border: 1px solid var(--hair);
-  border-radius: clamp(16px, 1.6vw, 26px);
-  background: var(--surface);
+  --card-r: clamp(16px, 1.6vw, 26px);
+  --card-bg: var(--surface);
+  --edge: rgba(255, 255, 255, 0.12);
+  --edge-w: 1px;
+  --liftz: 0px;
+  border: 0;
+  border-radius: var(--card-r);
+  /* ⚠️ ПОЛЕ КАРТОЧКИ КРАСИТ ДЫШАЩИЙ СЛОЙ, А НЕ САМА КАРТОЧКА. Дыхание
+     поворачивает `.card__inner`, и всё, что нарисовано НЕ на нём,
+     остаётся стоять: кромка уезжала от поля на пять пикселей в углах.
+     Красит поле тот же элемент, что и везёт кромку. */
+  background: transparent;
   padding: 0;
   font: inherit;
   text-align: left;
   cursor: pointer;
   touch-action: manipulation;
+  transform-style: preserve-3d;
+  transform: perspective(900px) translateZ(var(--liftz))
+    rotateX(calc(var(--rx, 0) * 1deg)) rotateY(calc(var(--ry, 0) * 1deg));
   transition:
-    border-color var(--t-fast) var(--ease),
+    --liftz 260ms var(--ease),
     background-color var(--t-fast) var(--ease);
 }
-.card:hover { border-color: rgba(255, 255, 255, 0.28); }
-/* Выбор помечен не одним цветом: кромка зелёная, поле чуть светлее. */
+
+/* Выбор ВИДНО: карточка приподнята над остальными, кольцо зелёное
+   и вдвое толще. Прежний отклик — кромка в пиксель и фон светлее
+   на пять процентов — на телефоне не читался вовсе, а подсветка
+   касания у нас снята глобально (Р-53). */
 .card[aria-checked='true'] {
-  border-color: var(--green);
-  background: #262626;
+  --card-bg: #262626;
+  --edge: var(--green);
+  --edge-w: 2px;
+  --liftz: 18px;
+}
+.card:hover { --edge: rgba(255, 255, 255, 0.3); }
+.card[aria-checked='true']:hover { --edge: var(--green); }
+/* Нажатие вдавливает карточку в тот же кадр: это единственный отклик,
+   который человек получает раньше, чем успевает убрать палец. */
+.card:active { --liftz: -7px; transition: none; }
+
+.card__inner {
+  grid-area: 1 / 1;
+  position: relative;
+  display: grid;
+  grid-template: 1fr / 1fr;
+  border-radius: inherit;
+  transform-style: preserve-3d;
 }
 
-/* Слой волны лежит во весь бокс карточки и НИЧЕГО не перехватывает:
-   указатель нужен самой карточке. */
+/* ⚠️ САМА КАРТОЧКА В ПОКОЕ НЕ ДВИЖЕТСЯ, И ЭТО ЗАМЕР, А НЕ ЛЕНЬ.
+   Постановка требует тихого собственного движения, и первым заходом
+   дышала вся карточка — сдвиг на три пикселя и полградуса поворота
+   на `.card__inner`. Цена оказалась запретительной: в среде без
+   видеоускорителя нет ни промотирования слоёв, ни кеша растра, поэтому
+   сдвиг карточки перерисовывает её содержимое целиком. Четыре карточки
+   на 1920 — это 1.1 Мпикс в кадр, 66.6 мс медианы против 16.7 и 95 %
+   кадров дороже бюджета. Зависимость ровно линейная: одна карточка —
+   один кадр, две — два, четыре — четыре.
+
+   Поэтому движение переехало ВНУТРЬ карточки: медленно живёт сама
+   звуковая дорожка (собственный ход волны, прежде работавший только
+   на касаниях), а карточки обновляются по очереди — в кадре шевелится
+   ровно одна. Разбор и числа — в Р-62.
+
+   На мобильной геометрическое дыхание стоило 1.1 % кадров, то есть
+   было почти бесплатным: там карточки в десять раз меньше по площади.
+   Разводить поведение по ширине экрана мы не стали — это два разных
+   продукта вместо одного.                                              */
+
+/* Слой волны лежит во весь бокс и НИЧЕГО не перехватывает: указатель
+   нужен самой карточке. Габариты слоя задаёт он сам — модуль волны
+   меряет `clientWidth`, и без абсолютного позиционирования строчный
+   span отдаёт ноль, а канвас схлопывается в один пиксель. */
 .wave {
   position: absolute;
   inset: 0;
+  display: block;
   pointer-events: none;
 }
 .wave > canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
 
-/* Текст стоит ПОВЕРХ волны, и чтобы он читался без усилия, под ним
-   лежит короткий скат в цвет карточки. Ни тени, ни блюра: они стоят
-   дороже всей отрисовки стопки. */
-.card__face {
+/* Волна лежит В ПЛОСКОСТИ карточки и обрезается скруглением: обрезать
+   её самой карточкой больше нельзя — `overflow` убил бы глубину. */
+.card__clip {
+  grid-area: 1 / 1;
   position: relative;
-  z-index: 1;
+  overflow: hidden;
+  border-radius: inherit;
+}
+/* Скат под текст — тоже в плоскости карточки, а не на поднятом слое:
+   тогда между текстом и скатом видно ту самую глубину. Ни тени,
+   ни блюра: они стоят дороже всей отрисовки стопки. */
+.card__clip::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, var(--card-bg) 10%, rgba(33, 33, 33, 0) 52%);
+}
+
+/* КОЛЬЦО КРОМКИ И БЛИК. Кольцо не вырезано маской, а СЛОЖЕНО из двух
+   заливок: слой красится цветом кромки целиком, а его `::after`,
+   поджатый на толщину кольца, закрывает середину цветом поля. Видимой
+   остаётся ровно рамка.
+
+   ⚠️ МАСКУ ПРИШЛОСЬ УБРАТЬ, И ЭТО ЗАМЕР. `mask-composite` внутри
+   трёхмерного контекста заставляет перерисовывать карточку целиком
+   на любое изменение внутри неё: собственный ход волны стоил 18.5 %
+   кадров дороже 16.9 мс, а стоило снять кольцо — 0.0 %. Та же карточка
+   плоской — тоже 0.0 %. То есть дорога была не глубина и не волна,
+   а маска в трёхмерном контексте.
+
+   СЛОЙ ЛЕЖИТ ПОД ВОЛНОЙ, а не над ней: середину он закрывает
+   непрозрачно, и лежи он сверху — закрыл бы и дорожку. Порядок
+   в разметке и есть порядок отрисовки. */
+.card__edge {
+  grid-area: 1 / 1;
+  position: relative;
+  overflow: hidden;
+  border-radius: inherit;
+  background: var(--edge);
+  pointer-events: none;
+  transition: background-color var(--t-fast) var(--ease);
+}
+.card__edge::after {
+  content: '';
+  position: absolute;
+  inset: var(--edge-w);
+  border-radius: calc(var(--card-r) - var(--edge-w));
+  background: var(--card-bg);
+  transition: background-color var(--t-fast) var(--ease);
+}
+/* Блик. Нарисован один раз, в кадре меняется только его место
+   и сила — оба свойства компоновщик считает сам. Лежит ПОД
+   закрывающей серединой, поэтому виден только на кольце. */
+.card__gleam {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 340px;
+  height: 340px;
+  border-radius: 50%;
+  background: radial-gradient(circle closest-side, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0));
+  opacity: var(--gl, 0);
+  transform: translate3d(calc(var(--gx, 0) * 1px - 50%), calc(var(--gy, 0) * 1px - 50%), 0);
+}
+
+/* Название и цена ПОДНЯТЫ над плоскостью: при наклоне они смещаются
+   относительно волны сами. */
+.card__face {
+  grid-area: 1 / 1;
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  height: 100%;
   justify-content: flex-end;
-  padding: clamp(12px, 1.5vw, 22px);
-  background: linear-gradient(to top, rgba(33, 33, 33, 0.94) 12%, rgba(33, 33, 33, 0) 46%);
+  padding: clamp(14px, 1.6vw, 24px);
+  transform: translateZ(26px);
 }
 .card__name {
-  /* Кегль подобран ЗАМЕРОМ по самому длинному названию — «Индивидуальный»,
-     14 знаков. Сетка 2×2 держится и на 320, где карточке достаётся
-     135 px и 111 px под текст: там нижняя граница и связывает.
-     Замер ширины строки (`scrollWidth` против `clientWidth`) по пяти
-     ширинам лежит в отчёте. «Сертификат в подарок» в эту меру
-     не встаёт никаким кеглем — он сокращён до «Сертификат». */
-  font-size: clamp(0.78125rem, 3.5vw, 1.375rem);
-  line-height: 1.12;
-  letter-spacing: -0.025em;
+  /* Кегль поднят вдвое против прошлой итерации, и позволило это
+     сокращение «Индивидуальный» → «На одного»: 14 знаков одним словом
+     держали нижнюю границу на 12.5 px. Ряд названий стал ещё и ровнее —
+     на одного, на двоих, на троих. Полное имя осталось под сеткой
+     и в дереве доступности. */
+  font-size: clamp(1.0625rem, 4.6vw, 1.75rem);
+  line-height: 1.1;
+  letter-spacing: -0.03em;
   font-variation-settings: 'wght' 680;
   color: var(--white);
   white-space: nowrap;
 }
-.card__price { font-size: 11px; line-height: 1.4; color: var(--dim); }
+.card__price { font-size: 12px; line-height: 1.4; color: var(--dim); }
 .card__price b {
   display: block;
-  font-size: clamp(1.125rem, 4vw, 1.875rem);
+  font-size: clamp(1.375rem, 5vw, 2.25rem);
   line-height: 1.1;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
   color: var(--white);
   font-variation-settings: 'wght' 700;
 }
-.card__per { font-size: 11px; }
-.card__soon { font-style: normal; font-size: 12px; color: var(--dim-2); }
+.card__per { font-size: 12px; }
+.card__soon { font-style: normal; font-size: 13px; color: var(--dim-2); }
 
 @media (min-width: 560px) {
-  .card__price, .card__per { font-size: 12px; }
-  .card__name { font-size: clamp(1.0625rem, 1.9vw, 1.5rem); }
+  .card__price, .card__per { font-size: 13px; }
+  .card__name { font-size: clamp(1.25rem, 2.2vw, 1.75rem); }
 }
 
 /* ── ОБЛАСТЬ ПОД СЕТКОЙ: РАБОТАЕТ ДЛЯ ВЫБРАННОЙ КАРТОЧКИ ────────────────
@@ -1013,7 +1212,6 @@
   line-height: 1.55;
   color: var(--dim);
 }
-.order__unit { margin: 0; max-width: 52ch; font-size: 12px; line-height: 1.5; color: var(--dim-2); }
 .order .btn { min-width: min(320px, 100%); }
 
 .plans__note {
@@ -1139,19 +1337,28 @@
   padding: 0;
 }
 
-/* Шаг: слева крупный номер, справа заголовок и описание. Гутер слева
-   отдан петлям — там же стоит точка маршрута. */
+/* ШАГ СТОИТ РЕЛЬЕФОМ, А НЕ КОЛОНКОЙ (двадцать первая итерация).
+   У каждого шага своё смещение вправо (`--sx`), свой отбой сверху
+   (`--sg`) и свой кегль (`--ss`); ни один ряд не идёт по возрастанию.
+   Числа приходят из таблиц в Route.tsx — там же, где стоят точки
+   маршрута, потому что смещение шага и есть положение его точки.
+
+   Ровная колонка читалась как список. Разброс оправдывает линия:
+   она проходит через все пять точек и связывает их. */
 .rstep {
   --n: 1;
+  --ss: 1;
   /* НЕ `relative`: точка маршрута позиционируется от `.route`, потому что
      её координаты приходят от генератора пути в системе всего блока.
      Стоило сделать шаг контейнером — и точки уехали на его отступ. */
   display: grid;
   grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-  column-gap: clamp(16px, 2.2vw, 32px);
+  column-gap: clamp(14px, 1.8vw, 26px);
   align-items: start;
-  padding: clamp(20px, 3.2vw, 38px) 0;
-  margin-left: var(--gutter, 84px);
+  padding: clamp(16px, 2.4vw, 28px) 0;
+  margin-left: var(--sx, 84px);
+  margin-top: var(--sg, 0px);
+  max-width: var(--sw, 100%);
 }
 /* Точка НА ЛИНИИ. Координаты приходят от генератора пути, поэтому она
    стоит ровно на маршруте, а не рядом с ним. */
@@ -1177,7 +1384,7 @@
 }
 /* Номер появляется, когда подсветка дошла до точки, — не раньше. */
 .rstep__num {
-  font-size: clamp(1.75rem, 5.6vw, 3.25rem);
+  font-size: calc(var(--ss) * clamp(1.5rem, 4.4vw, 2.75rem));
   line-height: 0.9;
   letter-spacing: -0.03em;
   font-variation-settings: 'wght' 700;
@@ -1192,23 +1399,22 @@
 .rstep__t,
 .rstep__d { opacity: calc(0.34 + var(--n) * 0.66); }
 .rstep__t {
-  font-size: clamp(1.0625rem, 2.2vw, 1.5rem);
+  font-size: calc(var(--ss) * clamp(1.0625rem, 2.2vw, 1.5rem));
   line-height: 1.16;
   letter-spacing: -0.02em;
   font-variation-settings: 'wght' 620;
   color: var(--white);
 }
+/* Описание идёт за кеглем шага, но ВДВОЕ ТИШЕ: при полном множителе
+   мелкий шаг уходил в 11 px, а это уже не корпус. */
 .rstep__d {
-  max-width: 44ch;
-  font-size: clamp(0.875rem, 0.84rem + 0.15vw, 0.9375rem);
+  max-width: 42ch;
+  font-size: calc((0.7 + var(--ss) * 0.3) * clamp(0.875rem, 0.84rem + 0.15vw, 0.9375rem));
   line-height: 1.6;
   color: var(--dim);
 }
-@media (min-width: 900px) {
-  .rstep { grid-template-columns: auto minmax(0, 26ch) minmax(0, 1fr); align-items: baseline; }
-  .rstep__body { display: contents; }
-  .rstep__d { max-width: 42ch; }
-}
+/* ⚠️ ТРЁХКОЛОННОЙ РАСКЛАДКИ НА ШИРОКОМ БОЛЬШЕ НЕТ. Она выстраивала
+   заголовки в ровную колонку — ровно то, что рельеф и отменяет. */
 .route__fork {
   margin-top: clamp(24px, 3.4vw, 40px);
   max-width: 68ch;
@@ -1240,7 +1446,9 @@
    про волну и про подсветку знают их модули, а не CSS. */
 @media (prefers-reduced-motion: reduce) {
   .mq__track { animation: none; }
-  .card { transition: none; }
+  /* Дыхание и наклон сняты: анимация не заводится вовсе (правило выше
+     стоит под no-preference), а модуль наклона не подписывается. */
+  .card, .card__edge, .seg__btn { transition: none; }
 }
 
 
@@ -1273,12 +1481,16 @@
    бы мерить и записывать, а тут раскладка не прыгает ни на пиксель
    и без единого чтения геометрии.
 
-   ⚠️ ПЕРЕКРЁСТНОГО ЗАТУХАНИЯ БОЛЬШЕ НЕТ. На медленной прокрутке вопрос
-   и ответ были видны ОДНОВРЕМЕННО, каждый вполсилы, и налезали друг
-   на друга. Теперь фазы идут подряд: вопрос гаснет ДО НУЛЯ, короткая
-   пустая пауза, и только потом проявляется ответ. Обе прозрачности
-   считает JS и отдаёт двумя переменными — кусочная функция из трёх
-   участков в `calc` читалась бы как шифр, а стоит ровно столько же.
+   ⚠️ НИ ПЕРЕКРЁСТНОГО ЗАТУХАНИЯ, НИ ПУСТОЙ ПАУЗЫ. Первое показывало
+   обе половины разом, вполсилы и друг на друге; вторая оставляла кадр,
+   где не видно ни вопроса, ни ответа. Требование теперь с обеих сторон
+   сразу, и выполнить его может только МГНОВЕННАЯ подмена: прозрачность
+   переключается ступенькой в одной точке, а движение живёт вокруг неё —
+   разгон вопроса вверх и доводка ответа снизу. Разбор, почему никакой
+   непрерывный переход тут невозможен, — в Faq.tsx и в Р-63.
+
+   ⚠️ ПЕРЕХОДОВ НА `opacity` ЗДЕСЬ БЫТЬ НЕ ДОЛЖНО: любой размазал бы
+   ступеньку на десятки миллисекунд, и в них было бы видно обе.
 
    ПОДМЕНА ВКЛЮЧАЕТСЯ АТРИБУТОМ `data-swap`, и ставит его скрипт — только
    когда подписался на прокрутку. Нет скрипта, «уменьшить движение» —
@@ -1286,8 +1498,15 @@
 /* Воздух между вопросами — это ещё и ХОД: вес считается от расстояния
    до линии отсчёта, и чем теснее вопросы, тем короче каждая фаза
    в пикселях прокрутки. */
-.qa { display: grid; gap: clamp(44px, 6vw, 88px); }
-.qa__item { --oq: 1; --oa: 1; }
+.qa {
+  display: grid;
+  gap: clamp(56px, 7vw, 120px);
+  /* Ход разгона и доводки — ОДИН НА ОБЕ ПОЛОВИНЫ. В собственных em
+     он был бы разным: кегль вопроса вчетверо крупнее, и одно движение
+     распалось бы на длинный рывок и короткий подъезд. */
+  --qa-travel: clamp(22px, 3.4vw, 52px);
+}
+.qa__item { --oq: 1; --oa: 1; --qy: 0; --ay: 0; }
 .qa__swap { display: grid; row-gap: 14px; }
 
 .qa__q {
@@ -1319,10 +1538,15 @@
 .qa[data-swap] .qa__swap { row-gap: 0; align-items: center; }
 .qa[data-swap] .qa__q,
 .qa[data-swap] .qa__a { grid-area: 1 / 1; }
-.qa[data-swap] .qa__q { opacity: var(--oq); }
+/* Вопрос: разгон вверх. Ответ: доводка снизу. Один вектор, одна
+   величина хода, ни одного перехода в CSS — всё ведёт прокрутка. */
+.qa[data-swap] .qa__q {
+  opacity: var(--oq);
+  transform: translate3d(0, calc(var(--qy) * var(--qa-travel)), 0);
+}
 .qa[data-swap] .qa__a {
   opacity: var(--oa);
-  transform: translate3d(0, calc((1 - var(--oa)) * 8px), 0);
+  transform: translate3d(0, calc(var(--ay) * var(--qa-travel)), 0);
 }
 
 

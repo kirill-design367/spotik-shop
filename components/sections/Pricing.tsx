@@ -1,9 +1,10 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import SectionHead from './SectionHead';
 import CardWave from '@/components/wave/CardWave';
-import { PERIODS, PLANS, formatPrice, perMonth, savings, type PeriodKey } from '@/lib/plans';
+import { attachTilt } from '@/lib/tilt';
+import { PERIODS, PLANS, formatPrice, savings, type PeriodKey } from '@/lib/plans';
 
 /**
  * БЛОК ТАРИФОВ — ЧЕТЫРЕ КАРТОЧКИ СЕТКОЙ ДВА НА ДВА.
@@ -17,6 +18,32 @@ import { PERIODS, PLANS, formatPrice, perMonth, savings, type PeriodKey } from '
  *     на Canvas 2D — та самая, что придумывали для хиро (Р-59);
  *   • углы скруглены: арт-директор снял правило «радиус везде 0»
  *     для карточек отдельным требованием.
+ *
+ * ── ДВАДЦАТЬ ПЕРВАЯ ИТЕРАЦИЯ: КАРТОЧКА СТАЛА ПРЕДМЕТОМ ────────────────────
+ * Карточка получила объём без единого байта WebGL: перспективный наклон
+ * за указателем, содержимое на своей глубине и блик на кромке за
+ * курсором. Механика целиком в `lib/tilt.ts` (Р-62), разметка здесь
+ * только раскладывает слои:
+ *
+ *     .card        — наклон, перспектива, подъём выбранной
+ *       .card__inner — слой глубины
+ *         .card__clip — волна в плоскости карточки, обрезана скруглением
+ *         .card__edge — кольцо кромки и бегущий по нему блик
+ *         .card__face — название и цена, подняты над плоскостью
+ *
+ * ТИХОЕ ДВИЖЕНИЕ В ПОКОЕ ЖИВЁТ ВНУТРИ КАРТОЧКИ, а не в ней самой:
+ * медленно едет звуковая дорожка. Геометрическое дыхание всей карточки
+ * было сделано первым заходом и снято замером — в среде без
+ * видеоускорителя оно стоило 95 % кадров дороже бюджета на 1920.
+ * См. Р-62.
+ *
+ * ВЫБОР ТЕПЕРЬ ВИДНО. На стенде нажатие работало и раньше — `aria-checked`
+ * переезжал, область под сеткой обновлялась, — но откликом на него была
+ * кромка в один пиксель и фон светлее на пять процентов, а подсветка
+ * касания у нас снята глобально (Р-53). На телефоне это читается как
+ * «нажатие не работает». Теперь выбранная карточка ПРИПОДНЯТА над
+ * остальными, кромка зелёная в два пикселя, а нажатие вдавливает
+ * карточку в тот же кадр.
  *
  * ── ВЫБОР КАРТОЧКИ ВЕДЁТ ОБЛАСТЬ ПОД СЕТКОЙ ───────────────────────────────
  * Карточки — настоящий radiogroup со стрелками на клавиатуре
@@ -35,6 +62,14 @@ export default function Pricing() {
   const [account, setAccount] = useState<Record<string, 'new' | 'renew'>>({});
   const statusId = useId();
   const noteId = useId();
+  const cardsRef = useRef<HTMLDivElement>(null);
+
+  /* Наклон, блик и дыхание. React в движении не участвует вовсе:
+     ни одного перерендера на указатель. */
+  useEffect(() => {
+    const root = cardsRef.current;
+    return root ? attachTilt(root) : undefined;
+  }, []);
 
   const plan = PLANS.find((p) => p.id === planId) ?? PLANS[0];
   const total = plan.prices[period];
@@ -117,6 +152,7 @@ export default function Pricing() {
         </p>
 
         <div
+          ref={cardsRef}
           className="cards rv"
           role="radiogroup"
           aria-label="Тариф"
@@ -146,23 +182,34 @@ export default function Pricing() {
                 data-wave
                 onClick={() => setPlanId(p.id)}
               >
-                <CardWave seed={p.people * 7 + p.id.length * 31} className="card__wave" />
-                <span className="card__face">
-                  <span className="card__name">{p.short ?? p.name}</span>
-                  <span className="card__price tnum">
-                    {p.pending ? (
-                      <em className="card__soon">Цена уточняется</em>
-                    ) : t ? (
-                      <>
-                        <b>{formatPrice(t)} ₽</b>
-                        <span className="card__per"> за {period} мес</span>
-                      </>
-                    ) : (
-                      <>
-                        <b>{formatPrice(m!)} ₽</b>
-                        <span className="card__per"> за месяц</span>
-                      </>
-                    )}
+                <span className="card__inner">
+                  {/* Кольцо кромки и блик ПОД волной: середину слой
+                      закрывает непрозрачно, и лежи он сверху — закрыл бы
+                      и дорожку. Маски здесь нет: в трёхмерном контексте
+                      она стоила перерисовки всей карточки (Р-62). */}
+                  <span className="card__edge" aria-hidden="true">
+                    <span className="card__gleam" />
+                  </span>
+                  <span className="card__clip">
+                    <CardWave seed={p.people * 7 + p.id.length * 31} className="card__wave" />
+                  </span>
+                  <span className="card__face">
+                    <span className="card__name">{p.short ?? p.name}</span>
+                    <span className="card__price tnum">
+                      {p.pending ? (
+                        <em className="card__soon">Цена уточняется</em>
+                      ) : t ? (
+                        <>
+                          <b>{formatPrice(t)} ₽</b>
+                          <span className="card__per"> за {period} мес</span>
+                        </>
+                      ) : (
+                        <>
+                          <b>{formatPrice(m!)} ₽</b>
+                          <span className="card__per"> за месяц</span>
+                        </>
+                      )}
+                    </span>
                   </span>
                 </span>
               </button>
@@ -227,16 +274,9 @@ export default function Pricing() {
                 : 'Оформить'}
           </button>
 
-          {total ? (
-            <p className="order__unit tnum">
-              {formatPrice(perMonth(total, period))} ₽ в месяц
-              {plan.people > 1
-                ? ` · ${formatPrice(Math.round(total / period / plan.people))} ₽ на человека`
-                : ''}
-            </p>
-          ) : (
-            <p className="order__unit">{plan.note}</p>
-          )}
+          {/* Мелкой строки под кнопкой больше нет: снята арт-директором
+              в двадцать первой итерации. Цена за месяц и цена на человека
+              жили только здесь, поэтому ушли вместе с ней. */}
         </div>
 
         <p id={noteId} className="plans__note rv">

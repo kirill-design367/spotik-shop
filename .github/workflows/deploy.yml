@@ -47,10 +47,11 @@ jobs:
         run: |
           test -f out/index.html
           test -f out/.nojekyll
-          test -f out/fonts/golos-cyrillic.woff2
+          test -f out/fonts/inter-cyrillic.woff2
+          test -f out/fonts/index.html || test -f out/fonts.html
           test -d out/_next/static
           grep -q '/spotik-shop/_next/static' out/index.html
-          grep -q "/spotik-shop/fonts/golos-cyrillic.woff2" out/index.html
+          grep -q "/spotik-shop/fonts/inter-cyrillic.woff2" out/index.html
           echo "выдача собрана, basePath проставлен"
 
       # Открывает собранную выдачу по боевому пути /spotik-shop/ в настоящем

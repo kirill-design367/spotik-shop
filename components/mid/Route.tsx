@@ -65,8 +65,27 @@ export type Step = { t: string; d: string };
  * целиком, подписки не заводится.
  */
 
-/** Доли ширины, на которых стоят точки маршрута. Неровные намеренно. */
-const ANCHOR_X = [0.125, 0.065, 0.155, 0.055, 0.115];
+/**
+ * РЕЛЬЕФ ШАГОВ (двадцать первая итерация).
+ *
+ * Шаги больше не стоят колонкой. У каждого своё смещение по горизонтали,
+ * свой отбой сверху и свой кегль, и ни один ряд не идёт по возрастанию
+ * или по убыванию — только вразнобой. Ровная колонка читалась как
+ * список; рельеф читается как рельеф, а оправдывает разброс маршрут:
+ * линия проходит через все пять точек и связывает их.
+ *
+ * Все три таблицы — ПЯТЬ ЧИСЕЛ НА ПЯТЬ ШАГОВ, и разбирать их нужно
+ * вместе: смещение задаёт, где стоит точка маршрута, отбой — сколько
+ * воздуха до предыдущего шага, кегль — вес шага в кадре.
+ */
+/** Доли ширины, на которых стоят точки маршрута — они же отступ шага. */
+const STEP_X = [0.055, 0.3, 0.1, 0.44, 0.17];
+/** На узком экране разброс МЕЛЬЧЕ, но остаётся: ровная колонка там тоже не годится. */
+const STEP_X_NARROW = 0.52;
+/** Дополнительный отбой сверху, в долях ширины блока (первому не нужен). */
+const STEP_GAP = [0, 0.075, 0.125, 0.06, 0.105];
+/** Множитель кегля. Крупных два — третий и первый, остальные мельче. */
+const STEP_SIZE = [1.12, 0.78, 1.32, 0.74, 0.96];
 /** Доли ширины, куда уходит ДАЛЬНЯЯ точка петли. Тоже неровные. */
 const LOOP_X = [0.74, 0.34, 0.86, 0.46];
 /**
@@ -122,12 +141,31 @@ function at(p1: Pt, c1: Pt, c2: Pt, p2: Pt, t: number): Pt {
   };
 }
 
-type Built = { d: string; frac: number[] };
+type Built = { d: string; frac: number[]; yTab: number[]; fTab: number[] };
 
-/** Собирает путь через заданные точки и считает, на какой доле длины они стоят. */
-function buildPath(w: number, h: number, ys: number[], narrow: boolean): Built {
+/**
+ * Собирает путь через заданные точки и считает, на какой доле длины
+ * они стоят.
+ *
+ * ⚠️ ПЕТЛЯ ГУЛЯЕТ ТОЛЬКО В ПОЛОСЕ МЕЖДУ ШАГАМИ, и это не украшение.
+ * Пока шаги стояли колонкой у левого края, вправо было уходить некуда
+ * и некому мешать. С рельефом текст занимает всю ширину, и петля,
+ * поставленная по ДОЛЯМ ПЕРЕГОНА, резала абзац поперёк — ровно как
+ * в девятнадцатой итерации резала заголовок. Поэтому дальняя точка
+ * петли ставится по ФАКТИЧЕСКИМ коробкам шагов: ниже низа предыдущего
+ * и выше верха следующего. Из самой точки линия уходит ВНИЗ вдоль
+ * левого поля шага (текст начинается правее точки на отступ),
+ * и в следующую входит так же — сверху вдоль поля.
+ */
+function buildPath(
+  w: number,
+  h: number,
+  ys: number[],
+  boxes: { top: number; bottom: number }[],
+  narrow: boolean,
+): Built {
   const k = narrow ? 0.46 : 1; // петли мельче на узком экране
-  const ax = ANCHOR_X.map((f) => w * (narrow ? f * 0.72 : f));
+  const ax = STEP_X.map((f) => w * (narrow ? f * STEP_X_NARROW : f));
   const anchors: Pt[] = ys.map((y, i) => ({ x: ax[i], y }));
 
   const pts: Pt[] = [];
@@ -135,7 +173,7 @@ function buildPath(w: number, h: number, ys: number[], narrow: boolean): Built {
 
   // заход сверху и выход вниз: линия начинается выше первой точки
   const lead = Math.max(28, (ys[1] - ys[0]) * 0.55);
-  pts.push({ x: anchors[0].x + w * 0.09 * k, y: Math.max(2, ys[0] - lead) });
+  pts.push({ x: anchors[0].x + w * 0.045 * k, y: Math.max(2, ys[0] - lead) });
 
   for (let i = 0; i < anchors.length; i += 1) {
     if (i > 0) {
@@ -145,20 +183,41 @@ function buildPath(w: number, h: number, ys: number[], narrow: boolean): Built {
       const ts = LOOP_T[g];
       const near = w * NEAR_X[g] * k;
       const far = a.x + (w * LOOP_X[g] - a.x) * k;
-      const xs = [a.x + near, far, b.x + near * 0.8];
-      for (let j = 0; j < 3; j += 1) {
-        pts.push({ x: xs[j], y: a.y + (b.y - a.y) * ts[j] });
+
+      /* Полоса, свободная от текста: от низа предыдущей коробки
+         до верха следующей. Если шаги сошлись вплотную (узкий экран,
+         длинный перенос), полоса вырождается — тогда берём середину
+         перегона, как раньше. */
+      let b0 = boxes[i - 1].bottom + 8;
+      let b1 = boxes[i].top - 8;
+      if (b1 - b0 < 24) {
+        b0 = a.y + (b.y - a.y) * 0.3;
+        b1 = a.y + (b.y - a.y) * 0.7;
       }
+      const mid = b0 + (b1 - b0) * ts[1];
+
+      /* Первая точка — почти под своей: линия обязана выйти из шага
+         ВНИЗ, а не вбок. Последняя — над следующей, по той же причине. */
+      pts.push({ x: a.x + near * 0.14, y: Math.min(b0, mid) });
+      pts.push({ x: far, y: mid });
+      pts.push({ x: b.x - near * 0.1, y: Math.max(b1, mid) });
     }
     mark.push(pts.length);
     pts.push(anchors[i]);
   }
-  const tail = Math.max(28, (ys[4] - ys[3]) * 0.5);
-  pts.push({ x: anchors[4].x + w * 0.3 * k, y: Math.min(h - 2, ys[4] + tail) });
+  /* Хвост уходит ВНИЗ вдоль поля последнего шага и только потом вбок:
+     прежний вылет на 0.3 ширины резал его описание поперёк. */
+  const tail = Math.max(40, (ys[4] - ys[3]) * 0.4);
+  pts.push({
+    x: anchors[4].x + w * 0.05 * k,
+    y: Math.min(h - 2, Math.max(boxes[4].bottom + 10, ys[4] + tail)),
+  });
 
   // ── сборка пути и длин ────────────────────────────────────────────────
   let d = `M${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
   const lenAt: number[] = [0];
+  const ys2: number[] = [pts[0].y];
+  const ls2: number[] = [0];
   let len = 0;
   for (let i = 0; i < pts.length - 1; i += 1) {
     const p0 = pts[i - 1] ?? pts[i];
@@ -176,16 +235,72 @@ function buildPath(w: number, h: number, ys: number[], narrow: boolean): Built {
       const cur = at(p1, c1, c2, p2, q / 12);
       len += Math.hypot(cur.x - prev.x, cur.y - prev.y);
       prev = cur;
+      /* Таблица «высота → доля длины». Высота идёт СТРОГО ВВЕРХ:
+         петля местами поднимается, и по немонотонной таблице не искать.
+         ⚠️ Просто нарастающего максимума мало: на подъёме появлялись
+         участки с ОДИНАКОВОЙ высотой, а на них подсветка стояла,
+         пока страница ехала, — замер ловил это как ступеньки (2 кадра
+         из 34 на мобильной). Микрошаг убирает площадки и за шестьсот
+         отсчётов набирает меньше пикселя. */
+      const prevY = ys2[ys2.length - 1];
+      ys2.push(prevY === undefined ? cur.y : Math.max(prevY + 1e-3, cur.y));
+      ls2.push(len);
     }
     lenAt.push(len);
   }
 
   const frac = mark.map((i) => (len > 0 ? lenAt[i] / len : 0));
-  return { d, frac };
+  const fTab = len > 0 ? ls2.map((v) => v / len) : ls2.map(() => 0);
+  return { d, frac, yTab: ys2, fTab };
 }
 
-/** Ширина окна, за которое номер проявляется полностью. */
+/**
+ * Доля длины пути на заданной высоте внутри блока.
+ *
+ * ⚠️ ПОДСВЕТКА ИДЁТ ЗА ЛИНИЕЙ ОТСЧЁТА, А НЕ ЗА ДОЛЕЙ ПРОКРУТКИ, и это
+ * не украшение. Длина пути растёт неравномерно: там, где петля уходит
+ * далеко вправо, на тот же пиксель высоты приходится вдвое больше
+ * линии. Линейная связь «доля блока → доля длины» поэтому отставала
+ * от того места экрана, где человек читает, и пятый шаг загорался,
+ * когда блок уже уходил вверх. Теперь подсвечено ровно то, что выше
+ * линии отсчёта, и скорость линии равна скорости страницы.
+ */
+function fracAtY(b: Built, y: number): number {
+  const { yTab, fTab } = b;
+  if (!yTab.length) return 0;
+  if (y <= yTab[0]) return 0;
+  if (y >= yTab[yTab.length - 1]) return 1;
+  let lo = 0;
+  let hi = yTab.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (yTab[mid] <= y) lo = mid;
+    else hi = mid;
+  }
+  const dy = yTab[hi] - yTab[lo];
+  const t = dy > 0 ? (y - yTab[lo]) / dy : 0;
+  return fTab[lo] + (fTab[hi] - fTab[lo]) * t;
+}
+
+/**
+ * Ширина окна, за которое номер проявляется полностью.
+ *
+ * ⚠️ У ПОСЛЕДНЕГО ШАГА ОКНО УЗКОЕ, И ЭТО ОБЯЗАТЕЛЬНО. После пятой точки
+ * хвоста осталось меньше пяти процентов длины, и при общем окне номер
+ * «05» доходил только до 0.73 яркости — на конце хода он просто
+ * не успевал загореться. Окно каждого шага обрезается тем, что осталось
+ * до конца пути.
+ */
 const WIN = 0.055;
+
+/**
+ * ЛИНИЯ ОТСЧЁТА — 78 % ВЫСОТЫ ЭКРАНА, то есть заметно ниже середины.
+ * Шаг загорается, пока он ещё в нижней половине кадра, а не когда
+ * доехал до середины; к моменту, когда блок уходит вверх, маршрут
+ * пройден целиком. Прежние 0.72/0.34 задавали не линию, а два края
+ * хода, и хвост маршрута доигрывал уже за нижней границей блока.
+ */
+const REF_Y = 0.78;
 
 export default function Route({ steps }: { steps: Step[] }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -203,23 +318,33 @@ export default function Route({ steps }: { steps: Step[] }) {
 
     let items: HTMLElement[] = [];
     let frac: number[] = [];
-    let start = 0;
-    let span = 1;
+    let wins: number[] = [];
+    let built: Built | null = null;
+    let top = 0;
+    let vh = 1;
 
     const measure = () => {
       /* Геометрия снимается ЗДЕСЬ и только здесь. */
       items = Array.from(root.querySelectorAll<HTMLElement>('.rstep'));
       if (items.length !== 5) return;
 
-      /* ⚠️ ГУТЕР ВЫСТАВЛЯЕТСЯ ПЕРВЫМ, ДО ЧТЕНИЯ ЦЕНТРОВ. Он меняет
-         отступ шага, от него зависит перенос строк, а от переносов —
-         высота шага. Померив центры до гутера, мы клали точки маршрута
-         по вчерашней раскладке. Он зависит только от ширины, поэтому
-         посчитать его можно заранее. */
+      /* ⚠️ РЕЛЬЕФ ВЫСТАВЛЯЕТСЯ ПЕРВЫМ, ДО ЧТЕНИЯ ЦЕНТРОВ. Смещение,
+         отбой и кегль меняют раскладку шага: от них зависят переносы
+         строк, а от переносов — высота. Померив центры до них, мы
+         клали бы точки маршрута по вчерашней раскладке. Зависят они
+         только от ширины, поэтому считаются заранее. */
       const w0 = Math.max(1, Math.round(root.getBoundingClientRect().width));
       const narrow0 = w0 < NARROW;
-      const maxAx = Math.max(...ANCHOR_X.map((f) => w0 * (narrow0 ? f * 0.72 : f)));
-      root.style.setProperty('--gutter', `${(maxAx + Math.min(46, w0 * 0.03)).toFixed(0)}px`);
+      const pad = Math.min(46, w0 * 0.03);
+      const right = Math.max(24, w0 * 0.04);
+      for (let i = 0; i < items.length; i += 1) {
+        const ax0 = w0 * (narrow0 ? STEP_X[i] * STEP_X_NARROW : STEP_X[i]);
+        const sx = ax0 + pad;
+        items[i].style.setProperty('--sx', `${sx.toFixed(1)}px`);
+        items[i].style.setProperty('--sg', `${(STEP_GAP[i] * Math.min(w0, 1200)).toFixed(0)}px`);
+        items[i].style.setProperty('--ss', STEP_SIZE[i].toFixed(2));
+        items[i].style.setProperty('--sw', `${Math.max(180, w0 - sx - right).toFixed(0)}px`);
+      }
 
       const shift = sc.getBoundingClientRect().top - sc.scrollTop;
       const box = root.getBoundingClientRect();
@@ -235,8 +360,30 @@ export default function Route({ steps }: { steps: Step[] }) {
         return nr.top - box.top + nr.height / 2;
       });
 
-      const built = buildPath(w, h, ys, w < NARROW);
+      /* ⚠️ КОРОБКА ШАГА СЧИТАЕТСЯ ПО СОДЕРЖИМОМУ, А НЕ ПО САМОМУ ШАГУ.
+         Шаги в потоке стоят вплотную: между боксами лежит только
+         внешний отбой, и на узком экране это десять пикселей — полоса
+         вырождалась, петля уходила в запасную ветку и резала абзац.
+         По содержимому в ту же полосу попадают ещё и оба внутренних
+         поля, и её хватает везде. */
+      const boxes = items.map((el) => {
+        let top = Infinity;
+        let bottom = -Infinity;
+        for (const kid of el.querySelectorAll<HTMLElement>('.rstep__num, .rstep__body')) {
+          const r = kid.getBoundingClientRect();
+          if (r.height < 1) continue;
+          top = Math.min(top, r.top - box.top);
+          bottom = Math.max(bottom, r.bottom - box.top);
+        }
+        const r = el.getBoundingClientRect();
+        return Number.isFinite(top)
+          ? { top, bottom }
+          : { top: r.top - box.top, bottom: r.bottom - box.top };
+      });
+
+      built = buildPath(w, h, ys, boxes, w < NARROW);
       frac = built.frac;
+      wins = frac.map((f) => Math.max(0.012, Math.min(WIN, (1 - f) * 0.6)));
       svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
       dimRef.current?.setAttribute('d', built.d);
       gapsRef.current?.setAttribute('d', built.d);
@@ -244,22 +391,28 @@ export default function Route({ steps }: { steps: Step[] }) {
 
       // точки на линии — ровно там, где стоят номера
       for (let i = 0; i < items.length; i += 1) {
-        items[i].style.setProperty('--dot-x', `${(ANCHOR_X[i] * (w < NARROW ? 0.72 : 1) * w).toFixed(1)}px`);
+        items[i].style.setProperty(
+          '--dot-x',
+          `${(STEP_X[i] * (w < NARROW ? STEP_X_NARROW : 1) * w).toFixed(1)}px`,
+        );
         items[i].style.setProperty('--dot-y', `${ys[i].toFixed(1)}px`);
       }
 
-      const top = box.top - shift;
-      /* Ход подсветки: начинается, когда блок вошёл в кадр на четверть,
-         и кончается, когда его низ дошёл до трети экрана снизу. */
-      const vh = sc.clientHeight;
-      start = top - vh * 0.72;
-      span = Math.max(1, h + vh * 0.72 - vh * 0.34);
+      /* Дальше ход подсветки считается не долей блока, а линией
+         отсчёта: нужны только верх блока на странице и высота экрана. */
+      top = box.top - shift;
+      vh = sc.clientHeight;
     };
 
     const put = (p: number) => {
-      lit.setAttribute('stroke-dashoffset', (1 - p).toFixed(4));
+      /* ⚠️ ШЕСТЬ ЗНАКОВ, А НЕ ЧЕТЫРЕ. На хвосте хода демпфер подходит
+         к единице шагами около 3·10⁻⁵, и при четырёх знаках соседние
+         кадры печатались ОДИНАКОВО — сторож честно читал это как
+         «скролл ехал, подсветка стояла» (5 кадров из 35 на мобильной).
+         Стояла не подсветка, а наше округление. */
+      lit.setAttribute('stroke-dashoffset', (1 - p).toFixed(6));
       for (let i = 0; i < items.length; i += 1) {
-        const n0 = (p - frac[i]) / WIN;
+        const n0 = (p - frac[i]) / wins[i];
         const n = n0 <= 0 ? 0 : n0 >= 1 ? 1 : n0;
         items[i].style.setProperty('--n', n.toFixed(3));
       }
@@ -299,8 +452,10 @@ export default function Route({ steps }: { steps: Step[] }) {
     };
 
     const read = (y: number) => {
-      const p0 = (y - start) / span;
-      const p = p0 < 0 ? 0 : p0 > 1 ? 1 : p0;
+      if (!built) return;
+      /* Линия отсчёта в системе координат блока — и сразу доля длины
+         пути на этой высоте. */
+      const p = fracAtY(built, y + vh * REF_Y - top);
       if (!damp) {
         put(p);
         return;
@@ -322,11 +477,10 @@ export default function Route({ steps }: { steps: Step[] }) {
       offLayout();
       offScroll();
       if (raf) cancelAnimationFrame(raf);
-      root.style.removeProperty('--gutter');
       for (const el of items) {
-        el.style.removeProperty('--n');
-        el.style.removeProperty('--dot-x');
-        el.style.removeProperty('--dot-y');
+        for (const prop of ['--n', '--dot-x', '--dot-y', '--sx', '--sg', '--ss', '--sw']) {
+          el.style.removeProperty(prop);
+        }
       }
     };
   }, [steps]);

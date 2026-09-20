@@ -11,9 +11,11 @@
  * инлайном в <head>. Побочная выгода: критические @font-face не ждут
  * загрузки отдельного CSS-файла.
  *
- * Наборный шрифт в проекте один — Golos Text. Он рисовался от кириллицы:
- * шире строчная, спокойнее Ж Ф Щ, ровнее ритм в абзаце. Им набран весь
- * русский текст и весь интерфейс.
+ * ── ДВАДЦАТЬ ПЕРВАЯ ИТЕРАЦИЯ: ГАРНИТУРУ ВЫБИРАЕТ АРТ-ДИРЕКТОР ─────────────
+ * Кандидатов четыре, они собраны сабсетами все сразу и стоят рядом
+ * на служебной странице /fonts. Боевой — ровно один, и задаёт его
+ * константа SITE ниже: весь сайт набран семейством «Spotik Text»,
+ * и смена кандидата не трогает ни одной строки вёрстки.
  *
  * Шрифта для вордмарка здесь нет и не должно быть: слово SPOTIK запечено
  * в контуры (lib/wordmark.data.ts) и в критическом пути весит ноль байт.
@@ -28,34 +30,97 @@ export const RANGE = {
   ruble: 'U+20BD',
 } as const;
 
-type Face = {
-  family: string;
-  file: string;
-  range: string;
-  weight?: string;
-  stretch?: string;
-  display?: 'block' | 'swap';
-};
+/** Кандидаты в наборную гарнитуру. Диапазон веса прочитан из fvar бинарника. */
+export const CANDIDATES = [
+  {
+    slug: 'inter',
+    name: 'Inter',
+    wght: [100, 900] as const,
+    author: 'Rasmus Andersson',
+    note:
+      'Нейтральный гротеск без единого завитка. Плотный, с большой строчной, ' +
+      'уверенно держит крупные прописные. Кириллица рисованная, Ж Ф Щ спокойные. ' +
+      'Девять весов по оси.',
+  },
+  {
+    slug: 'onest',
+    name: 'Onest',
+    wght: [100, 900] as const,
+    author: 'Nikita Klimov',
+    note:
+      'Кириллица здесь первична, а не приделана: рисовался от неё. Чуть мягче ' +
+      'и человечнее Inter, ритм в абзаце ровный. Девять весов.',
+  },
+  {
+    slug: 'manrope',
+    name: 'Manrope',
+    wght: [200, 800] as const,
+    author: 'Михаил Шаранда',
+    note:
+      'Геометричный, с характером: открытые апертуры, узнаваемые «а» и «у». ' +
+      'Крупный кегль держит, но нейтральным его не назвать. Семь весов.',
+  },
+  {
+    slug: 'geologica',
+    name: 'Geologica',
+    wght: [100, 900] as const,
+    author: 'Ivan Gladkikh',
+    note:
+      'Самый плотный и самый техничный из четырёх, узкие формы, много текста ' +
+      'в строке. На мелком кегле суховат. Девять весов.',
+  },
+  {
+    slug: 'golos',
+    name: 'Golos Text',
+    wght: [400, 900] as const,
+    author: 'Paratype',
+    note:
+      'Стоял на сайте до этой итерации. Кириллица родная, но весов только ' +
+      'от обычного до чёрного: светлых начертаний у него нет вовсе.',
+  },
+] as const;
 
-function face(base: string, f: Face): string {
+export type Candidate = (typeof CANDIDATES)[number];
+
+/**
+ * БОЕВАЯ ГАРНИТУРА. Одна строка — и весь сайт меняет набор.
+ * До решения арт-директора стоит Inter: он единственный из четырёх
+ * одновременно нейтрален, плотен и держит крупные прописные.
+ */
+export const SITE = 'inter';
+
+const site = CANDIDATES.find((c) => c.slug === SITE)!;
+
+function face(base: string, family: string, file: string, range: string, wght: readonly number[]) {
   return (
-    `@font-face{font-family:'${f.family}';` +
-    `src:url('${base}/fonts/${f.file}') format('woff2-variations');` +
-    `font-weight:${f.weight ?? '400 900'};` +
-    (f.stretch ? `font-stretch:${f.stretch};` : '') +
-    `font-display:${f.display ?? 'swap'};` +
-    `unicode-range:${f.range}}`
+    `@font-face{font-family:'${family}';` +
+    `src:url('${base}/fonts/${file}') format('woff2-variations');` +
+    `font-weight:${wght[0]} ${wght[1]};` +
+    `font-display:swap;` +
+    `unicode-range:${range}}`
   );
 }
 
-/** Боевые гарнитуры страницы. */
-export function siteFontFaces(base: string): string {
+function trio(base: string, family: string, slug: string, wght: readonly number[]) {
   return [
-    face(base, { family: 'Spotik Text', file: 'golos-cyrillic.woff2', range: RANGE.cyrillic }),
-    face(base, { family: 'Spotik Text', file: 'golos-latin.woff2', range: RANGE.latin }),
-    face(base, { family: 'Spotik Text', file: 'golos-symbols.woff2', range: RANGE.ruble }),
+    face(base, family, `${slug}-cyrillic.woff2`, RANGE.cyrillic, wght),
+    face(base, family, `${slug}-latin.woff2`, RANGE.latin, wght),
+    face(base, family, `${slug}-symbols.woff2`, RANGE.ruble, wght),
   ].join('');
 }
+
+/** Боевая гарнитура страницы. В критический путь уходит только она. */
+export function siteFontFaces(base: string): string {
+  return trio(base, 'Spotik Text', site.slug, site.wght);
+}
+
+/** Витрина кандидатов: живёт только на /fonts и в боевую страницу не попадает. */
+export function specimenFontFaces(base: string): string {
+  return CANDIDATES.map((c) => trio(base, `Spec ${c.name}`, c.slug, c.wght)).join('');
+}
+
+/** Диапазон веса боевой гарнитуры — им пользуется вёрстка. */
+export const SITE_WGHT = site.wght;
 
 /**
  * Один и тот же префикс для разметки и для объявлений шрифтов.

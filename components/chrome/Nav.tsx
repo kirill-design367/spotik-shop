@@ -71,7 +71,7 @@ const LINKS: [id: string, label: string][] = [
 ];
 
 /* Полосы бургера: две по 5 px с просветом 4, общий бокс 26×14. Числа
-   живут здесь и в маске `.nav__burger-bars` — и больше нигде. */
+   живут здесь и в правилах `.nav__burger-bars` — и больше нигде. */
 const BURGER_BARS: [number, number][] = [
   [0, 5],
   [9, 14],
@@ -264,7 +264,14 @@ export default function Nav() {
         </div>
         <button ref={closeRef} type="button" className="menu__close" onClick={close}>
           <span className="sr-only">Закрыть меню</span>
-          <span className="menu__cross" aria-hidden="true" />
+          {/* ТОТ ЖЕ ЗНАК, что у бургера, пиксель в пиксель и в том же
+              состоянии: накладка появляется затуханием, и в эти
+              180 мс видны оба. Разойдись они формой — читалось бы
+              как подмена. */}
+          <span className="nav__burger-bars" aria-hidden="true">
+            <span />
+            <span />
+          </span>
         </button>
       </div>
 
@@ -332,7 +339,14 @@ export default function Nav() {
               onClick={() => setOpen(true)}
             >
               <span className="sr-only">Открыть меню</span>
-              <span className="nav__burger-bars" aria-hidden="true" />
+              {/* ДВЕ НАСТОЯЩИЕ ПОЛОСЫ, а не маска на одном боксе: маску
+                  не повернуть по отдельности, а превращение в крестик —
+                  это поворот и сдвиг ТЕХ ЖЕ полос. Внешний бокс остался
+                  прежним 26×14: по нему собирается фигура выворотки. */}
+              <span className="nav__burger-bars" aria-hidden="true">
+                <span />
+                <span />
+              </span>
             </button>
           </div>
         </div>

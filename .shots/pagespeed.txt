@@ -1,11 +1,11 @@
 
 === МОБИЛЬНЫЙ ===
-производительность  99   доступность 100   практики 100   SEO 100
+производительность  98   доступность 100   практики 100   SEO 100
   First Contentful Paint            0.9 s
   Largest Contentful Paint          2.1 s
   Total Blocking Time               80 ms
   Cumulative Layout Shift               0
-  Speed Index                       1.1 s
+  Speed Index                       1.2 s
 
 === ДЕСКТОП ===
 производительность 100   доступность 100   практики 100   SEO 100
@@ -13,4 +13,4 @@
   Largest Contentful Paint          0.5 s
   Total Blocking Time                0 ms
   Cumulative Layout Shift               0
-  Speed Index                       0.3 s
+  Speed Index                       0.4 s

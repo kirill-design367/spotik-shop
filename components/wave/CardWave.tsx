@@ -17,11 +17,18 @@ import { prefersReducedMotion } from '@/lib/motion';
  * везде в карточке, а не только там, где нет текста. React в этом
  * не участвует — ни одного перерендера на движение мыши.
  *
+ * СОБСТВЕННЫЙ ХОД ВОЛНЫ ИДЁТ НА ВСЕХ ВВОДАХ (двадцать первая итерация).
+ * Это и есть «тихое собственное движение в покое» из постановки:
+ * дышит не карточка, а дорожка внутри неё. Геометрическое дыхание
+ * самой карточки пришлось снять — замер показал, что в среде без
+ * видеоускорителя сдвиг четырёх карточек перерисовывает 1.1 Мпикс
+ * каждый кадр. Разбор и числа — в Р-62.
+ *
  * При «уменьшить движение» рисуется ровно один кадр и больше ничего:
  * ни цикла, ни слушателей.
  */
 export default function CardWave({ seed, className = '' }: { seed: number; className?: string }) {
-  const hostRef = useRef<HTMLDivElement>(null);
+  const hostRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -49,7 +56,7 @@ export default function CardWave({ seed, className = '' }: { seed: number; class
         mount.disconnect();
         const { attachWave } = await import('./engine');
         if (dead) return;
-        handle = attachWave(host, { seed, drift: coarse && !reduced });
+        handle = attachWave(host, { seed, drift: !reduced });
         if (!handle) return;
         handle.setVisible(false);
         show.observe(host);
@@ -83,5 +90,7 @@ export default function CardWave({ seed, className = '' }: { seed: number; class
     };
   }, [seed]);
 
-  return <div ref={hostRef} className={`wave ${className}`.trim()} aria-hidden="true" />;
+  /* Именно span: слой лежит внутри <button>, а блочным элементам
+     там не место — модель содержимого кнопки только строчная. */
+  return <span ref={hostRef} className={`wave ${className}`.trim()} aria-hidden="true" />;
 }

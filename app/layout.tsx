@@ -3,7 +3,7 @@ import './globals.css';
 import './components.css';
 import ScrollProvider from '@/components/ScrollProvider';
 import Nav from '@/components/chrome/Nav';
-import { siteFontFaces, BASE_PATH as BASE } from '@/lib/fontface';
+import { siteFontFaces, SITE, BASE_PATH as BASE } from '@/lib/fontface';
 
 export const metadata: Metadata = {
   title: 'Spotik Shop — доступ к Spotify Premium из России',
@@ -59,14 +59,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             сдвиг макета на подстановке шрифта. */}
         <link
           rel="preload"
-          href={`${BASE}/fonts/golos-cyrillic.woff2`}
+          href={`${BASE}/fonts/${SITE}-cyrillic.woff2`}
           as="font"
           type="font/woff2"
           crossOrigin="anonymous"
         />
         <link
           rel="preload"
-          href={`${BASE}/fonts/golos-latin.woff2`}
+          href={`${BASE}/fonts/${SITE}-latin.woff2`}
           as="font"
           type="font/woff2"
           crossOrigin="anonymous"
