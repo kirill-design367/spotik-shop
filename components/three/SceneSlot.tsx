@@ -3,49 +3,58 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SceneKind } from './types';
 import type { SlotHandle } from './stage';
+import { prefersReducedMotion } from '@/lib/motion';
 
 /**
- * Слот под 3D-объект.
+ * Слот под 3D-объект карточки.
  *
- * Three.js разрешён только в блоке тарифов и блоке сертификата — и не должен
- * попадать в первый экран ни байтом. Поэтому:
- *   • сам модуль сцены тянется динамическим import() — он живёт в отдельном
+ * Three.js не должен попадать в первый экран ни байтом, поэтому:
+ *   • модуль сцены тянется динамическим import() и живёт в отдельном
  *     асинхронном чанке, которого нет в бандле главной страницы;
- *   • все слоты страницы делят ОДИН WebGL-контекст (см. three/stage.ts):
- *     четыре независимых контекста браузер начал бы убивать по старшинству,
- *     ломая не тот блок, по которому скроллят;
- *   • импорт запускается не при монтировании, а по IntersectionObserver
- *     с большим rootMargin: сеть греется заранее, GPU занимается позже;
+ *   • все слоты страницы делят ОДИН WebGL-контекст (three/stage.ts);
  *   • габариты слота заданы в CSS через aspect-ratio, поэтому появление
  *     сцены не сдвигает макет;
  *   • под сценой лежит плоский запасной слой: нет WebGL, медленная сеть,
- *     потерянный контекст — во всех случаях в макете не дыра;
- *   • НА КАСАНИЯХ 3D НЕ ПОДНИМАЕТСЯ ВОВСЕ. Замер на мобильном профиле
- *     (CLAUDE.md, Р-34): первая отрисовка объёма стоит 3.6 с главного
- *     потока плюс 544 КБ разбора three.js, и приходится это ровно
- *     на подход к блоку тарифов — то есть на скролл. Телефон получает
- *     ту же дорожку плоско, за доли миллисекунды, и модуль объёма
- *     не качает вообще.
+ *     потерянный контекст — во всех случаях в макете не дыра.
  *
- * Анимации в этой итерации нет. Сцена рисует один кадр и останавливается,
- * рубильник цикла лежит готовым в SlotHandle.setLoop.
+ * ── ТРИ НАБЛЮДАТЕЛЯ, И У КАЖДОГО СВОЯ РАБОТА ──────────────────────────────
+ *   ДАЛЬНИЙ  (warm)    качает модуль. Контекста не создаёт, GPU не трогает.
+ *   СРЕДНИЙ  (mount)   поднимает контекст и КОМПИЛИРУЕТ программу, пока
+ *                      блок ещё за кадром. Это и есть защита от рывка:
+ *                      компиляция синхронна, и попасть она должна
+ *                      не на прокрутку, а на паузу перед ней.
+ *   БЛИЖНИЙ  (show)    говорит циклу, что слот на экране. Вне экрана
+ *                      цикл его не трогает вовсе — ни одного кадра.
+ *
+ * ── ОБЪЁМ РАБОТАЕТ И НА КАСАНИЯХ ──────────────────────────────────────────
+ * До девятнадцатой итерации на касаниях он не поднимался вовсе: замер
+ * (Р-34) показывал 3.6 с главного потока на первой отрисовке. Цена сидела
+ * в компиляции БОЛЬШОЙ PBR-программы, и она снята материалом (Р-54):
+ * света в сцене нет, объём запечён в вершинные цвета. Мобильная
+ * композиция по ТЗ главная, и без приёма она остаться не могла.
+ *
+ * ── УКАЗАТЕЛЬ ВЕДЁТ И КАРТОЧКУ, И ПРЕДМЕТ ─────────────────────────────────
+ * Слушатели вешаются на КАРТОЧКУ (ближайший предок с `data-tilt`), а не
+ * на сам слот: наклоняется вся карточка, и целиться в маленький слот
+ * было бы неверно. Карточку двигает CSS-трансформ по двум переменным —
+ * это компоновщик и ноль работы в кадре; предмет внутри доворачивается
+ * в самой сцене, поэтому объём не выглядит наклеенной картинкой.
+ * React в этом не участвует: ни одного перерендера на движение мыши.
  */
 export default function SceneSlot({
   kind,
   seed,
   label,
   className = '',
-  mountMargin = '150px 0px',
+  mountMargin = '500px 0px',
 }: {
   kind: SceneKind;
   seed: number;
   label: string;
   className?: string;
   /**
-   * Запас, на котором поднимается КОНТЕКСТ. В блоке 3 он обязан быть
-   * нулевым: контекст WebGL не должен подниматься до того, как блок
-   * вошёл в кадр. Прогрев модуля идёт отдельным наблюдателем и раньше —
-   * он контекста не создаёт.
+   * Запас, на котором поднимается КОНТЕКСТ и идёт компиляция. Он обязан
+   * быть больше нуля: компилировать надо, пока блок за кадром.
    */
   mountMargin?: string;
 }) {
@@ -56,40 +65,24 @@ export default function SceneSlot({
     const host = hostRef.current;
     if (!host) return;
 
-    /* Касания — плоский слой и никакого WebGL. Признак берётся по типу
-       указателя, а не по ширине окна: узкое окно на десктопе объём
-       потянет, а телефон в альбомной ориентации — нет.
-
-       Модуль плоского слоя тоже тянется динамически: в нём лежит огибающая
-       (1024 числа, 7 КБ), и в первом экране ей делать нечего. */
-    if (window.matchMedia('(pointer: coarse)').matches) {
-      let flat: { draw: () => void; dispose: () => void } | null = null;
-      let gone = false;
-      const rof = new ResizeObserver(() => flat?.draw());
-      const near = new IntersectionObserver(
-        async (entries) => {
-          if (!entries[0].isIntersecting || flat || gone) return;
-          near.disconnect();
-          const { attachFlat } = await import('./flat');
-          if (gone) return;
-          flat = attachFlat(host, { kind, seed });
-          setState('flat');
-        },
-        { rootMargin: '400px 0px' },
-      );
-      near.observe(host);
-      rof.observe(host);
-      return () => {
-        gone = true;
-        near.disconnect();
-        rof.disconnect();
-        flat?.dispose();
-      };
-    }
+    const reduced = prefersReducedMotion();
+    const coarse = window.matchMedia('(pointer: coarse)').matches;
+    const card = host.closest<HTMLElement>('[data-tilt]');
 
     let handle: SlotHandle | null = null;
+    let flat: { draw: () => void; dispose: () => void } | null = null;
     let dead = false;
     let mod: typeof import('./stage') | null = null;
+
+    /* Запасной плоский слой. Поднимается только если объём не завёлся:
+       нет WebGL, не доехал чанк, потерян контекст. */
+    const fallback = async () => {
+      if (dead || flat) return;
+      const { attachFlat } = await import('./flat');
+      if (dead) return;
+      flat = attachFlat(host, { kind, seed });
+      setState('flat');
+    };
 
     // наблюдатель 1: далеко на подходе — только прогреваем сеть
     const warm = new IntersectionObserver(
@@ -99,13 +92,13 @@ export default function SceneSlot({
         try {
           mod = await import('./stage');
         } catch {
-          if (!dead) setState('unavailable');
+          fallback();
         }
       },
-      { rootMargin: '900px 0px' },
+      { rootMargin: '1200px 0px' },
     );
 
-    // наблюдатель 2: блок почти на экране — занимаем GPU
+    // наблюдатель 2: блок ещё за кадром — поднимаем контекст и компилируем
     const mount = new IntersectionObserver(
       async (entries) => {
         if (!entries[0].isIntersecting || handle || dead) return;
@@ -119,26 +112,70 @@ export default function SceneSlot({
             handle = null;
             return;
           }
+          /* Собственное вращение — только на касаниях и только когда
+             движение разрешено. */
+          handle.setVisible(false);
+          if (coarse && !reduced) handle.setSpin(true);
           setState('ready');
         } catch {
-          if (!dead) setState('unavailable');
+          fallback();
         }
       },
       { rootMargin: mountMargin },
     );
 
+    // наблюдатель 3: слот в кадре — цикл может его трогать
+    const show = new IntersectionObserver(
+      (entries) => handle?.setVisible(entries[0].isIntersecting),
+      { rootMargin: '0px' },
+    );
+
     warm.observe(host);
     mount.observe(host);
+    show.observe(host);
 
-    const ro = new ResizeObserver(() => handle?.draw());
+    const ro = new ResizeObserver(() => {
+      handle?.draw();
+      flat?.draw();
+    });
     ro.observe(host);
+
+    /* Наклон под указателем. Пишем две переменные на карточку (её двигает
+       CSS) и отдаём те же числа в сцену (она доворачивает предмет).
+       Чтений геометрии в обработчике одно — прямоугольник карточки,
+       и оно не соседствует с записью в тот же элемент. */
+    const move = (e: PointerEvent) => {
+      if (e.pointerType !== 'mouse' || !card) return;
+      const r = card.getBoundingClientRect();
+      const x = ((e.clientX - r.left) / r.width) * 2 - 1;
+      const y = ((e.clientY - r.top) / r.height) * 2 - 1;
+      card.style.setProperty('--tilt-x', x.toFixed(3));
+      card.style.setProperty('--tilt-y', y.toFixed(3));
+      handle?.setPointer(x, -y);
+    };
+    const leave = () => {
+      if (!card) return;
+      card.style.setProperty('--tilt-x', '0');
+      card.style.setProperty('--tilt-y', '0');
+      handle?.setPointer(null, null);
+    };
+    if (card && !reduced && !coarse) {
+      card.addEventListener('pointermove', move);
+      card.addEventListener('pointerleave', leave);
+    }
 
     return () => {
       dead = true;
       warm.disconnect();
       mount.disconnect();
+      show.disconnect();
       ro.disconnect();
+      if (card) {
+        card.removeEventListener('pointermove', move);
+        card.removeEventListener('pointerleave', leave);
+      }
       handle?.dispose();
+      flat?.dispose();
     };
   }, [kind, seed, mountMargin]);
 

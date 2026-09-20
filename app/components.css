@@ -677,21 +677,11 @@
 /* ═══════════════════════════════════════════════════════════════ СЕКЦИИ */
 .section {
   position: relative;
+  /* ЛИНИИ МЕЖДУ БЛОКАМИ НЕТ. Границу держит воздух: у секции щедрые
+     поля сверху и снизу, и этого достаточно. Волосяная линия здесь
+     читалась как разлиновка бланка. Снято в девятнадцатой итерации. */
   padding-top: clamp(72px, 14vw, 160px);
   padding-bottom: clamp(72px, 14vw, 160px);
-  border-top: 1px solid var(--hair);
-}
-
-.section__num {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-}
-.section__num b {
-  font-variation-settings: 'wght' 700;
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  color: var(--green);
 }
 
 /* ═════════════════════════════════════════════════════════════════ ФУТЕР
@@ -901,199 +891,139 @@
 }
 
 /* ═══════════════════════════════════════════════════════ СЕРЕДИНА СТРАНИЦЫ
-   Восемнадцатая итерация: пять блоков сжаты в три, и у каждого свой приём.
+   Девятнадцатая итерация. Надзаголовков и линий между блоками нет вовсе:
+   границу держит воздух. Три блока, три разных голоса.
 
-   02 ТАРИФЫ    — РАЗВОРОТ РЯДА плюс БЕГУЩАЯ СТРОКА поверх чернил.
-   03 КАК ЭТО РАБОТАЕТ — ПРОЯВЛЯЮЩАЯСЯ ПАНЕЛЬ с инверсией по перекрытию.
-   04 ВОПРОСЫ   — колонка крупных вопросов, ответ ведёт прокрутка.
+   ТАРИФЫ  — четыре объёмные карточки, каждая со своим предметом.
+   ПОЛОСА  — бегущая строка во всю ширину, отдельная, между блоками.
+   ПОРЯДОК — пять шагов и слабо различимое серое поле, едущее за ними.
+   ВОПРОСЫ — колонка, где ответ встаёт НА МЕСТО вопроса.
 
-   Ритм держится массой: 02 крупный, 03 заметно мельче и выключен влево,
-   04 снова крупный, но другого характера — центрованная колонка без линий.
+   Ритм держится массой: тарифы крупные и плотные, порядок тихий
+   и выключен влево, вопросы снова крупные, но другого характера —
+   центрованная колонка без единой линии.                                  */
 
-   ⚠️ НИ НА ОДНОМ ПРЕДКЕ СЛОЯ ВЫВОРОТКИ НЕ ДОЛЖНО БЫТЬ АНИМАЦИИ НА opacity.
-   Такой элемент становится backdrop root, фон под слоем оказывается пустым,
-   и слой молча перестаёт рисовать — а цветовой сторож этого не видит.
-   Поэтому на .plans и на .steps класса .rv нет и быть не может. См. Р-47. */
-
-/* ── 02: РЯДЫ, КОТОРЫЕ РАЗВОРАЧИВАЮТСЯ ───────────────────────────────────
-   Ряды лежат АБСОЛЮТНО и наложены друг на друга: каждый ростом
-   с полностью развёрнутый, у каждого непрозрачный фон, и нижнюю часть
-   соседа закрывает следующий ряд. Видимая высота полосы — это разность
-   трансформов, поэтому разворот не стоит ни одного пересчёта раскладки:
-   двигается только translate3d, а его считает компоновщик.
-
-   Доля высоты приходит из JS одним числом --k. Больше оттуда не приходит
-   ничего: ни пикселей, ни чтений геометрии. */
-.plans {
-  --plans-h: clamp(520px, 78svh, 900px);
-  --plan-open: 0.46;
-  /* Поле над названием — величина общая: от неё считается и сама шапка
-     ряда, и положение бегущей строки. */
-  --plan-pad: clamp(8px, 1.5vh, 20px);
-  /* ГДЕ ИДЁТ БЕГУЩАЯ СТРОКА. Не доля блока, а МЕСТО ТРЕТЬЕГО НАЗВАНИЯ:
-     0.5 — верх третьего ряда, поле — его отбивка сверху, 0.049 — половина
-     высоты названия. Доля блока не годится, потому что поле и строка
-     цены заданы в пикселях: на 1920 они съедают восьмую часть полосы,
-     а на 390 — почти половину, и одна и та же доля попадает то в чернила,
-     то в подпись под ними. */
-  --mq-row: 0.549;
-  position: relative;
-  height: var(--plans-h);
-  /* ряд ростом с развёрнутый торчит за низ блока, когда он последний
-     и сжат: лишнее срезаем, это не стоит ничего */
-  overflow: hidden;
-  border-bottom: 1px solid var(--hair);
+/* ── КАРТОЧКИ ТАРИФА ─────────────────────────────────────────────────────
+   Четыре в ряд на широком экране, две на среднем, СТОЛБИКОМ на телефоне.
+   Карусели нет намеренно: она прячет три тарифа из четырёх и дерётся
+   с вертикальной прокруткой пальцем. Столбик читается сразу весь,
+   а объём при этом стоит дёшево — крутится только карточка,
+   которая сейчас на экране.                                              */
+.cards {
+  display: grid;
+  gap: clamp(16px, 2.2vw, 28px);
+  margin-top: clamp(28px, 4vw, 48px);
+}
+@media (min-width: 720px) {
+  .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1180px) {
+  .cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
-.plan {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: calc(var(--plans-h) * var(--plan-open));
-  background: var(--ink);
-  border-top: 1px solid var(--hair);
-  transform: translate3d(0, calc(var(--plans-h) * var(--k, 0)), 0);
-  /* 620 мс и кривая с длинным выходом: разворот обязан быть неспешным
-     и без линейности — это движение видят на каждом наведении */
-  transition: transform 620ms cubic-bezier(0.22, 1, 0.26, 1);
-}
-.plan__in {
+/* Обёртка несёт появление строки, сама карточка — наклон. Разделены они
+   потому, что и то, и другое живёт в `transform`, и на одном элементе
+   второе затёрло бы первое. */
+.card-wrap { perspective: 900px; }
+
+.card {
   height: 100%;
   display: flex;
   flex-direction: column;
+  background: var(--surface);
+  /* Наклон под указателем: две переменные пишет слот, считает
+     компоновщик. В покое обе нули, и трансформ тождественный. */
+  transform: rotateX(calc(var(--tilt-y, 0) * -3.2deg))
+    rotateY(calc(var(--tilt-x, 0) * 3.2deg));
+  transition: transform 420ms var(--ease);
+}
+.card[data-hot] { outline: 1px solid var(--green); outline-offset: -1px; }
+
+/* Слот — «окно» в карточке: лёгкий градиент отделяет его от тела,
+   и предмет не выглядит наклеенным на ту же плоскость. */
+.card__slot {
+  aspect-ratio: 16 / 10;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.012));
 }
 
-.plan__head {
-  appearance: none;
-  background: none;
-  border: 0;
-  margin: 0;
-  padding: var(--plan-pad) 0 0;
-  width: 100%;
-  display: block;
-  text-align: center;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  touch-action: manipulation;
-}
-/* НАЗВАНИЕ КРУПНОЕ, но потолок у него двойной: и по ширине экрана,
-   и ОТ ВЫСОТЫ САМОГО БЛОКА. Сжатая полоса ряда — это 0.18 высоты блока,
-   и в неё обязаны поместиться название с ценой: иначе на коротком
-   десктопе (1024×768) цена уезжает под следующий ряд. Отсюда 0.10
-   высоты блока, а не доля экрана: у блока есть и нижний предел,
-   и потолок, а у экрана нет. */
-.plan__name {
-  display: block;
-  font-size: max(1.5rem, min(8.4vw, calc(var(--plans-h) * 0.1)));
-  line-height: 0.98;
-  letter-spacing: -0.035em;
-  font-variation-settings: 'wght' 620;
-  color: var(--white);
-}
-/* ЦЕНА СТОИТ РЯДОМ С НАЗВАНИЕМ, а не под ним, — так просил арт-директор.
-   Под ним она уходит только там, где строка перестаёт помещаться:
-   «Сертификат в подарок» с ценой — это 20 знаков крупным кеглем плюс
-   подпись, и ниже 900 px они в строку не встают. */
-.plan__tag {
-  display: block;
-  margin-top: clamp(5px, 1vh, 10px);
-  font-size: 13px;
-  letter-spacing: 0.02em;
-  color: var(--dim);
-}
-@media (min-width: 900px) {
-  .plan__head {
-    display: flex;
-    align-items: baseline;
-    justify-content: center;
-    gap: clamp(12px, 1.4vw, 22px);
-  }
-  .plan__tag { margin-top: 0; white-space: nowrap; }
-}
-.plan__hot {
-  display: inline-block;
-  margin-left: 10px;
-  padding: 2px 7px;
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-variation-settings: 'wght' 700;
-  color: var(--on-green-dim);
-  background: var(--green);
-}
-
-/* Внутренности появляются только у развёрнутого. Двигаются opacity
-   и transform — ни то, ни другое не трогает раскладку. */
-.plan__body {
+.card__body {
   flex: 1 1 auto;
-  min-height: 0;
-  display: grid;
-  justify-items: center;
-  align-content: start;
-  gap: clamp(8px, 1.4vh, 16px);
-  padding-top: clamp(12px, 2vh, 24px);
-  opacity: 0;
-  transform: translate3d(0, 14px, 0);
-  transition:
-    opacity 300ms var(--ease) 80ms,
-    transform 420ms cubic-bezier(0.22, 1, 0.26, 1) 80ms;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: clamp(18px, 2vw, 24px);
 }
-.plan[data-open] .plan__body {
-  opacity: 1;
-  transform: none;
-}
-.plan__price {
+.card__name {
   margin: 0;
-  font-size: clamp(1.0625rem, 1.9vw, 1.625rem);
-  line-height: 1.2;
+  font-size: clamp(1.25rem, 1.6vw, 1.5rem);
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  font-variation-settings: 'wght' 680;
+  color: var(--white);
+}
+.card__price {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
   color: var(--dim);
 }
-.plan__price b {
+.card__price b {
+  font-size: clamp(1.375rem, 1.9vw, 1.75rem);
+  letter-spacing: -0.02em;
   color: var(--white);
   font-variation-settings: 'wght' 700;
 }
-.plan__price em { font-style: normal; }
-.plan__note,
-.plan__gift {
+.card__price em { font-style: normal; }
+.card__save {
   margin: 0;
-  text-align: center;
-  font-size: 14px;
-  line-height: 1.55;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--green);
+  font-variation-settings: 'wght' 650;
+}
+.card__note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
   color: var(--dim);
 }
-.plan__note { max-width: 48ch; }
-.plan__gift { max-width: 56ch; }
-/* На узком и на низком экране развёрнутому ряду не хватает места сразу
-   на всё, и первым уходит пояснение: цена, выбор аккаунта и кнопка
-   важнее — без них ряд перестаёт работать. */
-@media (max-width: 480px), (max-height: 700px) {
-  .plan__note { display: none; }
+/* Подвал прижат к низу карточки: иначе кнопки в соседних карточках
+   стоят на разной высоте, и ряд читается как сломанный. */
+.card__foot {
+  margin-top: auto;
+  padding-top: 14px;
+  display: grid;
+  gap: 10px;
 }
-.plan__opts { display: flex; flex-wrap: wrap; justify-content: center; }
+.card__gift {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dim-2);
+}
+.card__opts { display: flex; flex-wrap: wrap; gap: 2px; }
 
 .plans__note {
-  margin-top: clamp(20px, 2.6vw, 32px);
+  margin-top: clamp(22px, 3vw, 34px);
   font-size: 13px;
   line-height: 1.6;
   color: var(--dim);
   text-align: center;
 }
 
-/* выбор аккаунта внутри развёрнутого ряда: состояние помечено не одним
-   цветом — кружок заливается, начертание тяжелеет, стоит aria-checked */
+/* выбор аккаунта: состояние помечено не одним цветом — кружок
+   заливается, начертание тяжелеет, стоит aria-checked */
 .row__opt {
   appearance: none;
   background: none;
   border: 0;
-  padding: 10px 14px;
+  padding: 8px 10px 8px 0;
   min-height: 44px;
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--dim);
   cursor: pointer;
   touch-action: manipulation;
@@ -1101,8 +1031,8 @@
 }
 .row__opt::before {
   content: '';
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
   box-shadow: inset 0 0 0 1px currentColor;
   flex: 0 0 auto;
@@ -1114,126 +1044,74 @@
   box-shadow: inset 0 0 0 1px var(--green);
 }
 
-/* ── БЕГУЩАЯ СТРОКА ПОВЕРХ РЯДОВ ─────────────────────────────────────────
-   Строка идёт ПО ЧЕРНИЛАМ рядов и частично их перекрывает. Там, где
-   перекрывает, она инвертируется — тем же механизмом, что шапка: слой
-   берёт СВОЙ СОБСТВЕННЫЙ ФОН и выворачивает его наизнанку в форме своих
-   чернил (Р-47). Над тёмным полем выходит белое, над белой литерой
-   названия — чёрное, и решается это попиксельно, без единого списка
-   «где что лежит».
-
-   Крутит и живую строку, и слой ОДНА И ТА ЖЕ анимация на СОБСТВЕННОМ
-   трансформе: собственный трансформ backdrop root не создаёт. Слой
-   не прячется через display — элемент с display: none анимации не крутит
-   и, показавшись, начал бы её с нуля; пока фигура не собрана, у слоя
-   просто пустая обрезка, а она не пропускает ничего.
-
-   Текст выложен ДВАЖДЫ, ход ровно −50 % собственной ширины: в конце круга
-   на месте каждого знака стоит такой же знак из второй копии, поэтому
-   шва не видно.                                                          */
+/* ── БЕГУЩАЯ СТРОКА: ОТДЕЛЬНАЯ ПОЛОСА ────────────────────────────────────
+   Идёт по тёмному фону, поэтому выворотка здесь не нужна вовсе — вместе
+   с ней ушёл весь клиентский код приёма. Дорожка шириной по содержимому
+   несёт ДВЕ одинаковые копии, ход анимации ровно −50 % её ширины:
+   в конце круга на месте каждого знака стоит такой же знак из второй
+   копии, и шва не видно. Мерить при этом нечего, 50 % считает браузер. */
 .mq {
-  --mq-dur: 40s;
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: calc(var(--plans-h) * var(--mq-row) + var(--plan-pad) - var(--mq-h, 20px) / 2);
-  height: var(--mq-h, 2.2em);
-  overflow: hidden;
-  pointer-events: none;
-  z-index: 3;
+  --mq-dur: 42s;
+  padding-block: clamp(34px, 5vw, 64px);
+}
+.mq__band { overflow: hidden; }
+.mq__track {
+  display: flex;
+  width: max-content;
+  animation: mq-run var(--mq-dur) linear infinite;
+}
+.mq__copy {
+  white-space: nowrap;
   font-size: clamp(11px, 0.95vw, 14px);
-  line-height: 1.5;
+  line-height: 1.6;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   font-variation-settings: 'wght' 600;
+  color: var(--dim);
 }
-.mq__text {
-  position: absolute;
-  left: 0;
-  top: 0;
-  white-space: nowrap;
-  color: var(--white);
-  animation: mq-run var(--mq-dur) linear infinite;
-}
-.mq__ink {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: var(--mq-w, 0);
-  height: var(--mq-h, 0);
-  animation: mq-run var(--mq-dur) linear infinite;
-  -webkit-backdrop-filter: grayscale(1) invert(1) brightness(0.769) contrast(6);
-  backdrop-filter: grayscale(1) invert(1) brightness(0.769) contrast(6);
-}
-.mq__clip { position: absolute; width: 0; height: 0; overflow: hidden; pointer-events: none; }
 @keyframes mq-run {
   from { transform: translate3d(0, 0, 0); }
   to { transform: translate3d(-50%, 0, 0); }
 }
-@supports ((backdrop-filter: invert(1)) or (-webkit-backdrop-filter: invert(1))) {
-  .mq[data-ink] .mq__text {
-    color: transparent;
-    -webkit-text-fill-color: transparent;
-  }
-}
 
-/* ── 03: ПРОЯВЛЯЮЩАЯСЯ ПАНЕЛЬ ────────────────────────────────────────────
-   Панель лежит ПОД списком и едет вдоль него по прокрутке. Шаг над ней
-   инвертируется, соседние — по фактическому перекрытию, попиксельно.
+/* ── ПОРЯДОК: ТИХОЕ СЕРОЕ ПОЛЕ ───────────────────────────────────────────
+   Поле едет за прокруткой и отмечает место, где сейчас читают. Резкой
+   границы у него нет: это градиент, который сходит в фон сверху и снизу.
+   Прямоугольник с чёткой кромкой читался бы как плашка, а нужно едва
+   различимое поле — `--surface` на `--ink` даёт 1.16:1, и это ровно
+   та «слабая различимость», которую просил арт-директор.
 
-   Слой выворотки РАЗМЕРОМ С ПАНЕЛЬ, а не со весь список: backdrop-filter
-   стоит пропорционально площади, а фон под ним меняется на каждом кадре.
-   Слой едет вместе с панелью, а обрезка компенсирует это обратным
-   трансформом на самом clipPath — фигура остаётся стоять на чернилах.
+   ПОЧЕМУ НЕ `--mid` #535353. По рендерам он читается лучше, но на нём
+   ломается контраст: описание шага идёт `--dim`, и #B3B3B3 на #535353
+   даёт 3.63:1 — ниже нормы для корпуса. Осветлить описание значило бы
+   осветлить его ВЕЗДЕ, а панель ездит. Взят #212121, а работу
+   «где сейчас читают» делает яркость самого шага.
 
-   Белым поле становится ТОЛЬКО когда выворотка поддержана и фигура
-   собрана: иначе панель остаётся --surface, и приглушённый текст на ней
-   читается как обычно.                                                    */
+   Активный шаг помечается ЯРКОСТЬЮ, а не инверсией: над серым инверсия
+   не читается. Вес идёт числом --w и двигает только `opacity`.          */
 .steps {
-  --panel-h: clamp(150px, 21svh, 260px);
+  --panel-h: clamp(190px, 28svh, 320px);
   position: relative;
   margin-top: clamp(28px, 4.4vw, 52px);
 }
 .steps__panel {
   position: absolute;
-  left: 0;
-  right: 0;
+  left: 50%;
+  translate: -50% 0;
+  width: 100vw;
+  max-width: 1680px;
   top: 0;
   height: var(--panel-h);
-  background: var(--surface);
   z-index: 0;
-}
-@supports ((backdrop-filter: invert(1)) or (-webkit-backdrop-filter: invert(1))) {
-  .steps[data-ink] .steps__panel { background: var(--white); }
-}
-/* Объём стоит справа, и текст шага его пересекает — это не дефект,
-   а тот же приём: над тёмной дорожкой выворотка даёт белое, над белым
-   полем чёрное, и решается это попиксельно. Но на узком экране строка
-   пересекает объём целиком, поэтому там он заметно у́же. */
-.steps__slot {
-  position: absolute;
-  right: 0;
-  top: 8%;
-  bottom: 8%;
-  width: min(32%, 132px);
-  aspect-ratio: auto;
-  background: none;
-}
-@media (min-width: 900px) {
-  .steps__slot { top: 0; bottom: 0; width: min(40%, 340px); }
-}
-.steps__ink {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: var(--panel-h);
-  z-index: 2;
   pointer-events: none;
-  -webkit-backdrop-filter: grayscale(1) invert(1) brightness(0.769) contrast(6);
-  backdrop-filter: grayscale(1) invert(1) brightness(0.769) contrast(6);
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    var(--surface) 34%,
+    var(--surface) 66%,
+    transparent 100%
+  );
 }
-.steps__clip { position: absolute; width: 0; height: 0; overflow: hidden; pointer-events: none; }
 
 .steps__list {
   position: relative;
@@ -1243,43 +1121,44 @@
   padding: 0;
 }
 .step {
+  --w: 1;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   column-gap: clamp(12px, 1.8vw, 24px);
   row-gap: 6px;
-  padding: clamp(16px, 2.4vw, 26px) 0;
-  border-top: 1px solid var(--hair);
+  padding: clamp(18px, 2.8vw, 30px) 0;
+  /* Приглушение прозрачностью, а не подменой цвета: цвет пришлось бы
+     перекрашивать в каждом кадре. Нижний предел 0.42 — это белый
+     на 42 % над --ink, 4.0:1, и шаг там ещё читается. */
+  opacity: calc(0.42 + var(--w) * 0.58);
 }
-.steps__list .step:last-child { border-bottom: 1px solid var(--hair); }
 .step__n {
   margin: 0;
-  padding-top: 0.3em;
-  font-size: 13px;
+  padding-top: 0.35em;
+  font-size: 12px;
   letter-spacing: 0.1em;
   color: var(--green);
   font-variation-settings: 'wght' 700;
 }
-/* Шаги ПРИГЛУШЕНЫ по умолчанию — это и есть «остальные приглушены».
-   Заметным шаг делает не класс, а панель под ним. */
 .step__t {
   margin: 0;
-  font-size: clamp(1.0625rem, 2.4vw, 1.625rem);
+  font-size: clamp(1.0625rem, 2.2vw, 1.5rem);
   line-height: 1.16;
   letter-spacing: -0.02em;
   font-variation-settings: 'wght' 620;
-  color: var(--dim);
+  color: var(--white);
 }
 .step__d {
   grid-column: 2;
   margin: 0;
-  max-width: 42ch;
+  max-width: 46ch;
   font-size: clamp(0.875rem, 0.84rem + 0.15vw, 0.9375rem);
   line-height: 1.6;
   color: var(--dim);
 }
 @media (min-width: 900px) {
   .step { grid-template-columns: auto minmax(0, 26ch) minmax(0, 1fr); align-items: baseline; }
-  .step__d { grid-column: 3; max-width: 40ch; }
+  .step__d { grid-column: 3; max-width: 42ch; }
 }
 .steps__fork {
   margin-top: clamp(24px, 3.4vw, 40px);
@@ -1301,21 +1180,17 @@
   color: var(--white);
 }
 .stmt em { font-style: normal; color: var(--green); }
-/* блок 3 — заметно мельче блоков 2 и 4: это «мелкий» такт ритма */
 .stmt--how { font-size: clamp(1.5rem, 4.8vw, 2.75rem); max-width: 22ch; }
 
 /* --- переключатель срока по центру -------------------------------------- */
 .seg--center { justify-content: center; }
 
 /* ═══ УМЕНЬШЕННОЕ ДВИЖЕНИЕ В СЕРЕДИНЕ ═══
-   Разворот ряда мгновенный, бегущая строка стоит. Панель блока 3 стоит
-   тоже, но об этом знает JS: инверсия там считается по положению,
-   а не по времени, и от остановки не страдает. */
+   Наклон карточки мгновенный, бегущая строка стоит. Предмет в карточке
+   при этом не вращается вовсе — об этом знает слот, а не CSS. */
 @media (prefers-reduced-motion: reduce) {
-  .plan,
-  .plan__body { transition: none; }
-  .mq__text,
-  .mq__ink { animation: none; }
+  .card { transition: none; transform: none; }
+  .mq__track { animation: none; }
 }
 
 /* ═══════════════════════════════════════════════ ПОЯВЛЕНИЕ СТРОК В КАДРЕ
@@ -1341,61 +1216,59 @@
     transform 560ms var(--ease) var(--rv-d, 0ms);
 }
 
-/* --- 04: ВОПРОСЫ, ОТВЕТ ВЕДЁТ ПРОКРУТКА ---------------------------------
-   Аккордеона нет: вопросы стоят колонкой по центру крупным кеглем, все
-   сразу. Ответ появляется напротив того вопроса, который подошёл к линии
-   отсчёта в экране, — то есть по прокрутке, а не по клику.
+/* --- ВОПРОСЫ: ОТВЕТ ВСТАЁТ НА МЕСТО ВОПРОСА -----------------------------
+   Вопрос и ответ лежат в ОДНОЙ ячейке сетки, друг поверх друга. Высота
+   ячейки берётся по большему из двух сама собой — абсолютом её пришлось
+   бы мерить и записывать, а тут раскладка не прыгает ни на пиксель
+   и без единого чтения геометрии.
 
-   Вес 0…1 приходит из JS числом --w и двигает ТОЛЬКО opacity и transform:
-   их считает компоновщик, поэтому шесть записей в кадре не стоят ни одного
-   пересчёта раскладки и ни одной перекраски крупного набора.
+   Переход перекрёстный: вопрос гаснет как (1 − w), ответ разгорается
+   как w. Кадра, где оба видны в полную силу, поэтому не существует.
 
-   ПО УМОЛЧАНИЮ ВЕС РАВЕН ЕДИНИЦЕ, и задаёт это CSS. Значит без JavaScript
-   видны все ответы сразу, и при «уменьшить движение» тоже: там подписки
-   просто не заводится. Прятать что-либо безусловно было бы нельзя.        */
+   ПОДМЕНА ВКЛЮЧАЕТСЯ АТРИБУТОМ `data-swap`, и ставит его скрипт — только
+   когда подписался на прокрутку. Нет скрипта, «уменьшить движение» —
+   ячейка разворачивается в две строки, и видно И вопрос, И ответ.      */
 .qa { display: grid; gap: clamp(28px, 4.2vw, 56px); }
-.qa__item {
-  --w: 1;
-  display: grid;
-  gap: 12px;
-}
-/* ОТВЕТ СТОИТ ПОД ВОПРОСОМ, А НЕ СБОКУ, и это выбрано по рендерам.
-   Сбоку колонка вопросов перестаёт быть центральной: чтобы ответу
-   хватило меры, вопрос приходится отжимать влево, а на 1200 и уже
-   ответ вырождается в столбик по два слова. Под вопросом мера есть
-   на любой ширине, и мобильная раскладка получается той же, а не другой. */
-/* Приглушение сделано ПРОЗРАЧНОСТЬЮ, а не подменой цвета: цвет пришлось бы
-   перекрашивать в каждом кадре, а это перекраска крупного набора. Нижний
-   предел 0.52 взят по контрасту: белый на 52 % над --ink даёт 5.4:1,
-   то есть приглушённый вопрос по-прежнему читается. */
+.qa__item { --w: 1; }
+.qa__swap { display: grid; row-gap: 14px; }
+
 .qa__q {
   margin: 0;
-  text-align: center;
+  margin-inline: auto;
   /* Мера задана в ЗНАКАХ собственного кегля: тогда число строк одинаково
      и на 390, и на 2560 — иначе на широком экране вопрос идёт в одну
      строку, а на узком разваливается на пять. */
   max-width: 22ch;
-  margin-inline: auto;
+  text-align: center;
   font-size: max(1.5rem, min(8.2vw, 4.25rem));
   line-height: 1.02;
   letter-spacing: -0.035em;
   font-variation-settings: 'wght' 620;
   color: var(--white);
-  opacity: calc(0.52 + var(--w) * 0.48);
 }
 .qa__a {
   margin: 0;
   margin-inline: auto;
   max-width: 46ch;
   text-align: center;
-  /* место под ответ зарезервировано: смена активного вопроса не должна
-     двигать раскладку ни на пиксель */
-  min-height: calc(3 * 1.6em);
-  font-size: clamp(0.875rem, 0.85rem + 0.2vw, 1rem);
+  font-size: clamp(0.9375rem, 0.85rem + 0.3vw, 1.125rem);
   line-height: 1.6;
   color: var(--dim);
+}
+
+/* Подмена. Обе половины в одной ячейке, и ни одна не двигает раскладку. */
+.qa[data-swap] .qa__swap { row-gap: 0; align-items: center; }
+.qa[data-swap] .qa__q,
+.qa[data-swap] .qa__a { grid-area: 1 / 1; }
+/* 0.52 — приглушённый вопрос: белый на 52 % над --ink даёт 5.4:1,
+   то есть он по-прежнему читается. Гаснет он КВАДРАТИЧНО, и это
+   не украшение: крупный набор виден призраком даже на 13 % —
+   при линейном спаде за проявляющимся ответом полпути стоял бы
+   полупрозрачный вопрос. */
+.qa[data-swap] .qa__q { opacity: calc(0.52 * (1 - var(--w)) * (1 - var(--w))); }
+.qa[data-swap] .qa__a {
   opacity: var(--w);
-  transform: translate3d(0, calc((1 - var(--w)) * 14px), 0);
+  transform: translate3d(0, calc((1 - var(--w)) * 10px), 0);
 }
 
 .faq__draft-mark {
@@ -1421,34 +1294,16 @@
   color: var(--dim);
 }
 
-/* --- шапка блока -------------------------------------------------------- */
-.shead { margin-bottom: clamp(36px, 7vw, 72px); }
-.shead__bar {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 24px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
-  margin-bottom: clamp(20px, 3.5vw, 36px);
-}
-.shead__meta {
-  /* цифровая сводка — приём десктопной вёрстки: на узком экране она
-     переносится на вторую строку и начинает драться с номером трека */
-  display: none;
-  margin: 0;
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--dim);
-  font-variation-settings: 'wght' 500;
-  text-align: right;
-}
-.shead__lead { margin-top: clamp(18px, 2.6vw, 28px); max-width: 52ch; }
-@media (min-width: 640px) { .shead__meta { display: block; } }
 
-/* ТИХАЯ ШАПКА. В блоках 2–5 самый крупный набор — это тело блока, а не его
-   заголовок: ряд тарифа или тезис. Если оставить шапке .h-section, два
+/* --- шапка блока -------------------------------------------------------- */
+/* НАДЗАГОЛОВКА НЕТ. До девятнадцатой итерации здесь стояла тонкая линия
+   с номером трека, словом-надзаголовком и цифровой сводкой справа.
+   Арт-директор снял всё целиком: блок понятен по своему заголовку. */
+.shead { margin-bottom: clamp(30px, 5vw, 56px); }
+.shead__lead { margin-top: clamp(14px, 2vw, 22px); max-width: 52ch; }
+
+/* ТИХАЯ ШАПКА. В блоке тарифов самый крупный набор — это тело блока, а не
+   его заголовок: название карточки и цена. Если оставить шапке .h-section, два
    крупных набора в одном блоке дерутся, и приём не читается. Поэтому здесь
    заголовок уходит в размер подзаголовка, а вес держит тело. */
 .shead--quiet { margin-bottom: clamp(26px, 4.2vw, 48px); }

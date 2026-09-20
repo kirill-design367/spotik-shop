@@ -1,71 +1,42 @@
 'use client';
 
-import { useId, useRef, useState } from 'react';
+import { useId, useState } from 'react';
 import SectionHead from './SectionHead';
-import Marquee from '@/components/mid/Marquee';
-import {
-  PERIODS,
-  PERKS,
-  PLANS,
-  formatPrice,
-  perMonth,
-  savings,
-  type PeriodKey,
-} from '@/lib/plans';
+import SceneSlot from '@/components/three/SceneSlot';
+import { PERIODS, PLANS, formatPrice, perMonth, savings, type PeriodKey } from '@/lib/plans';
 
 /**
- * БЛОК 2 — ТАРИФЫ. ПРИЁМ: РАЗВОРОТ РЯДА.
+ * БЛОК ТАРИФОВ — ОБЪЁМНЫЕ КАРТОЧКИ.
  *
- * В покое четыре ряда стоят друг под другом и делят высоту блока поровну:
- * видно только название и цену за выбранный срок. Наведёшь (на касаниях —
- * тронешь) — ряд разворачивается и забирает бо́льшую часть высоты, три
- * остальных сжимаются и уступают. Внутри развёрнутого появляется то, чего
- * в покое не было: крупная цена, выбор аккаунта и кнопка.
+ * Разворот ряда (Р-49) снят арт-директором целиком: приём не зашёл.
+ * Вместо него четыре карточки, и каждая несёт свой объёмный предмет —
+ * отрезок звуковой дорожки, рядов столько, на скольких человек тариф;
+ * у сертификата плита с зелёным торцом. Геометрия не абстрактная:
+ * это тот же материал страницы, что нумерация и огибающая в хиро.
  *
- * ── ДВИЖЕНИЕ ТОЛЬКО ТРАНСФОРМАМИ, БЕЗ ЕДИНОГО ПЕРЕСЧЁТА РАСКЛАДКИ ──────────
- * Ряды лежат АБСОЛЮТНО и наложены друг на друга: каждый ростом с полностью
- * развёрнутый, у каждого непрозрачный фон, и нижнюю часть соседа закрывает
- * следующий ряд. Видимая высота полосы — это расстояние до верха
- * следующего ряда, то есть чистая разность трансформов. Менять высоты
- * не нужно вовсе: двигается только `translate3d`, а его считает
- * компоновщик.
+ * ── ЧТО СТОИТ КАРТОЧКА ────────────────────────────────────────────────────
+ * Все четыре слота делят ОДИН WebGL-контекст, и он поднимается только
+ * когда блок подходит к кадру. Компиляция программы идёт ТАМ ЖЕ, пока
+ * блок ещё за кадром, а сама программа крошечная: света в сцене нет,
+ * объём запечён в вершинные цвета (Р-54). Из-за этого объём работает
+ * и на касаниях — там он медленно вращается сам, и крутятся только
+ * карточки, которые сейчас на экране.
  *
- * Величины заданы ДОЛЯМИ высоты блока и приходят в CSS одним числом `--k`.
- * Ни одного чтения геометрии из JS здесь нет — ни при монтировании,
- * ни в кадре: сама анимация идёт переходом CSS.
+ * ── НАКЛОН ────────────────────────────────────────────────────────────────
+ * На точном указателе карточка наклоняется под курсор, а предмет внутри
+ * доворачивается в сцене. Карточку двигает CSS по двум переменным —
+ * это компоновщик, — и ни то, ни другое не проходит через React:
+ * слушатели живут в слоте и пишут прямо в стиль. См. SceneSlot.
  *
- *     в покое        0 · 0.25 · 0.50 · 0.75
- *     развёрнут i    ряды до него по 0.16, он сам 0.52, дальше снова 0.16
- *
- * ── ПОЧЕМУ РЯД РАЗВОРАЧИВАЕТСЯ И ПО ФОКУСУ, И ПО КЛИКУ, И ЭТО НЕ ДЕРЁТСЯ ───
- * Тап по экрану — это pointerdown → focus → click. Если и фокус, и клик
- * будут переключать состояние, тап откроет ряд и тут же его закроет.
- * Поэтому фокус ВЗВОДИТ защёлку: клик, пришедший сразу за открывающим
- * фокусом, её снимает и ничего не делает. Второй клик по тому же ряду
- * сворачивает — как и обязан вести себя раскрывающий элемент.
+ * Состояния интерфейса прежние: выбор срока и выбор типа аккаунта.
+ * Обе группы — настоящие radiogroup со стрелками на клавиатуре
+ * и aria-checked, а не крашеные div.
  */
-const COLLAPSED = 0.16;
-const OPEN = 1 - COLLAPSED * 3;
-
-/** Смещения рядов долями высоты блока. Чистая арифметика, без геометрии. */
-function offsets(open: number | null): number[] {
-  const out: number[] = [];
-  let y = 0;
-  for (let i = 0; i < PLANS.length; i += 1) {
-    out.push(y);
-    y += open === null ? 1 / PLANS.length : i === open ? OPEN : COLLAPSED;
-  }
-  return out;
-}
-
 export default function Pricing() {
   const [period, setPeriod] = useState<PeriodKey>(12);
   const [account, setAccount] = useState<Record<string, 'new' | 'renew'>>({});
-  const [open, setOpen] = useState<number | null>(null);
   const statusId = useId();
   const noteId = useId();
-  const base = useId();
-  const armed = useRef(false);
 
   /**
    * Стрелки внутри radiogroup. Без них roving tabindex делает только хуже:
@@ -87,14 +58,6 @@ export default function Pricing() {
     group.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus();
   };
 
-  const onSegKey = (e: React.KeyboardEvent) =>
-    rove(
-      e,
-      PERIODS.length,
-      PERIODS.findIndex((p) => p.key === period),
-      (i) => setPeriod(PERIODS[i].key),
-    );
-
   const announce = (() => {
     const p = PERIODS.find((x) => x.key === period)!;
     // про тариф без цены на этот срок тоже надо сказать: иначе он просто
@@ -109,39 +72,12 @@ export default function Pricing() {
     return `${p.label}: ${parts.join(', ')}`;
   })();
 
-  /* Разворот фокусом взводит защёлку — иначе идущий следом клик того же
-     тапа немедленно свернул бы ряд обратно. */
-  const expand = (i: number) => {
-    if (open === i) return;
-    armed.current = true;
-    setOpen(i);
-  };
-  const toggle = (i: number) => {
-    if (armed.current) {
-      armed.current = false;
-      return;
-    }
-    setOpen(open === i ? null : i);
-  };
-  /* Наведение — только мышью: у касания «наведение» приходит тем же
-     событием, что и тап, и ряд разворачивался бы дважды. */
-  const hover = (i: number, e: React.PointerEvent) => {
-    if (e.pointerType !== 'mouse') return;
-    armed.current = false;
-    setOpen(i);
-  };
-
-  const ks = offsets(open);
-
   return (
-    <section id="pricing" className="section section--plans">
+    <section id="pricing" className="section">
       <div className="shell">
         <SectionHead
-          num="02"
-          kicker="Тарифы"
           title="Выберите срок и тариф"
           lead="Цена фиксируется в момент оформления. Чем длиннее срок, тем дешевле месяц."
-          meta="4 тарифа · 4 срока · от 224 ₽ в месяц"
           quiet
           center
         />
@@ -150,8 +86,14 @@ export default function Pricing() {
           className="seg seg--center rv"
           role="radiogroup"
           aria-label="Срок подписки"
-          onKeyDown={onSegKey}
-          style={{ marginBottom: 'clamp(24px, 3.4vw, 40px)' }}
+          onKeyDown={(e) =>
+            rove(
+              e,
+              PERIODS.length,
+              PERIODS.findIndex((p) => p.key === period),
+              (i) => setPeriod(PERIODS[i].key),
+            )
+          }
         >
           {PERIODS.map((p) => (
             <button
@@ -171,136 +113,119 @@ export default function Pricing() {
         <p id={statusId} role="status" aria-atomic="true" className="sr-only">
           {announce}
         </p>
-      </div>
 
-      {/* ВНИМАНИЕ: ни на .plans, ни на её предках не должно быть анимации
-          на opacity. Такой элемент становится backdrop root, и фон под
-          слоем бегущей строки окажется пустым — строка просто пропадёт,
-          а цветовой сторож этого не увидит. См. Р-47. */}
-      <div
-        className="plans"
-        onPointerLeave={(e) => {
-          if (e.pointerType === 'mouse') setOpen(null);
-        }}
-      >
-        {PLANS.map((plan, i) => {
-          const total = plan.prices[period];
-          const unavailable = !plan.pending && !total;
-          const acc = account[plan.id] ?? 'new';
-          const save = total ? savings(plan, period) : 0;
-          const isOpen = open === i;
-          const bodyId = `${base}-b-${i}`;
+        <div className="cards">
+          {PLANS.map((plan, i) => {
+            const total = plan.prices[period];
+            const unavailable = !plan.pending && !total;
+            const acc = account[plan.id] ?? 'new';
+            const save = total ? savings(plan, period) : 0;
 
-          return (
-            <article
-              key={plan.id}
-              className="plan"
-              data-open={isOpen ? '1' : undefined}
-              style={{ ['--k' as string]: ks[i] }}
-              onPointerEnter={(e) => hover(i, e)}
-            >
-              <div className="plan__in shell">
-                <button
-                  type="button"
-                  className="plan__head"
-                  aria-expanded={isOpen}
-                  aria-controls={bodyId}
-                  onFocus={() => expand(i)}
-                  onClick={() => toggle(i)}
-                >
-                  <span className="plan__name">{plan.name}</span>
-                  <span className="plan__tag tnum">
-                    {plan.pending
-                      ? plan.pending
-                      : unavailable
-                        ? `только на месяц · ${formatPrice(plan.prices[1]!)} ₽`
-                        : `${formatPrice(total!)} ₽ за ${period} мес`}
-                    {plan.hot ? <b className="plan__hot">Выгоднее всего</b> : null}
-                  </span>
-                </button>
+            return (
+              <div key={plan.id} className="card-wrap rv" style={{ ['--rv-d' as string]: `${i * 80}ms` }}>
+                {/* data-tilt — точка, за которую слот берёт наклон: целиться
+                    в маленький слот было бы неверно, наклоняется карточка. */}
+                <article className="card" data-tilt data-hot={plan.hot ? '1' : undefined}>
+                  <SceneSlot
+                    kind={plan.gift ? 'gift' : 'card'}
+                    seed={plan.gift ? 7 : plan.people}
+                    label={`Тариф «${plan.name}» в объёме`}
+                    className="card__slot"
+                  />
 
-                <div className="plan__body" id={bodyId} inert={!isOpen}>
-                  <p className="plan__price tnum">
-                    {plan.pending ? (
-                      <em>Цена появится вместе с оплатой</em>
-                    ) : unavailable ? (
-                      <>
-                        <b>{formatPrice(plan.prices[1]!)} ₽</b> за 30 дней · другие сроки по запросу
-                      </>
-                    ) : (
-                      <>
-                        <b>{formatPrice(perMonth(total!, period))} ₽</b> в месяц
-                        {plan.people > 1
-                          ? ` · ${formatPrice(Math.round(total! / period / plan.people))} ₽ на человека`
-                          : ''}
-                        {save > 0 ? ` · экономия ${formatPrice(save)} ₽` : ''}
-                      </>
-                    )}
-                  </p>
+                  <div className="card__body">
+                    <h3 className="card__name">{plan.name}</h3>
 
-                  <p className="plan__note">{plan.note}</p>
+                    <p className="card__price tnum">
+                      {plan.pending ? (
+                        <em>{plan.pending}</em>
+                      ) : unavailable ? (
+                        <>
+                          <b>{formatPrice(plan.prices[1]!)} ₽</b>
+                          <span> за месяц · другие сроки по запросу</span>
+                        </>
+                      ) : (
+                        <>
+                          <b>{formatPrice(total!)} ₽</b>
+                          <span>
+                            {' '}
+                            за {period} мес · {formatPrice(perMonth(total!, period))} ₽ в месяц
+                            {plan.people > 1
+                              ? ` · ${formatPrice(Math.round(total! / period / plan.people))} ₽ на человека`
+                              : ''}
+                          </span>
+                        </>
+                      )}
+                    </p>
 
-                  {plan.gift ? (
-                    /* У сертификата выбора аккаунта нет: его делает не тот,
-                       кто платит, а тот, кому дарят. */
-                    <p className="plan__gift">{plan.gift}</p>
-                  ) : (
-                    <div
-                      role="radiogroup"
-                      aria-label={`Аккаунт для тарифа «${plan.name}»`}
-                      className="plan__opts"
-                      onKeyDown={(e) =>
-                        rove(e, 2, acc === 'new' ? 0 : 1, (i2) =>
-                          setAccount((st) => ({ ...st, [plan.id]: i2 === 0 ? 'new' : 'renew' })),
-                        )
-                      }
-                    >
-                      {(
-                        [
-                          ['new', 'Новый аккаунт'],
-                          ['renew', 'Продлить существующий'],
-                        ] as const
-                      ).map(([key, title]) => (
-                        <button
-                          key={key}
-                          type="button"
-                          role="radio"
-                          aria-checked={acc === key}
-                          tabIndex={acc === key ? 0 : -1}
-                          className="row__opt"
-                          onClick={() => setAccount((s) => ({ ...s, [plan.id]: key }))}
+                    {save > 0 ? (
+                      <p className="card__save tnum">Экономия {formatPrice(save)} ₽</p>
+                    ) : null}
+
+                    <p className="card__note">{plan.note}</p>
+
+                    <div className="card__foot">
+                      {plan.gift ? (
+                        /* У сертификата выбора аккаунта нет: его делает
+                           не тот, кто платит, а тот, кому дарят. */
+                        <p className="card__gift">{plan.gift}</p>
+                      ) : (
+                        <div
+                          role="radiogroup"
+                          aria-label={`Аккаунт для тарифа «${plan.name}»`}
+                          className="card__opts"
+                          onKeyDown={(e) =>
+                            rove(e, 2, acc === 'new' ? 0 : 1, (i2) =>
+                              setAccount((st) => ({
+                                ...st,
+                                [plan.id]: i2 === 0 ? 'new' : 'renew',
+                              })),
+                            )
+                          }
                         >
-                          {title}
-                        </button>
-                      ))}
+                          {(
+                            [
+                              ['new', 'Новый аккаунт'],
+                              ['renew', 'Продлить существующий'],
+                            ] as const
+                          ).map(([key, title]) => (
+                            <button
+                              key={key}
+                              type="button"
+                              role="radio"
+                              aria-checked={acc === key}
+                              tabIndex={acc === key ? 0 : -1}
+                              className="row__opt"
+                              onClick={() => setAccount((s) => ({ ...s, [plan.id]: key }))}
+                            >
+                              {title}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {/*
+                        Оплата — следующий этап разработки. Кнопка, которая
+                        фокусируется, объявляется кнопкой и молча ничего
+                        не делает, хуже честно выключенной: человек решает,
+                        что сайт сломан.
+                      */}
+                      <button
+                        type="button"
+                        className={`btn btn--sm btn--wide${plan.hot ? '' : ' btn--ghost'}`}
+                        disabled
+                        aria-describedby={noteId}
+                      >
+                        Оформить{unavailable ? ' на месяц' : ''}
+                      </button>
                     </div>
-                  )}
-
-                  {/*
-                    Оплата — следующий этап разработки. Кнопка, которая
-                    фокусируется, объявляется кнопкой и молча ничего
-                    не делает, хуже честно выключенной: человек решает,
-                    что сайт сломан.
-                  */}
-                  <button
-                    type="button"
-                    className={`btn btn--sm${plan.hot ? '' : ' btn--ghost'}`}
-                    disabled
-                    aria-describedby={noteId}
-                  >
-                    Оформить{unavailable ? ' на месяц' : ''}
-                  </button>
-                </div>
+                  </div>
+                </article>
               </div>
-            </article>
-          );
-        })}
+            );
+          })}
+        </div>
 
-        {/* Строка идёт ПОВЕРХ рядов и частично перекрывает их чернила. */}
-        <Marquee items={PERKS} />
-      </div>
-
-      <div className="shell">
         <p id={noteId} className="plans__note rv">
           Итоговая сумма к оплате показывается до перехода к оплате. Сама оплата появится
           на следующем этапе разработки, поэтому кнопки оформления пока выключены.

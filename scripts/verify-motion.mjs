@@ -62,7 +62,7 @@ for (const [w, h, mob] of [[390, 844, true], [1920, 1080, false]]) {
   await page.close();
 }
 
-console.log('\nТри приёма середины при «уменьшить движение»:');
+console.log('\nПриёмы середины при «уменьшить движение»:');
 {
   const page = await browser.newPage({
     viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1, reducedMotion: 'reduce',
@@ -77,29 +77,51 @@ console.log('\nТри приёма середины при «уменьшить 
   });
   await page.waitForTimeout(500);
   const before = await page.evaluate(() => ({
-    mq: getComputedStyle(document.querySelector('.mq__ink')).animationName,
-    plan: getComputedStyle(document.querySelector('.plan')).transitionDuration,
+    mq: getComputedStyle(document.querySelector('.mq__track')).animationName,
+    card: getComputedStyle(document.querySelector('.card')).transform,
     panel: getComputedStyle(document.querySelector('.steps__panel')).transform,
-    answers: [...document.querySelectorAll('.qa__a')].map((e) => +getComputedStyle(e).opacity),
+    swap: document.querySelector('.qa').hasAttribute('data-swap'),
+    q: [...document.querySelectorAll('.qa__q')].map((e) => +getComputedStyle(e).opacity),
+    a: [...document.querySelectorAll('.qa__a')].map((e) => +getComputedStyle(e).opacity),
   }));
   for (let i = 0; i < 12; i += 1) { await page.mouse.wheel(0, 90); await page.waitForTimeout(25); }
   await page.waitForTimeout(600);
-  const after = await page.evaluate(() => ({
-    panel: getComputedStyle(document.querySelector('.steps__panel')).transform,
-    answers: [...document.querySelectorAll('.qa__a')].map((e) => +getComputedStyle(e).opacity),
-  }));
-  const hidden = after.answers.filter((v) => v < 0.99).length;
+  const after = await page.evaluate(() =>
+    getComputedStyle(document.querySelector('.steps__panel')).transform);
+  const dim = [...before.q, ...before.a].filter((v) => v < 0.99).length;
   const okMq = before.mq === 'none';
-  /* Глобальное правило сводит переходы к 1e-05s — это и есть «мгновенно»:
-     ноль и стотысячная секунды для глаза одно и то же. */
-  const okPlan = parseFloat(before.plan) <= 0.02;
-  const okPanel = before.panel === after.panel;
-  const okAns = hidden === 0 && after.answers.length === 6;
-  if (!okMq || !okPlan || !okPanel || !okAns) failed = true;
+  const okCard = before.card === 'none' || before.card === 'matrix(1, 0, 0, 1, 0, 0)';
+  const okPanel = before.panel === after;
+  const okAns = dim === 0 && !before.swap && before.q.length === 6 && before.a.length === 6;
+  if (!okMq || !okCard || !okPanel || !okAns) failed = true;
   console.log(`  бегущая строка: animation-name=${before.mq} ${okMq ? '— стоит' : '— ИДЁТ'}`);
-  console.log(`  разворот ряда: transition ${before.plan} ${okPlan ? '— мгновенный' : '— С ПЕРЕХОДОМ'}`);
-  console.log(`  панель блока 3: ${okPanel ? 'не сдвинулась за 12 колёс' : 'ПОЕХАЛА'}`);
-  console.log(`  ответы блока 4: видно ${after.answers.length - hidden} из ${after.answers.length}`);
+  console.log(`  наклон карточки: transform ${before.card} ${okCard ? '— нет' : '— ЕСТЬ'}`);
+  console.log(`  серое поле порядка: ${okPanel ? 'не сдвинулось за 12 колёс' : 'ПОЕХАЛО'}`);
+  console.log(`  вопрос и ответ: видно ${before.q.length + before.a.length - dim} из `
+    + `${before.q.length + before.a.length}, подмена ${before.swap ? 'ВКЛЮЧЕНА' : 'выключена'}`);
+
+  /* ПРЕДМЕТ ОБЯЗАН СТОЯТЬ. По стилям этого не видно вовсе: вращение
+     живёт в сцене, а не в CSS. Сравниваем два растра одного слота
+     с паузой — они обязаны совпасть побитово. */
+  await page.evaluate(() => {
+    const el = document.querySelector('.card__slot');
+    const sc = document.getElementById('scroller');
+    sc.scrollTop += el.getBoundingClientRect().top - sc.clientHeight * 0.3;
+  });
+  await page.waitForTimeout(1400);
+  const box = await page.evaluate(() => {
+    const r = document.querySelector('.card__slot').getBoundingClientRect();
+    return {
+      x: Math.round(r.left), y: Math.round(r.top),
+      width: Math.round(r.width), height: Math.round(r.height),
+    };
+  });
+  const shot1 = await page.screenshot({ clip: box });
+  await page.waitForTimeout(1500);
+  const shot2 = await page.screenshot({ clip: box });
+  const still = Buffer.compare(shot1, shot2) === 0;
+  if (!still) failed = true;
+  console.log(`  предмет в карточке: ${still ? 'не сдвинулся за 1.5 с' : 'ВРАЩАЕТСЯ'}`);
   await page.close();
 }
 

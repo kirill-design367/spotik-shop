@@ -1,146 +1,120 @@
 'use client';
 
-import { useEffect, useId, useRef } from 'react';
-import SceneSlot from '@/components/three/SceneSlot';
+import { useEffect, useRef } from 'react';
 import { onLayoutChange, onScrollY, scroller } from '@/lib/scroll';
 import { prefersReducedMotion } from '@/lib/motion';
-import { glyphShapes } from '@/lib/inkshape';
 
 /**
- * БЛОК 3 — ПРОЯВЛЯЮЩАЯСЯ ПАНЕЛЬ С ИНВЕРСИЕЙ.
+ * БЛОК ПОРЯДКА — ТИХОЕ СЕРОЕ ПОЛЕ, ЕДУЩЕЕ ЗА ШАГАМИ.
  *
- * Список шагов идёт колонкой, а ЗА НИМ по мере прокрутки едет панель.
- * Шаг, оказавшийся над панелью, инвертируется и становится заметнее;
- * соседние, которых панель касается кромкой, инвертируются ЧАСТИЧНО —
- * ровно по фактическому перекрытию, попиксельно.
+ * ⚠️ БЕЛАЯ ПАНЕЛЬ И ДИАГРАММА СНЯТЫ АРТ-ДИРЕКТОРОМ В ДЕВЯТНАДЦАТОЙ
+ * ИТЕРАЦИИ: «наляписто, непонятно куда смотреть, и диаграмма здесь
+ * ни к месту». Вместе с белым полем ушла и инверсия — над серым она
+ * не читается, а серым поле обязано быть, чтобы блок звучал тихо.
+ * Объём уехал в карточки тарифов, здесь не осталось ничего.
  *
- * ── ИНВЕРСИЯ ТЕМ ЖЕ МЕХАНИЗМОМ, ЧТО В ШАПКЕ ────────────────────────────────
- * Никаких списков «где что лежит»: на этом мы обожглись три итерации
- * подряд (Р-47). Слой берёт СВОЙ СОБСТВЕННЫЙ ФОН и прогоняет его через
- * ахроматическую выворотку, обрезанную по форме чернил шагов. Что под
- * ним — белое поле панели, тёмный объём дорожки или фон страницы —
- * он не спрашивает:
+ * Что осталось от приёма: поле едет за прокруткой и отмечает место,
+ * где сейчас читают. Активный шаг там же — белый и полной
+ * непрозрачности, соседние приглушены, переход плавный. Механика веса
+ * ровно та же, что в блоке вопросов (Р-52): вес 0…1 от расстояния
+ * до линии отсчёта, с полкой посередине, и двигает он только
+ * `opacity` — то есть считает его компоновщик.
  *
- *     белое поле панели  #FFFFFF → #000000   21.0:1
- *     тёмный объём       #2A2A2A → #FFFFFF
+ * ── ПОЛЕ РАСТВОРЯЕТСЯ ПО КРАЯМ ────────────────────────────────────────────
+ * Резкой границы у него нет: это градиент, который сходит в фон сверху
+ * и снизу. Прямоугольник с чёткой кромкой читался бы как плашка,
+ * а нужно «слабо различимое поле».
  *
- * Живой текст при этом остаётся на месте и красится `--dim`. Вне панели
- * видно именно его — это и есть «приглушённые». Над панелью поверх него
- * ложится выворотка, и она его полностью накрывает: по сглаженной кромке
- * чёрного глифа #B3B3B3 на белом читается как обычное сглаживание.
- *
- * ── ПОЧЕМУ СЛОЙ РАЗМЕРОМ С ПАНЕЛЬ, А НЕ СО ВЕСЬ СПИСОК ─────────────────────
- * `backdrop-filter` стоит пропорционально площади, а фон под ним меняется
- * на каждом кадре прокрутки — панель едет. Слой во весь список был бы
- * тысячей пикселей высоты вместо двухсот. Поэтому слой едет ВМЕСТЕ
- * с панелью, а его обрезка компенсирует это обратным трансформом
- * НА САМОМ `clipPath` (так можно, Р-43): фигура остаётся стоять
- * на чернилах, а площадь фильтра равна панели.
- *
- * В кадре отсюда уходит РОВНО ТРИ ЗАПИСИ и ни одного чтения геометрии:
- * трансформ панели, трансформ слоя и обратный трансформ обрезки.
- *
- * ── ЗАПАСНОЙ ВАРИАНТ ───────────────────────────────────────────────────────
- * Белым поле панели становится ТОЛЬКО когда выворотка поддержана И фигура
- * собрана. Иначе панель остаётся `--surface`, и приглушённый текст на ней
- * читается как обычно: 7.7:1.
+ * ── ЧТО СЧИТАЕТСЯ В КАДРЕ ──────────────────────────────────────────────────
+ * Один трансформ поля и пять записей переменной. Ни одного чтения
+ * геометрии: центры шагов сняты один раз при раскладке.
  */
 export type Step = { t: string; d: string };
 
-/** Где в экране стоит точка отсчёта хода панели. */
-const REF = 0.5;
+/** Линия отсчёта в экране, ширина зоны затухания и полка. */
+const REF = 0.46;
+const BAND = 0.9;
+const PLATEAU = 0.5;
 
 export default function Steps({ steps }: { steps: Step[] }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const inkRef = useRef<HTMLDivElement>(null);
-  const clipRef = useRef<SVGClipPathElement>(null);
-  const clipId = `how-c-${useId().replace(/[^a-zA-Z0-9-]/g, '')}`;
 
   useEffect(() => {
     const root = rootRef.current;
     const panel = panelRef.current;
-    const ink = inkRef.current;
-    const clip = clipRef.current;
     const sc = scroller();
-    if (!root || !panel || !ink || !clip || !sc) return;
+    if (!root || !panel || !sc) return;
 
-    let start = 0;
-    let span = 1;
+    let items: HTMLElement[] = [];
+    let mids: number[] = [];
+    let band = 1;
+    let top = 0;
     let travel = 0;
+    let half = 0;
 
-    const build = () => {
-      /* Геометрия снимается ЗДЕСЬ и только здесь: в кадре прокрутки
-         ни одного чтения. */
-      const base = sc.getBoundingClientRect().top - sc.scrollTop;
+    const measure = () => {
+      /* Геометрия снимается ЗДЕСЬ и только здесь. */
+      const shift = sc.getBoundingClientRect().top - sc.scrollTop;
       const r = root.getBoundingClientRect();
-      const ph = panel.offsetHeight;
-      travel = Math.max(0, r.height - ph);
-      start = r.top - base - sc.clientHeight * REF;
-      span = Math.max(1, r.height);
-
-      /* Фигура чернил — по всем шагам разом, в системе координат списка.
-         По словам: у описаний по сотне знаков, и политерно это были бы
-         тысячи узлов ради точности, которой внутри слова взяться неоткуда. */
-      const shapes: SVGTextElement[] = [];
-      for (const el of root.querySelectorAll<HTMLElement>('.step__n, .step__t, .step__d')) {
-        shapes.push(...glyphShapes(el, r.left, r.top, 'word'));
-      }
-      clip.replaceChildren(...shapes);
-      root.toggleAttribute('data-ink', shapes.length > 0);
+      top = r.top - shift;
+      half = panel.offsetHeight / 2;
+      travel = Math.max(0, r.height - panel.offsetHeight);
+      items = Array.from(root.querySelectorAll<HTMLElement>('.step'));
+      mids = items.map((el) => {
+        const b = el.getBoundingClientRect();
+        return b.top - shift + b.height / 2;
+      });
+      const step =
+        mids.length > 1 ? (mids[mids.length - 1] - mids[0]) / (mids.length - 1) : sc.clientHeight;
+      band = Math.max(1, step * BAND);
     };
 
     let last = -1;
     const put = (y: number) => {
       if (y === last) return;
       last = y;
-      const t = `translate3d(0, ${y.toFixed(2)}px, 0)`;
-      panel.style.transform = t;
-      ink.style.transform = t;
-      /* Обратный сдвиг обрезки: слой едет, фигура стоит. */
-      clip.setAttribute('transform', `translate(0, ${(-y).toFixed(2)})`);
+      panel.style.transform = `translate3d(0, ${y.toFixed(2)}px, 0)`;
     };
 
-    build();
-    const offLayout = onLayoutChange(build);
-    document.fonts?.ready.then(build).catch(() => {});
+    measure();
 
-    /* При «уменьшить движение» панель не едет вовсе — она просто стоит
-       посередине списка. Инверсия от этого не страдает: она и так
-       считается по положению, а не по времени. */
+    /* При «уменьшить движение» поле стоит посередине списка, а шаги все
+       на полной яркости: вес по умолчанию равен единице, и задаёт это
+       CSS — подписки здесь просто не заводится. */
     if (prefersReducedMotion()) {
-      const still = () => put(travel / 2);
-      still();
-      const offStill = onLayoutChange(still);
-      return () => {
-        offLayout();
-        offStill();
+      const still = () => {
+        measure();
+        put(travel / 2);
       };
+      still();
+      return onLayoutChange(still);
     }
 
     const read = (y: number) => {
-      const p0 = (y - start) / span;
-      put((p0 < 0 ? 0 : p0 > 1 ? 1 : p0) * travel);
+      const line = y + sc.clientHeight * REF;
+      const p = line - top - half;
+      put(p < 0 ? 0 : p > travel ? travel : p);
+      for (let i = 0; i < items.length; i += 1) {
+        const raw = 1 - Math.abs(mids[i] - line) / band;
+        const w = raw <= 0 ? 0 : raw >= PLATEAU ? 1 : raw / PLATEAU;
+        items[i].style.setProperty('--w', w.toFixed(3));
+      }
     };
+
+    const offLayout = onLayoutChange(measure);
     const offScroll = onScrollY(read);
     return () => {
       offLayout();
       offScroll();
+      for (const el of items) el.style.removeProperty('--w');
     };
   }, [steps]);
 
   return (
     <div ref={rootRef} className="steps">
-      {/* Панель лежит ПОД списком: она проявляется за ним, а не поверх. */}
-      <div ref={panelRef} className="steps__panel" aria-hidden="true">
-        <SceneSlot
-          kind="gift"
-          seed={7}
-          label="Звуковая дорожка Spotik Shop в объёме"
-          className="steps__slot"
-          mountMargin="0px"
-        />
-      </div>
+      {/* Поле лежит ПОД списком и ничего не рисует, кроме себя. */}
+      <div ref={panelRef} className="steps__panel" aria-hidden="true" />
 
       <ol className="steps__list">
         {steps.map((s, i) => (
@@ -151,18 +125,6 @@ export default function Steps({ steps }: { steps: Step[] }) {
           </li>
         ))}
       </ol>
-
-      {/* Слой выворотки. Едет вместе с панелью и ничего не знает о том,
-          что под ним лежит. */}
-      <div
-        ref={inkRef}
-        className="steps__ink"
-        aria-hidden="true"
-        style={{ clipPath: `url(#${clipId})` }}
-      />
-      <svg className="steps__clip" aria-hidden="true" focusable="false">
-        <clipPath ref={clipRef} id={clipId} clipPathUnits="userSpaceOnUse" />
-      </svg>
     </div>
   );
 }

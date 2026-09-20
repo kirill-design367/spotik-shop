@@ -1,17 +1,18 @@
 import Hero from '@/components/sections/Hero';
 import Pricing from '@/components/sections/Pricing';
+import Marquee from '@/components/mid/Marquee';
 import HowItWorks from '@/components/sections/HowItWorks';
 import Faq from '@/components/sections/Faq';
 import Footer from '@/components/sections/Footer';
 import RevealRoot from '@/components/chrome/RevealRoot';
+import { PERKS } from '@/lib/plans';
 
 /**
- * СЕРЕДИНА СТРАНИЦЫ — ТРИ БЛОКА, А НЕ ПЯТЬ (восемнадцатая итерация).
+ * ХИРО · ТАРИФЫ · БЕГУЩАЯ СТРОКА · КАК ЭТО РАБОТАЕТ · ВОПРОСЫ · ФУТЕР.
  *
- * «Преимущества» и «Сертификат» отдельными секциями исчезли, но тексты
- * не выброшены: пять преимуществ идут бегущей строкой поверх рядов
- * тарифа, сертификат стал четвёртым тарифом. Дорожка теперь такая:
- * 01 хиро · 02 тарифы · 03 как это работает · 04 вопросы · 05 футер.
+ * Надзаголовков и номеров у блоков больше нет (девятнадцатая итерация):
+ * блок понятен по своему заголовку. Бегущая строка — не часть тарифов,
+ * а самостоятельная полоса во всю ширину между двумя блоками.
  */
 export default function Page() {
   return (
@@ -19,6 +20,7 @@ export default function Page() {
       <main id="main" tabIndex={-1}>
         <Hero />
         <Pricing />
+        <Marquee items={PERKS} />
         <HowItWorks />
         <Faq />
       </main>
