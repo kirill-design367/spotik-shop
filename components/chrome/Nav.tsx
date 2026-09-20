@@ -70,12 +70,15 @@ const LINKS: [id: string, label: string][] = [
   ['faq', 'Вопросы'],
 ];
 
-/* Полосы бургера: две по 5 px с просветом 4, общий бокс 26×14. Числа
-   живут здесь и в правилах `.nav__burger-bars` — и больше нигде. */
+/* Полосы бургера: две по 5 px с просветом 4, общий бокс 26×14, концы
+   скруглены на 2 px. Числа живут здесь и в правилах
+   `.nav__burger-bars` — и больше нигде. */
 const BURGER_BARS: [number, number][] = [
   [0, 5],
   [9, 14],
 ];
+/** Скругление концов полос. Обязано совпадать с `border-radius` в CSS. */
+const BURGER_R = 2;
 
 export default function Nav() {
   const [open, setOpen] = useState(false);
@@ -187,7 +190,7 @@ export default function Nav() {
       const bars = nav.querySelector<HTMLElement>('.nav__burger-bars');
       if (bars && bars.offsetParent !== null) {
         const r = bars.getBoundingClientRect();
-        for (const [y0, y1] of BURGER_BARS) ink.appendChild(rectShape(r, ox, oy, y0, y1));
+        for (const [y0, y1] of BURGER_BARS) ink.appendChild(rectShape(r, ox, oy, y0, y1, BURGER_R));
       }
 
       /* Слой выворотки включается ТОЛЬКО когда фигура собрана: пока её нет,

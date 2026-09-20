@@ -277,7 +277,44 @@ for (const [w, h, mob] of [
     }
   }
 
-  if (backSlip || fwdSlip || orderBad || !okEnds || !okDraw || !okLive || !okWhen || !okAhead || crossed)
+  /* ── ЛИНИЯ ОБЯЗАНА ВЫХОДИТЬ ЗА ОБА КРАЯ ЭКРАНА ─────────────────────
+     Постановка двадцать второй итерации: «петли должны уходить
+     за левый и правый край вьюпорта и возвращаться». Проверяется
+     РАСТРОМ готового кадра, а не координатами пути: координаты — это
+     модель предмета, а нужен результат. Перебираем блок сверху донизу
+     и смотрим, коснулась ли зелень крайнего столбца пикселей слева
+     и справа. */
+  let touchL = 0;
+  let touchR = 0;
+  for (let t = 0; t <= 1.0001; t += 0.05) {
+    await park(range.from + total * t);
+    const band = await page.evaluate(() => {
+      const r = document.querySelector('.route').getBoundingClientRect();
+      const y = Math.max(0, Math.round(r.top));
+      const hh = Math.round(Math.min(r.bottom, window.innerHeight) - y);
+      return hh > 8 ? { x: 0, y, width: window.innerWidth, height: hh } : null;
+    });
+    if (!band) continue;
+    const png = PNG.sync.read(await page.screenshot({ clip: band }));
+    for (let yy = 0; yy < png.height; yy += 1) {
+      for (const [xx, side] of [[0, 'L'], [png.width - 1, 'R']]) {
+        const i = (yy * png.width + xx) * 4;
+        const rr = png.data[i];
+        const gg = png.data[i + 1];
+        const bb = png.data[i + 2];
+        if (gg > 40 && gg > rr + 14 && gg > bb + 14) {
+          if (side === 'L') touchL += 1;
+          else touchR += 1;
+        }
+      }
+    }
+  }
+  const okOut = touchL > 0 && touchR > 0;
+
+  if (
+    backSlip || fwdSlip || orderBad || !okEnds || !okDraw || !okLive || !okWhen || !okAhead ||
+    crossed || !okOut
+  )
     failed = true;
 
   console.log(
@@ -295,7 +332,9 @@ for (const [w, h, mob] of [
       .map((v) => (v === null ? '—' : v.toFixed(2)))
       .join(' / ')} высоты экрана (самый поздний ${lowest.toFixed(2)}, порог 0.50)  ` +
       `маршрут при низе блока на 0.7 экрана: ${early.p.toFixed(3)}  ` +
-      `строк перерезано линией ${crossed} из ${geo.rects.length}` +
+      `строк перерезано линией ${crossed} из ${geo.rects.length}  ` +
+      `за край экрана: слева ${touchL} px, справа ${touchR} px` +
+      (okOut ? '' : '   !!! ЛИНИЯ НЕ ВЫХОДИТ ЗА КРАЙ') +
       (okWhen ? '' : '   !!! ЗАГОРАЕТСЯ ПОЗДНО') +
       (okAhead ? '' : '   !!! МАРШРУТ НЕ ДОЙДЁН') +
       (crossed ? '   !!! ЛИНИЯ РЕЖЕТ ТЕКСТ' : ''),

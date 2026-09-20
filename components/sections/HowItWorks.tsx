@@ -38,7 +38,7 @@ const STEPS: Step[] = [
 
 export default function HowItWorks() {
   return (
-    <section id="how" className="section">
+    <section id="how" className="section section--clipx">
       <div className="shell">
         <SectionHead title="Как это работает" quiet />
 

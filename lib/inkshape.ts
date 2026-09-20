@@ -140,11 +140,23 @@ export function glyphShapes(
 }
 
 /** Прямоугольник в ту же систему координат — для полос бургера и им подобных. */
-export function rectShape(r: DOMRect, ox: number, oy: number, y0 = 0, y1 = r.height): SVGRectElement {
+export function rectShape(
+  r: DOMRect,
+  ox: number,
+  oy: number,
+  y0 = 0,
+  y1 = r.height,
+  rx = 0,
+): SVGRectElement {
   const box = document.createElementNS(NS, 'rect');
   box.setAttribute('x', (r.left - ox).toFixed(2));
   box.setAttribute('y', (r.top - oy + y0).toFixed(2));
   box.setAttribute('width', r.width.toFixed(2));
   box.setAttribute('height', (y1 - y0).toFixed(2));
+  /* Скругление концов полос бургера. Число обязано совпадать
+     с `border-radius` в CSS: фигура выворотки и живой знак — это
+     один и тот же знак, и разойдись они, шапка нарисовала бы
+     чернила рядом с настоящими. */
+  if (rx > 0) box.setAttribute('rx', rx.toFixed(2));
   return box;
 }

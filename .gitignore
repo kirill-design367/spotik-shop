@@ -22,3 +22,8 @@ next-env.d.ts
 .shots/wmcap/
 # рабочие кадры полосы шапки
 .shots/nav/
+# рабочие кадры двадцать второй итерации
+.shots/qa/
+.shots/cards/
+.shots/route/
+.shots/menu/
