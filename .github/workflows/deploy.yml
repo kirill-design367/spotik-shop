@@ -205,11 +205,22 @@ jobs:
           # текущая плюс четыре предыдущие. Заглушку первичной
           # настройки не трогаем — она весит килобайт и нужна,
           # если когда-нибудь каталог опустеет.
+          #
+          # ⚠️ ЦЕПОЧКА СОБИРАЕТСЯ В ПЕРЕМЕННУЮ, А НЕ ГОНИТСЯ В `while`.
+          # При `pipefail` grep, не нашедший НИ ОДНОЙ строки, роняет
+          # весь конвейер — а «убирать нечего» это нормальное
+          # состояние первых четырёх выкладок. На этом и упал первый
+          # прогон: симлинк уже переключился, сайт уже жил, а шаг
+          # доложил провал и пропустил проверку.
           cd /srv/spotik/releases
           keep="$(basename "$(readlink -f /srv/spotik/current)")"
-          ls -1dt */ 2>/dev/null | sed 's#/$##' \
-            | grep -vx "$keep" | grep -vx placeholder \
-            | tail -n +5 | while read -r old; do echo "  убираю $old"; rm -rf -- "$old"; done
+          stale="$(ls -1dt */ 2>/dev/null | sed 's#/$##' \
+            | grep -vx "$keep" | grep -vx placeholder | tail -n +5 || true)"
+          if [ -n "$stale" ]; then
+            printf '%s\n' "$stale" | while read -r old; do echo "  убираю $old"; rm -rf -- "$old"; done
+          else
+            echo "  старых версий на удаление нет"
+          fi
           echo "версии на сервере:"
           ls -1dt */ | sed 's#/$##; s/^/  /'
           REMOTE
