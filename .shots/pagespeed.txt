@@ -9,7 +9,7 @@
 
 === ДЕСКТОП ===
 производительность 100   доступность 100   практики 100   SEO 100
-  First Contentful Paint            0.3 s
+  First Contentful Paint            0.2 s
   Largest Contentful Paint          0.5 s
   Total Blocking Time                0 ms
   Cumulative Layout Shift               0
