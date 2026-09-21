@@ -477,6 +477,78 @@ for (const [w, h, mob] of [
   }
   const okFront = aboveN < 0 || belowN < 0 || aboveN > belowN * 2 + 20;
 
+  /* ── ДВЕ СТРОКИ ДВАДЦАТЬ ПЯТОЙ ИТЕРАЦИИ ─────────────────────────
+     Обе про дефект, которого Chromium не показывает: на живом
+     iPhone линия шла через цифры 1–3 и пропадала у 4 и 5.
+
+     1. НИ ОДНОГО ГРУППОВОГО `opacity` В ЛЕНТЕ. `opacity` на пути —
+        это свойство ГРУППЫ: движок рисует элемент в отдельный
+        буфер размером с его bbox и накладывает буфер. У тусклой
+        ленты bbox — весь блок; WebKit на iOS ограничивает размер
+        такого буфера и УСЕКАЕТ его, сохраняя начало координат,
+        то есть теряет НИЗ. Прозрачность обводки задаётся
+        `stroke-opacity`: она множит альфу самой краски, буфера
+        не заводит вовсе. Chromium рисует одинаково в обоих
+        случаях — поэтому сторож и нужен.
+
+     2. НИ ОДНОГО ПОВОРОТА КРУЧЕ ПОРОГА. «Угловато» — это малый
+        радиус кривизны, и он считается по готовому пути,
+        а не обсуждается. */
+  const layers = await page.evaluate(() => {
+    const bad = [];
+    for (const el of document.querySelectorAll('.route__svg path, .route__svg g')) {
+      const o = getComputedStyle(el).opacity;
+      if (o !== '1') bad.push(`${el.getAttribute('class') || el.tagName}=${o}`);
+    }
+    return bad;
+  });
+  const okLayer = layers.length === 0;
+
+  const curve = await page.evaluate(() => {
+    const p = document.querySelector('.route__dim');
+    if (!p || (p.getAttribute('d') || '').length < 8) return null;
+    const L = p.getTotalLength();
+    const pts = [];
+    for (let s = 0; s <= L; s += 4) pts.push(p.getPointAtLength(s));
+    let min = Infinity;
+    let tight = 0;
+    for (let i = 1; i < pts.length - 1; i += 1) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const c = pts[i + 1];
+      const ab = Math.hypot(b.x - a.x, b.y - a.y);
+      const bc = Math.hypot(c.x - b.x, c.y - b.y);
+      const ca = Math.hypot(a.x - c.x, a.y - c.y);
+      const area2 = Math.abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y));
+      if (area2 < 1e-6) continue;
+      const r = (ab * bc * ca) / (2 * area2);
+      if (r < min) min = r;
+      if (r < 18) tight += 1;
+    }
+    return { min: Number.isFinite(min) ? min : -1, tight, n: pts.length };
+  });
+  const okCurve = !!curve && curve.min >= 18 && curve.tight === 0;
+
+  /* Размер куска в пикселях УСТРОЙСТВА: второй заслон от того же
+     предела. Даже если какой-то движок всё-таки заведёт буфер,
+     он будет маленьким. */
+  const chunk = await page.evaluate((dpr) => {
+    let wMax = 0;
+    let hMax = 0;
+    let live = 0;
+    for (const el of document.querySelectorAll('.route__chunk .route__halo--3')) {
+      if ((el.getAttribute('d') || '').length < 8) continue;
+      live += 1;
+      const b = el.getBBox();
+      wMax = Math.max(wMax, b.width);
+      hMax = Math.max(hMax, b.height);
+    }
+    return { w: Math.round(wMax * dpr), h: Math.round(hMax * dpr), live };
+  }, mob ? 3 : 1);
+  const okChunk = chunk.live > 0 && chunk.w <= 2048 && chunk.h <= 2048;
+
+  if (!okLayer || !okCurve || !okChunk) failed = true;
+
   if (
     backSlip || fwdSlip || orderBad || !okEnds || !okDraw || !okLive || !okWhen || !okAhead ||
     crossed || !okOut || !okFront || !okThru || !okPast
@@ -514,6 +586,15 @@ for (const [w, h, mob] of [
       (okWhen ? '' : '   !!! ЗАГОРАЕТСЯ ПОЗДНО') +
       (okAhead ? '' : '   !!! МАРШРУТ НЕ ДОЙДЁН') +
       (crossed ? '   !!! ЛИНИЯ РЕЖЕТ ТЕКСТ' : ''),
+  );
+  console.log(
+    `            самый крутой поворот ${curve ? curve.min.toFixed(1) : '—'} px ` +
+      `(порог 18), круче порога ${curve ? curve.tight : '—'} из ${curve ? curve.n : 0}  ` +
+      `кусков живых ${chunk.live}, самый крупный ${chunk.w}×${chunk.h} пикселей устройства (порог 2048)  ` +
+      `группового opacity в ленте: ${layers.length ? layers.join(', ') : 'нет'}` +
+      (okCurve ? '' : '   !!! УГЛОВАТЫЙ ПОВОРОТ') +
+      (okChunk ? '' : '   !!! КУСОК БОЛЬШЕ ПРЕДЕЛА СЛОЯ') +
+      (okLayer ? '' : '   !!! ГРУППОВОЙ OPACITY: НА iOS НИЗ ЛЕНТЫ ПРОПАДЁТ'),
   );
   await page.close();
 }

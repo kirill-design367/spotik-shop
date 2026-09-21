@@ -84,7 +84,6 @@ const SCROLL_HOLD = 260;
 
 type Card = {
   el: HTMLElement;
-  aura: HTMLElement | null;
   i: number;
   /* текущее, скорость, цель */
   rx: number;
@@ -108,9 +107,6 @@ type Card = {
   wx: number;
   wy: number;
   wz: number;
-  ax: number;
-  ay: number;
-  az: number;
   wp: number;
   wq: number;
   ws: number;
@@ -118,12 +114,10 @@ type Card = {
 
 export function attachCards(root: HTMLElement): () => void {
   const els = Array.from(root.querySelectorAll<HTMLElement>('.card'));
-  const auras = Array.from(root.querySelectorAll<HTMLElement>('.cards__aura'));
   if (!els.length) return () => {};
 
   const cards: Card[] = els.map((el, i) => ({
     el,
-    aura: auras[i] ?? null,
     i,
     rx: 0, ry: 0, tz: 0,
     vx: 0, vy: 0, vz: 0,
@@ -131,22 +125,26 @@ export function attachCards(root: HTMLElement): () => void {
     px: 0, py: 0, sp: 0, gsp: 0,
     next: 0, last: 0,
     wx: NaN, wy: NaN, wz: NaN,
-    ax: NaN, ay: NaN, az: NaN,
     wp: NaN, wq: NaN, ws: NaN,
   }));
 
   /**
-   * Пишет позу. Карта получает ПРУЖИНУ ПЛЮС ДЫХАНИЕ, ореол — только
-   * пружину.
+   * Пишет позу КАРТЫ — и только её.
    *
-   * ⚠️ И ЭТО НЕ РАССОГЛАСОВАНИЕ, А ЗАМЕР. Ореол — стопка из десяти
-   * колец, и суммарная площадь его заливок больше самой карты:
-   * каждое кольцо закрашивается от кромки наружу на свой spread.
-   * Пока он повторял и дыхание, в покое перерисовывались ВОСЕМЬ
-   * объектов вместо четырёх. Дыхание при этом двигает силуэт
-   * на 1…2 px, а свет вокруг него мягкий на три десятка пикселей —
-   * такого расхождения не видно. Наклон и подъём ореол повторяет
-   * как раньше: там сдвиг уже заметный.
+   * ⚠️ СВЕТ ЗА КАРТОЙ ЭТОТ ЦИКЛ НЕ ТРОГАЕТ ВООБЩЕ, и это условие
+   * постановки, а не экономия. Свет — размытый слой, а размытие
+   * пересчитывается на каждое движение слоя: наклоняй его вместе
+   * с картой, и мы платили бы фильтром тридцать раз в секунду.
+   * Слой статичен, состояние он читает из своей карты через
+   * `:has()` в CSS, и в кадре у него меняется только прозрачность.
+   *
+   * До двадцать пятой итерации здесь стояла вторая половина записи:
+   * ореол был стопкой из десяти колец `box-shadow` и повторял
+   * пружину, но НЕ дыхание (иначе в покое перерисовывались восемь
+   * объектов вместо четырёх, 28.5 % кадров дороже бюджета). Колец
+   * больше нет — их жёсткие прямые кромки складывались
+   * в прямоугольник вокруг всей сетки, — и вместе с ними ушла
+   * и вся эта половина.
    */
   const write = (c: Card, bx: number, by: number, bz: number) => {
     const rx = c.rx + bx;
@@ -159,14 +157,6 @@ export function attachCards(root: HTMLElement): () => void {
       c.el.style.setProperty('--rx', rx.toFixed(3));
       c.el.style.setProperty('--ry', ry.toFixed(3));
       c.el.style.setProperty('--tz', tz.toFixed(2));
-    }
-    if (c.aura && (c.ax !== c.rx || c.ay !== c.ry || c.az !== c.tz)) {
-      c.ax = c.rx;
-      c.ay = c.ry;
-      c.az = c.tz;
-      c.aura.style.setProperty('--rx', c.rx.toFixed(3));
-      c.aura.style.setProperty('--ry', c.ry.toFixed(3));
-      c.aura.style.setProperty('--tz', c.tz.toFixed(2));
     }
     /* ⚠️ БЛИК КЭШИРУЕТСЯ ТАК ЖЕ, КАК ПОЗА. Запись `--px/--py/--spot`
        перерисовывает ВСЮ стопку фона плиты — четыре слоя со
@@ -354,10 +344,8 @@ export function attachCards(root: HTMLElement): () => void {
       c.el.removeAttribute('data-press');
       for (const p of ['--rx', '--ry', '--tz', '--px', '--py', '--spot']) {
         c.el.style.removeProperty(p);
-        c.aura?.style.removeProperty(p);
       }
       c.wx = NaN;
-      c.ax = NaN;
       c.wp = NaN;
     }
   };

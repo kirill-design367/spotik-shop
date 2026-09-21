@@ -1,23 +1,34 @@
 /**
- * ВОПРОСЫ: ОТВЕТ БЕЖИТ ОДНОЙ СТРОКОЙ.
+ * ВОПРОСЫ: ОТВЕТ БЕЖИТ ОДНОЙ СТРОКОЙ ПОПЕРЁК ВОПРОСА.
  *
- * Постановка двадцать четвёртой итерации, шесть требований, и каждое
- * проверяется отдельно:
+ * Двадцать пятая итерация переставила саму полосу: была под
+ * вопросом, зелёная и мелкая, стала ПОПЕРЁК вопроса, белая
+ * и крупная. Семь требований, и каждое проверяется отдельно:
  *
  *   1. ответ строго в ОДНУ строку, без переносов;
  *   2. петля БЕЗ ШВА;
  *   3. скорость спокойная;
  *   4. ушёл курсор — строка уходит ПЛАВНО;
  *   5. одновременно бежит ТОЛЬКО ОДНА строка;
- *   6. раскладка НЕ ПРЫГАЕТ, когда строка появилась.
+ *   6. раскладка НЕ ПРЫГАЕТ, когда строка появилась;
+ *   7. строка идёт ПОПЕРЁК НАБОРА вопроса, она БЕЛАЯ,
+ *      а сам вопрос на это время ПРИГЛУШЁН — именно приглушением
+ *      держится читаемость обоих.
  *
- * ⚠️ ПРО МЕТОДИКУ. Три из шести судятся по ГОТОВОМУ КАДРУ или
- * по фактическому трансформу, а не по нашим же числам: шов ловится
- * ПОБИТОВЫМ сравнением начала и конца круга, скорость — сдвигом
- * дорожки за известное время, прыжок раскладки — координатами
- * всех шести вопросов до и после включения строки. Сторож, который
- * читал бы `--dur` и сравнивал его с формулой из предмета, сошёлся
- * бы с ним по построению (Р-47).
+ * ⚠️ ПРО МЕТОДИКУ. Три из семи судятся по ГОТОВОМУ КАДРУ или
+ * по фактическому трансформу, а не по нашим же числам: шов
+ * ловится сравнением начала и конца круга по СТОЛБЦАМ ЧЕРНИЛ,
+ * скорость — сдвигом дорожки за известное время, прыжок раскладки —
+ * координатами всех шести вопросов до и после включения строки.
+ * Сторож, который читал бы `--dur` и сравнивал его с формулой
+ * из предмета, сошёлся бы с ним по построению (Р-47).
+ *
+ * ⚠️ НА ВРЕМЯ СНИМКА ШВА ВОПРОС ПРЯЧЕТСЯ, И ЭТО НЕ ПОДГОНКА.
+ * Полоса теперь лежит ПОВЕРХ набора вопроса, и в её растр
+ * попадают чужие чернила — белые и НЕПОДВИЖНЫЕ. Столбец,
+ * в котором стоит литера вопроса, НИКОГДА не будет пустым —
+ * то есть настоящая пустота в петле спряталась бы за вопросом.
+ * `visibility` раскладку не трогает, и полоса остаётся на месте.
  *
  * ⚠️ ПРО ДВА ПУТИ. На точном указателе строку ведёт `:hover` в CSS,
  * на касаниях — ближайший к линии отсчёта. Это РАЗНЫЕ механизмы,
@@ -58,10 +69,10 @@ function diff(a, b) {
     for (let j = 0; j < img.height; j += 1) {
       for (let i = 0; i < img.width; i += 1) {
         const p = (j * img.width + i) * 4;
-        const r = img.data[p];
-        const g = img.data[p + 1];
-        const bl = img.data[p + 2];
-        if (g > 60 && g > r + 20 && g > bl + 15) c[i] += 1;
+        /* Строка теперь БЕЛАЯ, а не зелёная: чернила
+           опознаются по яркости над фоном `--ink` (18). */
+        const lum = (img.data[p] * 299 + img.data[p + 1] * 587 + img.data[p + 2] * 114) / 1000;
+        if (lum > 70) c[i] += 1;
       }
     }
     return c;
@@ -165,9 +176,16 @@ for (const [w, h, mob] of [
     const a = run.getAnimations()[0];
     return a ? a.effect.getTiming().duration : 0;
   }, K);
+  await page.addStyleTag({ content: '/*noq*/.qa__q{visibility:hidden!important}' });
+  await page.waitForTimeout(150);
   const a0 = dur ? await at(0.5) : null;
   const a1 = dur ? await at(dur - 0.5) : null;
   const seam = a0 && a1 ? diff(a0, a1) : Infinity;
+  await page.evaluate(() => {
+    for (const st of document.querySelectorAll('style'))
+      if (st.textContent.includes('/*noq*/')) st.remove();
+  });
+  await page.waitForTimeout(150);
   const okSeam = seam <= Math.round(strip.width * 0.01);
 
   // ── 3. СКОРОСТЬ ─────────────────────────────────────────────────────
@@ -205,6 +223,54 @@ for (const [w, h, mob] of [
     return worst;
   });
   const okJump = jump < 0.01;
+
+  // ── 7. ПОПЕРЁК ВОПРОСА, БЕЛАЯ, КРУПНАЯ, ВОПРОС ПРИГЛУШЁН ────────────
+  /* Постановка: «строка бежит прямо через набор вопроса», «цвет
+     белый», «кегль крупнее», «пока бежит ответ, сам вопрос
+     приглушается». Все четыре — измеримые величины, и берутся они
+     из живой страницы, а не из наших констант. */
+  /* ⚠️ ПРИГЛУШЕНИЕ ЧИТАЕТСЯ ПОСЛЕ ПЕРЕХОДА, А НЕ СРАЗУ
+     ЗА АТРИБУТОМ. У `opacity` стоит переход в 320 мс, и в тот же
+     кадр `getComputedStyle` честно отдаёт ЕЩЁ ПРЕЖНЕЕ значение —
+     первый заход читал 1.00 и честно падал. */
+  const across = await (async () => {
+    const box = await page.evaluate(() => {
+      const it = document.querySelectorAll('.qa__item')[0];
+      it.removeAttribute('data-on');
+      return Number(getComputedStyle(it.querySelector('.qa__q')).opacity);
+    });
+    await page.evaluate(() => document.querySelectorAll('.qa__item')[0].setAttribute('data-on', ''));
+    await page.waitForTimeout(520);
+    const on = await page.evaluate(() => {
+      const it = document.querySelectorAll('.qa__item')[0];
+      const q = it.querySelector('.qa__q');
+      const tick = it.querySelector('.qa__tick');
+      const cs = getComputedStyle(it.querySelector('.qa__copy'));
+      const qb = q.getBoundingClientRect();
+      const tb = tick.getBoundingClientRect();
+      return {
+        /* Середина полосы обязана лежать ВНУТРИ набора вопроса. */
+        inside: tb.top + tb.height / 2 > qb.top && tb.top + tb.height / 2 < qb.bottom,
+        /* И полоса обязана перекрывать набор, а не касаться его краем. */
+        overlap: Math.min(tb.bottom, qb.bottom) - Math.max(tb.top, qb.top),
+        tickH: tb.height,
+        color: cs.color,
+        size: parseFloat(cs.fontSize),
+        dim: Number(getComputedStyle(q).opacity),
+      };
+    });
+    await page.evaluate(() => document.querySelectorAll('.qa__item')[0].removeAttribute('data-on'));
+    await page.waitForTimeout(400);
+    return { ...on, bright: box };
+  })();
+  const okAcross =
+    across.inside &&
+    across.overlap >= across.tickH * 0.9 &&
+    across.color === 'rgb(255, 255, 255)' &&
+    across.size >= 18 &&
+    across.bright > 0.98 &&
+    across.dim <= 0.5 &&
+    across.dim >= 0.2;
 
   // ── 4 и 5: два пути, и они разные ───────────────────────────────────
   let many = 0;
@@ -289,7 +355,7 @@ for (const [w, h, mob] of [
   const okOnly = many === 0 && seen > 0;
   const okFade = mob || (fade >= 150 && fade <= 900);
 
-  if (!okOne || !okSeam || !okSpeed || !okJump || !okOnly || !okFade) failed = true;
+  if (!okOne || !okSeam || !okSpeed || !okJump || !okOnly || !okFade || !okAcross) failed = true;
   console.log(
     `            строк в ответе ${lines.map((l) => l.rows).join('')}  ` +
       `шов: пустых столбцов ${seam === Infinity ? '—' : seam} из ${strip.width}  ` +
@@ -301,6 +367,12 @@ for (const [w, h, mob] of [
       (okJump ? '' : '   !!! РАСКЛАДКА ПРЫГАЕТ') +
       (okOnly ? '' : '   !!! БЕЖИТ НЕ ОДНА СТРОКА') +
       (okFade ? '' : '   !!! СТРОКА ПРОПАДАЕТ РЫВКОМ'),
+  );
+  console.log(
+    `            поперёк вопроса: перекрытие ${across.overlap.toFixed(0)} из ${across.tickH.toFixed(0)} px, ` +
+      `цвет ${across.color}, кегль ${across.size.toFixed(1)} px, ` +
+      `вопрос ${across.bright.toFixed(2)} → ${across.dim.toFixed(2)}` +
+      (okAcross ? '' : '   !!! СТРОКА НЕ ПОПЕРЁК, НЕ БЕЛАЯ ИЛИ ВОПРОС НЕ ПРИГЛУШЁН'),
   );
   await page.close();
 }

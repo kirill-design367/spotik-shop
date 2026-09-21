@@ -263,6 +263,18 @@ jobs:
           cc=$(curl -sSI --max-time 20 "$BASE/" | tr -d '\r' | awk -F': ' 'tolower($1)=="cache-control"{print $2}')
           case "$cc" in *no-cache*|*no-store*) echo "  ✓ HTML без долгого кэша: $cc";; *) echo "  ✗ у HTML кэш «$cc»"; fail=1;; esac
 
+          if [ "$TLS" = 1 ]; then
+            # ⚠️ HSTS ПРОВЕРЯЕТСЯ И НА ЗНАЧЕНИЕ, А НЕ ТОЛЬКО НА НАЛИЧИЕ.
+            # Срок сейчас суточный намеренно; includeSubDomains
+            # и preload не ставим — и то, и другое необратимо надолго.
+            hs=$(curl -sSI --max-time 20 "$BASE/" | tr -d '\r' | awk -F': ' 'tolower($1)=="strict-transport-security"{print $2}')
+            case "$hs" in
+              *includeSubDomains*|*preload*) echo "  ✗ в HSTS есть includeSubDomains или preload: «$hs»"; fail=1;;
+              max-age=*) echo "  ✓ HSTS: $hs";;
+              *) echo "  ✗ HSTS не пришёл: «$hs»"; fail=1;;
+            esac
+          fi
+
           plain=$(curl -sS -o /dev/null -w '%{size_download}' --max-time 20 "$BASE/")
           gz=$(curl -sS -H 'Accept-Encoding: gzip' -o /dev/null -w '%{size_download}' --max-time 20 "$BASE/")
           if [ "$gz" -lt "$plain" ]; then echo "  ✓ gzip работает: $gz из $plain байт"

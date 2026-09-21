@@ -163,10 +163,18 @@ jobs:
           # ⚠️ `add_header` В ЛОКАЦИИ ОТМЕНЯЕТ ВСЕ УНАСЛЕДОВАННЫЕ.
           # Поэтому общие заголовки лежат отдельным файлом и
           # подключаются В КАЖДОЙ локации, где есть свой add_header.
+          # ⚠️ HSTS ЗДЕСЬ ТОЖЕ, И БЕЗ ЭТОГО ОН НЕ РАБОТАЛ БЫ.
+          # `add_header` в локации отменяет ВСЕ унаследованные,
+          # а локации у нас свои заголовки кэша ставят все до одной:
+          # объявленный только в серверном блоке HSTS до ответа
+          # не дошёл бы ни разу. По http заголовок безвреден —
+          # браузер обязан его игнорировать вне защищённого
+          # соединения.
           cat > /etc/nginx/snippets/spotik-headers.conf <<'CONF'
           add_header X-Content-Type-Options "nosniff" always;
           add_header Referrer-Policy "strict-origin-when-cross-origin" always;
           add_header X-Frame-Options "SAMEORIGIN" always;
+          add_header Strict-Transport-Security "max-age=86400" always;
           CONF
 
           # Раздача статики. ОДИН файл на оба сценария — http-только
@@ -376,6 +384,22 @@ jobs:
             ssl_certificate     /etc/letsencrypt/live/spotik.shop/fullchain.pem;
             ssl_certificate_key /etc/letsencrypt/live/spotik.shop/privkey.pem;
             include /etc/letsencrypt/options-ssl-nginx.conf;
+
+            # ⚠️ HSTS НА СУТКИ, БЕЗ includeSubDomains И БЕЗ preload.
+            # Срок короткий намеренно: заголовок необратим на своё
+            # время — пока он не истёк, браузер отказывается открывать
+            # сайт по http и не даёт обойти ошибку сертификата. Сутки
+            # можно переждать, год — нет. Перед запуском в работу срок
+            # поднимаем до года (открытый вопрос 64).
+            #
+            # Здесь он стоит ВТОРОЙ раз — первый в общем сниппете
+            # заголовков, который подключается в каждую локацию.
+            # Это не дублирование по небрежности: `add_header`
+            # в локации отменяет ВСЕ унаследованные, а локации свои
+            # заголовки кэша ставят все до одной. Серверный
+            # `add_header` нужен для ответов, которые ни в одну
+            # локацию не попали.
+            add_header Strict-Transport-Security "max-age=86400" always;
 
             include snippets/spotik-static.conf;
           }

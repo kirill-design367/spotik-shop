@@ -146,8 +146,15 @@ for (const [name, w, h, mob, cpu] of PROFILES.filter((p) => !ONLY || String(p[1]
 
      Прищемлять надо И карту, И её ореол: они едут одним набором. */
   const NOCARD =
-    '.card,.cards__aura{--rx:0!important;--ry:0!important;--tz:0!important;' +
+    '.card{--rx:0!important;--ry:0!important;--tz:0!important;' +
     '--px:0!important;--py:0!important;--spot:0!important}';
+  /* Свет за картой — СТАТИЧНЫЙ размытый слой, и его цену
+     прищемлением чисел не снять: он их не читает вовсе.
+     Значит его надо мерить СНЯТИЕМ самого слоя — и мерить
+     врозь в покое (там он обязан стоить ноль, размытие
+     считано один раз) и под указателем (там у него меняется
+     прозрачность, а это уже работа в кадре). */
+  const NOGLOW = '.cards__glow{display:none!important}';
   /* Ореолы ленты снимаются, ядро остаётся: меряется цена именно
      свечения, а не самой линии. */
   const NOHALO = '.route__halo{display:none!important}';
@@ -155,6 +162,10 @@ for (const [name, w, h, mob, cpu] of PROFILES.filter((p) => !ONLY || String(p[1]
   await park('.cards', 0.1);
   await page.mouse.move(4, Math.round(h * 0.95));
   await scene(page, '1. КАРТЫ В ПОКОЕ: ЧЕТЫРЕ ДЫШАТ (страница стоит)', NOCARD, () =>
+    page.waitForTimeout(4000),
+  );
+
+  await scene(page, '1а. СВЕТ ЗА КАРТАМИ В ПОКОЕ (страница стоит)', NOGLOW, () =>
     page.waitForTimeout(4000),
   );
 
@@ -176,6 +187,7 @@ for (const [name, w, h, mob, cpu] of PROFILES.filter((p) => !ONLY || String(p[1]
       await page.waitForTimeout(400);
     };
     await scene(page, '2. КАРТЫ ПОД УКАЗАТЕЛЕМ (наклон, фольга, блик)', NOCARD, sweep);
+    await scene(page, '2а. СВЕТ ЗА КАРТАМИ ПОД УКАЗАТЕЛЕМ', NOGLOW, sweep);
   }
 
   await park('.mq', 0.3);

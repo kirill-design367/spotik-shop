@@ -1,15 +1,15 @@
 чанки первого экрана:
-    169.9 KB  255-38f762852691873f.js
+    169.8 KB  255-772f796100d0498f.js
     169.0 KB  4bd1b696-c023c6e3521b1417.js
       8.2 KB  934-d916dd300e581947.js
       8.4 KB  app/layout-a4d7b77541f0c34e.js
       8.5 KB  app/not-found-20e4dd2756df0969.js
-     29.0 KB  app/page-d3b0acbce5e4980e.js
+     28.9 KB  app/page-1b533e8fb3d96a12.js
       0.5 KB  main-app-430fdc162aee449b.js
     110.0 KB  polyfills-42372ed130431b0a.js
-      3.3 KB  webpack-5319f75c3dc9ca88.js
+      3.3 KB  webpack-f75a76404fd448cf.js
 
-всего в критическом пути: 506.9 KB
+всего в критическом пути: 506.6 KB
 three.js в чанках: нет ни в одном
 огибающая звука в чанках: нет ни в одном
 ОК: ни three.js, ни огибающей звука в сборке нет
