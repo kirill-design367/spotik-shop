@@ -384,8 +384,15 @@ jobs:
           # ⚠️ ШРИФТЫ НЕ IMMUTABLE: их имена БЕЗ хэша
           # (`inter-cyrillic.woff2`), и пересборка сабсета не меняет
           # адрес. Год кэша означал бы год со старым шрифтом.
-          location ^~ /fonts/ {
-            alias /srv/spotik/current/public/fonts/;
+          #
+          # ⚠️ И ЛОВИМ ТОЛЬКО ФАЙЛЫ, А НЕ ВЕСЬ ПРЕФИКС. По адресу
+          # `/fonts/` живёт СТРАНИЦА — служебная витрина для отбора
+          # гарнитур (Р-65). Префиксная локация забрала бы и её:
+          # nginx полез бы за каталогом на диск и ответил отказом
+          # вместо страницы. Регулярка по расширению отдаёт с диска
+          # сами файлы, а страницу оставляет приложению.
+          location ~* ^/fonts/[^/]+\.woff2$ {
+            root /srv/spotik/current/public;
             include snippets/spotik-headers.conf;
             add_header Cache-Control "public, max-age=2592000" always;
             access_log off;

@@ -254,8 +254,15 @@ jobs:
           ssh spotik "REL='$REL' bash -s" <<'REMOTE'
           set -euo pipefail
           cd "/srv/spotik/releases/$REL"
-          set -a; . /srv/spotik/env; set +a
-          node scripts/migrate.mjs
+          # ⚠️ ФАЙЛ ОКРУЖЕНИЯ НЕЛЬЗЯ ЗАГРУЖАТЬ ЧЕРЕЗ `.` — ЭТО НЕ
+          # СКРИПТ. Его читает systemd, и значения там лежат как есть,
+          # без кавычек: строка `SMTP_FROM=Spotik Shop <no-reply@…>`
+          # для bash это команда `Shop` с перенаправлением ввода,
+          # и весь шаг падает на ровном месте. Миграциям нужна ровно
+          # одна величина — берём её и только её.
+          DB="$(grep -m1 '^DATABASE_URL=' /srv/spotik/env | cut -d= -f2-)"
+          [ -n "$DB" ] || { echo "::error::в /srv/spotik/env нет DATABASE_URL"; exit 1; }
+          DATABASE_URL="$DB" node scripts/migrate.mjs
           REMOTE
 
       - name: Переключить, перезапустить и прибрать старые
@@ -342,6 +349,9 @@ jobs:
           got=$(curl -fsS --max-time 20 "$BASE/_build.txt" 2>/dev/null | tr -d '\r\n' || echo нет)
           chk "на сайте эта сборка" "$GITHUB_SHA" "$got"
 
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/fonts/inter-cyrillic.woff2" || echo 000)
+          chk "шрифт отдаётся с диска" 200 "$code"
+
           asset=$(grep -o '/_next/static/[A-Za-z0-9._/-]*\.js' /tmp/home.html | head -1)
           [ -n "$asset" ] || { echo "  ✗ в разметке нет ни одного скрипта из _next/static"; fail=1; }
           if [ -n "$asset" ]; then
@@ -378,7 +388,12 @@ jobs:
           # ЛЕНДИНГ. «Главная отдаёт 200» ничего не говорит про
           # кабинет: он мог не подняться из-за базы, ключа или
           # миграции, а главная статическая и живёт из кэша.
-          for p in /cabinet/ /checkout/ /certificate/ /privacy/ /admin/login/; do
+          # ⚠️ `/fonts/` В ЭТОМ СПИСКЕ НЕ СЛУЧАЙНО. Там живёт
+          # СТРАНИЦА — служебная витрина отбора гарнитур, — и рядом
+          # лежит каталог с самими файлами шрифтов. Префиксная
+          # локация nginx однажды забрала страницу себе и ответила
+          # отказом вместо неё.
+          for p in /cabinet/ /checkout/ /certificate/ /privacy/ /admin/login/ /fonts/; do
             code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE$p" || echo 000)
             chk "страница $p" 200 "$code"
           done
