@@ -616,8 +616,14 @@ jobs:
           ssh spotik 'cat > /tmp/spotik-cert.sh' < /tmp/remote/cert.sh
           ssh spotik 'bash /tmp/spotik-cert.sh; r=$?; rm -f /tmp/spotik-cert.sh; exit $r'
 
+      # ⚠️ ЭТОТ ШАГ НЕ ЗАВИСИТ ОТ `skip_cert`, И ЭТО КУПЛЕНО ОТКАЗОМ.
+      # Флажок значит «не трогать сертификат», а не «оставить сайт
+      # без https»: первый заход привязал к нему и конфиг, прогон
+      # с флажком переписал nginx на один только http, и живой сайт
+      # перестал отвечать на 443. Конфиг ставится всегда, когда
+      # сертификат есть на диске; сам скрипт это и проверяет.
       - name: nginx по https с редиректами
-        if: ${{ steps.dns.outputs.ready == '1' && !inputs.skip_cert }}
+        if: ${{ steps.dns.outputs.ready == '1' }}
         run: |
           ssh spotik 'cat > /tmp/spotik-https.sh' < /tmp/remote/https.sh
           ssh spotik 'bash /tmp/spotik-https.sh; r=$?; rm -f /tmp/spotik-https.sh; exit $r'
