@@ -115,18 +115,44 @@ async function nazhat(page, selektor) {
   await page.waitForTimeout(200);
 }
 
+/**
+ * Вход по коду.
+ *
+ * ⚠️ РАБОТАЕМ ВНУТРИ ФОРМЫ ВХОДА, А НЕ ПО ВСЕЙ СТРАНИЦЕ. На странице
+ * сертификата полей `code` ДВА: одно у входа, другое у самого
+ * сертификата. Селектор по всей странице берёт то, которое раньше
+ * в разметке, и код входа однажды уехал не туда — отказ при этом
+ * выглядел как «сертификат не принят».
+ */
 async function voyti(page, pochta, kuda) {
   await page.goto(`http://localhost:${PORT}${kuda}`, { waitUntil: 'networkidle' });
-  await page.fill('input[name="email"]', pochta);
-  await page.click('button[type="submit"]');
-  await page.waitForSelector('input[name="code"]', { timeout: 15000 });
+  const vhod = () => page.locator('form').filter({ has: page.locator('input[name="email"]') }).first();
+  await vhod().locator('input[name="email"]').fill(pochta);
+  await vhod().locator('button[type="submit"]').click();
+
+  // ⚠️ ПОЛЕ КОДА ОПОЗНАЁТСЯ ПО `autocomplete="one-time-code"`,
+  // а не по имени. На странице сертификата полей `code` ДВА: одно
+  // у входа, другое у самого сертификата, — и селектор по имени
+  // берёт то, которое раньше в разметке. Код входа однажды уехал
+  // не туда, и отказ выглядел как «сертификат не принят».
+  const kodovoe = page.locator('input[autocomplete="one-time-code"]');
+  await kodovoe.waitFor({ state: 'visible', timeout: 15000 });
+
   const kod = await kodIzZhurnala(pochta);
   if (!kod) {
     console.log('--- журнал сервера ---\n' + server.zhurnal().slice(-3000) + '\n--- конец ---');
     throw new Error(`кода для ${pochta} нет в журнале`);
   }
-  await page.fill('input[name="code"]', kod);
-  await nazhat(page, 'button[type="submit"]');
+  await kodovoe.fill(kod);
+  const forma = page.locator('form').filter({ has: kodovoe }).first();
+  const bylo = page.url();
+  await forma.locator('button[type="submit"]').click();
+  for (let i = 0; i < 150; i++) {
+    await page.waitForTimeout(100);
+    if (page.url() !== bylo) break;
+  }
+  await page.waitForLoadState('networkidle');
+  await page.waitForTimeout(200);
   return kod;
 }
 
@@ -223,6 +249,14 @@ drug.on('pageerror', (e) => oshibkiJS.push(String(e.message)));
 await voyti(drug, DARENYY, '/certificate/');
 await drug.fill('input[name="code"]', kodSert);
 await nazhat(drug, 'button:has-text("Проверить код")');
+// Второй шаг появляется только если код принят; без явного ожидания
+// отказ выглядит как «тайм-аут на галочке», а не как «код не принят».
+try {
+  await drug.waitForSelector('input[name="consent"]', { timeout: 20000 });
+} catch {
+  console.log('    [страница сертификата] ' + ((await drug.textContent('body')) ?? '').replace(/\s+/g, ' ').slice(0, 500));
+  throw new Error('код сертификата не принят — второй шаг не появился');
+}
 await drug.check('input[name="consent"]');
 await nazhat(drug, 'button:has-text("Активировать")');
 chk('сертификат активирован, заказ в кабинете', drug.url().includes('/cabinet/'), drug.url().replace(`http://localhost:${PORT}`, ''));

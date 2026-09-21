@@ -114,15 +114,15 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 
 async function novyZakaz(plan, period) {
   await page.goto(`http://localhost:${PORT}/checkout/?plan=${plan}&period=${period}`, { waitUntil: 'networkidle' });
-  if (await page.$('input[name="code"]')) {
-    /* уже на шаге кода */
-  } else if (await page.$('input[name="email"]')) {
+  if (await page.$('input[name="email"]')) {
     await page.fill('input[name="email"]', KLIENT);
     await page.click('button[type="submit"]');
-    await page.waitForSelector('input[name="code"]', { timeout: 15000 });
-    await page.fill('input[name="code"]', await kodIzZhurnala(KLIENT));
-    await page.click('button[type="submit"]');
+    const kodovoe = page.locator('input[autocomplete="one-time-code"]');
+    await kodovoe.waitFor({ state: 'visible', timeout: 15000 });
+    await kodovoe.fill(await kodIzZhurnala(KLIENT));
+    await page.locator('form').filter({ has: kodovoe }).first().locator('button[type="submit"]').click();
     await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(400);
   }
   await page.check('input[name="consent"]');
   await page.click('button[type="submit"]');
