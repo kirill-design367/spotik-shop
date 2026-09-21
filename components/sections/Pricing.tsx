@@ -3,7 +3,17 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import SectionHead from './SectionHead';
 import { attachCards } from '@/lib/cards';
-import { PERIODS, PLANS, formatPrice, savings, type PeriodKey } from '@/lib/plans';
+import { PERIODS, PLANS, formatPrice, savings, type Plan, type PeriodKey } from '@/lib/plans';
+
+/**
+ * ⚠️ СОСТАВ ТАРИФОВ ПО-ПРЕЖНЕМУ В `lib/plans.ts`, А ЦЕНЫ ПРИХОДЯТ
+ * СВЕРХУ. Двадцать седьмая итерация перенесла цены в базу, где ими
+ * управляет администратор; страница остаётся статической и получает
+ * их при сборке кадра (см. `revalidate` в app/page.tsx). База
+ * недоступна — приходит `undefined`, и работают прежние умолчания:
+ * лендинг обязан собираться на раннере, где базы нет вовсе.
+ */
+export type CenyTarifov = Record<string, Partial<Record<PeriodKey, number>>>;
 
 /**
  * БЛОК ТАРИФОВ — ЧЕТЫРЕ ГОЛОГРАФИЧЕСКИЕ КАРТЫ СЕТКОЙ ДВА НА ДВА.
@@ -44,7 +54,8 @@ import { PERIODS, PLANS, formatPrice, savings, type PeriodKey } from '@/lib/plan
  * к действию в одном кадре. Приём карточек держится на том, что они
  * лаконичные, и первое же управление внутри это ломает.
  */
-export default function Pricing() {
+export default function Pricing({ ceny }: { ceny?: CenyTarifov }) {
+  const plans: Plan[] = ceny ? PLANS.map((p) => (ceny[p.id] ? { ...p, prices: ceny[p.id]!, pending: Object.keys(ceny[p.id]!).length ? undefined : p.pending } : p)) : PLANS;
   const [period, setPeriod] = useState<PeriodKey>(12);
   const [planId, setPlanId] = useState<string>(PLANS[0].id);
   const [account, setAccount] = useState<Record<string, 'new' | 'renew'>>({});
@@ -60,7 +71,7 @@ export default function Pricing() {
     return root ? attachCards(root) : undefined;
   }, []);
 
-  const plan = PLANS.find((p) => p.id === planId) ?? PLANS[0];
+  const plan = plans.find((p) => p.id === planId) ?? plans[0];
   const total = plan.prices[period];
   const monthOnly = !plan.pending && !total ? plan.prices[1] : undefined;
   const acc = account[plan.id] ?? 'new';
@@ -156,9 +167,9 @@ export default function Pricing() {
           onKeyDown={(e) =>
             rove(
               e,
-              PLANS.length,
-              PLANS.findIndex((p) => p.id === planId),
-              (i) => setPlanId(PLANS[i].id),
+              plans.length,
+              plans.findIndex((p) => p.id === planId),
+              (i) => setPlanId(plans[i].id),
             )
           }
         >
@@ -171,11 +182,11 @@ export default function Pricing() {
               размытие обязано считаться один раз, а состояние
               (покой, наведение, выбор) слой читает из своей карты
               через `:has()` в CSS. */}
-          {PLANS.map((p, i) => (
+          {plans.map((p, i) => (
             <span key={`glow-${p.id}`} className="cards__glow" data-i={i} aria-hidden="true" />
           ))}
 
-          {PLANS.map((p, i) => {
+          {plans.map((p, i) => {
             const t = p.prices[period];
             const m = !p.pending && !t ? p.prices[1] : undefined;
             return (
@@ -258,23 +269,30 @@ export default function Pricing() {
           )}
 
           {/*
-            Оплата — следующий этап разработки. Кнопка, которая
-            фокусируется, объявляется кнопкой и молча ничего не делает,
-            хуже честно выключенной: человек решает, что сайт сломан.
+            ⚠️ КНОПКА ВКЛЮЧЕНА С ДВАДЦАТЬ СЕДЬМОЙ ИТЕРАЦИИ. До неё оплаты
+            на сайте не было вовсе, и выключенная кнопка объясняла себя
+            надписью. Теперь она ведёт на оформление заказа, а выбранные
+            тариф, срок и вид аккаунта уезжают в адрес: страница
+            оформления открывается уже заполненной.
 
-            ⚠️ ПОЧЕМУ ОНА ВЫКЛЮЧЕНА, ОБЪЯСНЯЕТ ОНА САМА. Под кнопкой
-            не осталось ни строки: и цена за месяц, и абзац про будущую
-            оплату сняты арт-директором. Объяснение переехало в надпись —
-            иначе выключенная кнопка остаётся без причины, а это худший
-            из вариантов.
+            Это ССЫЛКА, а не кнопка, и выглядит она ровно так же:
+            у `.btn` уже стоят `inline-flex` и `text-decoration: none`,
+            поэтому разметка меняется, а кадр — нет.
           */}
-          <button type="button" className="btn btn--wide" disabled>
-            {total
-              ? `Оформить за ${formatPrice(total)} ₽ · оплата скоро`
-              : monthOnly
-                ? `Оформить на месяц за ${formatPrice(monthOnly)} ₽ · оплата скоро`
-                : 'Оформить · оплата скоро'}
-          </button>
+          {total || monthOnly ? (
+            <a
+              className="btn btn--wide"
+              href={`/checkout/?plan=${plan.id}&period=${total ? period : 1}${plan.gift ? '' : `&mode=${acc}`}`}
+            >
+              {total
+                ? `Оформить за ${formatPrice(total)} ₽`
+                : `Оформить на месяц за ${formatPrice(monthOnly!)} ₽`}
+            </a>
+          ) : (
+            <button type="button" className="btn btn--wide" disabled>
+              {plan.pending ? 'Оформить · цена уточняется' : 'Оформить · на этот срок не оформляется'}
+            </button>
+          )}
         </div>
       </div>
     </section>

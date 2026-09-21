@@ -1,0 +1,159 @@
+/*
+  КАБИНЕТ, ОФОРМЛЕНИЕ, СЕРТИФИКАТ, ОПЛАТА.
+
+  ⚠️ ЭТОТ ФАЙЛ НЕ ПОПАДАЕТ НА ЛЕНДИНГ. Он импортируется только
+  страницами раздела, и Next кладёт его в их собственный чанк:
+  критический путь главной от него не растёт ни на байт.
+
+  Язык тот же, что у лендинга: палитра плеера, радиус 0 у всего,
+  кроме кнопок, табличные цифры в суммах, поля 20/40/64 px.
+  Мобильная раскладка — САМОСТОЯТЕЛЬНАЯ: одна колонка, крупные
+  цели касания, а не сжатый десктоп (закон 13).
+*/
+
+.page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: calc(var(--nav-h) + 28px) 20px 96px;
+}
+@media (min-width: 768px) { .page { padding-left: 40px; padding-right: 40px; } }
+@media (min-width: 1440px) { .page { padding-left: 64px; padding-right: 64px; } }
+
+.page__h {
+  font-size: clamp(2rem, 6vw, 3.25rem);
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  font-variation-settings: 'wght' 720;
+  margin: 0 0 12px;
+}
+.page__lead { color: var(--dim); max-width: 48ch; margin: 0 0 32px; }
+.page__back { display: inline-block; color: var(--dim); font-size: 14px; margin-bottom: 20px; }
+.page__back:hover { color: #fff; }
+
+.panel {
+  background: var(--surface);
+  padding: 20px;
+  margin: 0 0 16px;
+}
+@media (min-width: 768px) { .panel { padding: 28px; } }
+.panel__h {
+  font-size: clamp(1.0625rem, 2vw, 1.25rem);
+  font-variation-settings: 'wght' 680;
+  margin: 0 0 14px;
+}
+.panel__note { color: var(--dim-2); font-size: 14px; margin: 8px 0 0; }
+
+.field { display: block; margin: 0 0 14px; }
+.field__label { display: block; font-size: 13px; color: var(--dim); margin: 0 0 6px; }
+.field input[type='text'],
+.field input[type='email'],
+.field input[type='password'],
+.field input[type='number'],
+.field select {
+  width: 100%;
+  min-height: 52px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 0;
+  /* Граница интерактивного поля обязана читаться: заливка сама
+     по себе даёт 1.16:1 и нормой 3:1 не является. */
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.34);
+  background: var(--ink);
+  color: #fff;
+  font: inherit;
+  font-size: 16px; /* меньше 16 — iOS зумит поле на фокусе */
+}
+.field input:focus-visible,
+.field select:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+
+.check { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 14px; font-size: 14px; color: var(--dim); }
+.check input { width: 22px; height: 22px; accent-color: var(--green); flex: 0 0 auto; margin-top: 1px; }
+.check a { color: #fff; text-decoration: underline; }
+
+.err {
+  background: color-mix(in srgb, #ff5a5a 16%, var(--ink));
+  box-shadow: inset 0 0 0 1px rgba(255, 90, 90, 0.5);
+  color: #fff;
+  padding: 12px 14px;
+  margin: 0 0 16px;
+  font-size: 14px;
+}
+.ok {
+  background: color-mix(in srgb, var(--green) 14%, var(--ink));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 50%, transparent);
+  color: #fff;
+  padding: 12px 14px;
+  margin: 0 0 16px;
+  font-size: 14px;
+}
+
+.rows { display: grid; gap: 12px; }
+.row2 { display: grid; gap: 12px; }
+@media (min-width: 560px) { .row2 { grid-template-columns: 1fr 1fr; } }
+
+.pick { display: grid; gap: 8px; margin: 0 0 14px; }
+@media (min-width: 560px) { .pick { grid-template-columns: 1fr 1fr; } }
+.pick__btn {
+  min-height: 52px;
+  padding: 0 16px;
+  border: 0;
+  background: var(--ink);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
+  color: var(--dim);
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+  text-align: left;
+}
+.pick__btn[aria-checked='true'] { background: var(--green); color: var(--on-green-dim); box-shadow: none; font-variation-settings: 'wght' 680; }
+
+.sum { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; font-size: 15px; }
+.sum--total { font-size: 19px; font-variation-settings: 'wght' 700; border-top: 1px solid var(--hair); margin-top: 8px; padding-top: 16px; }
+.sum span:first-child { color: var(--dim); }
+.sum--total span:first-child { color: #fff; }
+
+/* ── Кабинет ─────────────────────────────────────────────────── */
+.cab__top { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: baseline; margin: 0 0 24px; }
+.cab__mail { color: var(--dim); font-size: 14px; }
+.cab__balance { font-size: clamp(1.25rem, 3vw, 1.75rem); font-variation-settings: 'wght' 700; }
+
+.order-card { background: var(--surface); padding: 18px 20px; margin: 0 0 12px; }
+.order-card__head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; }
+.order-card__id { color: var(--dim-2); font-size: 13px; }
+.order-card__name { font-size: 17px; font-variation-settings: 'wght' 680; }
+.badge {
+  display: inline-block;
+  padding: 4px 10px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--ink);
+  color: var(--dim);
+}
+.badge--paid { background: var(--green); color: var(--on-green-dim); }
+.badge--work { background: #fff; color: var(--ink); }
+.badge--done { background: var(--green); color: var(--on-green-dim); }
+.badge--cancel { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28); }
+
+.creds { margin: 14px 0 0; display: grid; gap: 10px; }
+.cred {
+  background: var(--ink);
+  padding: 12px 14px;
+  font-size: 14px;
+  display: grid;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+.cred b { font-variation-settings: 'wght' 680; }
+.cred__k { color: var(--dim-2); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }
+
+.cert { background: var(--surface); padding: 16px 18px; margin: 0 0 10px; display: grid; gap: 6px; }
+.cert__code { font-size: clamp(1.0625rem, 3vw, 1.375rem); font-variation-settings: 'wght' 700; letter-spacing: 0.06em; overflow-wrap: anywhere; }
+.cert__meta { color: var(--dim-2); font-size: 13px; }
+.cert--used .cert__code { color: var(--dim-2); text-decoration: line-through; }
+
+.empty { color: var(--dim); padding: 24px 0; }
+
+.legal h2 { font-size: clamp(1.125rem, 2.4vw, 1.5rem); margin: 32px 0 10px; font-variation-settings: 'wght' 680; }
+.legal p, .legal li { color: var(--dim); max-width: 68ch; }
+.legal ul { padding-left: 20px; }

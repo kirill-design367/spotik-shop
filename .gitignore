@@ -27,3 +27,6 @@ next-env.d.ts
 .shots/cards/
 .shots/route/
 .shots/menu/
+
+# Каталог релиза: собирается выкладкой из .next/standalone
+release/

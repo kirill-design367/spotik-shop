@@ -20,7 +20,21 @@ const isProd = process.env.NODE_ENV === 'production';
 const BASE = '';
 
 const nextConfig = {
-  output: 'export',
+  // ⚠️ СТАТИЧЕСКОГО ЭКСПОРТА БОЛЬШЕ НЕТ: двадцать седьмая итерация
+  // принесла кабинет, оформление заказа, оплату и админку, а им нужен
+  // сервер. Лендинг при этом остаётся СТАТИЧЕСКИМ — он собирается
+  // на сборке и отдаётся готовым HTML из кэша (см. `revalidate`
+  // в app/page.tsx), поэтому его скорость не меняется.
+  //
+  // `standalone` вместо обычной сборки: на сервер уезжает один
+  // самодостаточный каталог с вшитыми зависимостями, и `npm ci`
+  // на боевой машине не нужен вовсе.
+  output: 'standalone',
+  // ⚠️ NODEMAILER НЕ БАНДЛИТЬ. Он подтягивает транспорты обычным
+  // `require` по вычисляемому имени, и упакованный webpack'ом
+  // находит не всё. Внешним пакетом он и трассируется в standalone
+  // как есть — целым каталогом.
+  serverExternalPackages: ['nodemailer'],
   images: { unoptimized: true },
   basePath: BASE,
   assetPrefix: BASE,
@@ -28,6 +42,11 @@ const nextConfig = {
   trailingSlash: true,
   reactStrictMode: true,
   productionBrowserSourceMaps: false,
+  // ⚠️ ТОЛЬКО КЛИЕНТ. `removeConsole` вырезает вызовы и в серверных
+  // модулях тоже, а журнал сервера — единственное место, куда до
+  // настройки SMTP уходят коды входа и письма. Серверный журнал
+  // поэтому пишется через process.stdout (lib/server/log.ts),
+  // и вырезать его нечем.
   compiler: { removeConsole: isProd ? { exclude: ['error', 'warn'] } : false },
   // Алиас задан явно: полагаться только на paths из tsconfig оказалось ненадёжно.
   webpack: (config) => {

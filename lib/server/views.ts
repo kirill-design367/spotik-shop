@@ -1,0 +1,297 @@
+/**
+ * Выборки для кабинета и админки.
+ *
+ * ⚠️ РАСШИФРОВКА ЖИВЁТ ЗДЕСЬ И ТОЛЬКО ДЛЯ ДВУХ ЧИТАТЕЛЕЙ:
+ * владельца заказа (его ВЫДАННЫЕ доступы) и оператора, который
+ * ЭТОТ заказ взял (пароль от аккаунта клиента). Ни один другой
+ * вызов открытого текста не получает — постановка двадцать седьмой
+ * итерации.
+ */
+
+import { odna, zapros } from './db';
+import { poprobovatRasshifrovat } from './crypto';
+import { STATUS_SLOVAMI, type Rezhim, type Status } from './orders';
+import { katalog, naytiTarif, srokKratko } from './catalog';
+
+export type SlotKlientu = {
+  idx: number;
+  mode: Rezhim;
+  gotov: boolean;
+  /** Что выдал оператор. Только для mode='new' и только владельцу. */
+  login: string | null;
+  mailPass: string | null;
+  spotifyPass: string | null;
+};
+
+export type ZakazKlientu = {
+  id: number;
+  kind: 'plan' | 'certificate';
+  nazvanie: string;
+  srok: string;
+  status: Status;
+  statusSlovami: string;
+  totalKop: number;
+  balanceKop: number;
+  moneyKop: number;
+  kDoplate: number;
+  poSertifikatu: boolean;
+  sozdan: Date;
+  prichinaOtmeny: string | null;
+  sekretyStyorty: boolean;
+  slots: SlotKlientu[];
+};
+
+export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
+  const rows = await zapros<{
+    id: string;
+    kind: 'plan' | 'certificate';
+    plan_id: string;
+    period: number;
+    status: Status;
+    total_kop: string;
+    balance_kop: string;
+    money_kop: string;
+    source: string;
+    created_at: Date;
+    cancel_reason: string | null;
+    secrets_wiped_at: Date | null;
+  }>(
+    `select id, kind, plan_id, period, status, total_kop, balance_kop, money_kop, source,
+            created_at, cancel_reason, secrets_wiped_at
+       from shop_order where user_id = $1 order by created_at desc limit 100`,
+    [userId],
+  );
+  if (!rows.length) return [];
+  const slots = await zapros<{
+    order_id: string;
+    idx: number;
+    mode: Rezhim;
+    out_login_enc: string | null;
+    out_mail_pass_enc: string | null;
+    out_password_enc: string | null;
+    done_at: Date | null;
+  }>(
+    `select order_id, idx, mode, out_login_enc, out_mail_pass_enc, out_password_enc, done_at
+       from order_slot where order_id = any($1::bigint[]) order by idx`,
+    [rows.map((r) => Number(r.id))],
+  );
+  const spisok = await katalog();
+
+  return rows.map((r) => {
+    const tarif = naytiTarif(spisok, r.plan_id);
+    const svoi = slots.filter((s) => s.order_id === r.id);
+    const total = Number(r.total_kop);
+    const bal = Number(r.balance_kop);
+    const mon = Number(r.money_kop);
+    return {
+      id: Number(r.id),
+      kind: r.kind,
+      nazvanie: r.kind === 'certificate' ? 'Сертификат в подарок' : (tarif?.name ?? r.plan_id),
+      srok: srokKratko(r.period),
+      status: r.status,
+      statusSlovami: STATUS_SLOVAMI[r.status],
+      totalKop: total,
+      balanceKop: bal,
+      moneyKop: mon,
+      kDoplate: Math.max(0, total - bal - mon),
+      poSertifikatu: r.source === 'certificate',
+      sozdan: new Date(r.created_at),
+      prichinaOtmeny: r.cancel_reason,
+      sekretyStyorty: Boolean(r.secrets_wiped_at),
+      slots: svoi.map((s) => ({
+        idx: s.idx,
+        mode: s.mode,
+        gotov: Boolean(s.done_at),
+        login: poprobovatRasshifrovat(s.out_login_enc),
+        mailPass: poprobovatRasshifrovat(s.out_mail_pass_enc),
+        spotifyPass: poprobovatRasshifrovat(s.out_password_enc),
+      })),
+    };
+  });
+}
+
+export async function balans(userId: number): Promise<number> {
+  const r = await odna<{ balance_kop: string }>('select balance_kop from app_user where id = $1', [userId]);
+  return Number(r?.balance_kop ?? 0);
+}
+
+/* ── Админка ───────────────────────────────────────────────────── */
+
+export type StrokaOcheredi = {
+  id: number;
+  plan: string;
+  people: number;
+  period: string;
+  status: Status;
+  paidAt: string | null;
+  createdAt: string;
+  operator: string | null;
+  bySertificate: boolean;
+};
+
+export async function ochered(): Promise<StrokaOcheredi[]> {
+  const rows = await zapros<{
+    id: string;
+    plan_id: string;
+    period: number;
+    status: Status;
+    source: string;
+    paid_at: Date | null;
+    created_at: Date;
+    operator: string | null;
+    slots: string;
+  }>(
+    `select o.id, o.plan_id, o.period, o.status, o.source, o.paid_at, o.created_at,
+            f.email as operator,
+            (select count(*) from order_slot s where s.order_id = o.id)::text as slots
+       from shop_order o
+       left join staff f on f.id = o.operator_id
+      where o.status in ('paid', 'in_work')
+      order by o.paid_at asc nulls last, o.id asc
+      limit 200`,
+  );
+  const spisok = await katalog();
+  return rows.map((r) => ({
+    id: Number(r.id),
+    plan: naytiTarif(spisok, r.plan_id)?.name ?? r.plan_id,
+    people: Number(r.slots),
+    period: srokKratko(r.period),
+    status: r.status,
+    paidAt: r.paid_at ? new Date(r.paid_at).toISOString() : null,
+    createdAt: new Date(r.created_at).toISOString(),
+    operator: r.operator,
+    bySertificate: r.source === 'certificate',
+  }));
+}
+
+export type SlotOperatoru = {
+  id: number;
+  idx: number;
+  mode: Rezhim;
+  gotov: boolean;
+  recoverySent: boolean;
+  /** Открытый текст: только оператору, который взял ЭТОТ заказ. */
+  clientLogin: string | null;
+  clientPassword: string | null;
+  outLogin: string | null;
+  outMailPass: string | null;
+  outPassword: string | null;
+};
+
+export type ZakazOperatoru = {
+  id: number;
+  plan: string;
+  period: string;
+  status: Status;
+  clientEmail: string;
+  operatorId: number | null;
+  operatorEmail: string | null;
+  bySertificate: boolean;
+  totalKop: number;
+  balanceKop: number;
+  moneyKop: number;
+  cancelReason: string | null;
+  secretsWiped: boolean;
+  slots: SlotOperatoru[];
+};
+
+/**
+ * Карточка заказа для админки.
+ *
+ * `moy` — заказ взят ЭТИМ оператором. Только при `moy` наружу уходят
+ * расшифрованные пароли; остальным видна структура заказа и ничего
+ * больше.
+ */
+export async function zakazDlyaAdminki(id: number, staffId: number, admin: boolean): Promise<ZakazOperatoru | null> {
+  const r = await odna<{
+    id: string;
+    plan_id: string;
+    period: number;
+    status: Status;
+    source: string;
+    email: string;
+    operator_id: string | null;
+    operator_email: string | null;
+    total_kop: string;
+    balance_kop: string;
+    money_kop: string;
+    cancel_reason: string | null;
+    secrets_wiped_at: Date | null;
+  }>(
+    `select o.id, o.plan_id, o.period, o.status, o.source, u.email,
+            o.operator_id, f.email as operator_email,
+            o.total_kop, o.balance_kop, o.money_kop, o.cancel_reason, o.secrets_wiped_at
+       from shop_order o
+       join app_user u on u.id = o.user_id
+       left join staff f on f.id = o.operator_id
+      where o.id = $1`,
+    [id],
+  );
+  if (!r) return null;
+  const moy = r.operator_id !== null && Number(r.operator_id) === staffId;
+  const slots = await zapros<{
+    id: string;
+    idx: number;
+    mode: Rezhim;
+    in_login_enc: string | null;
+    in_password_enc: string | null;
+    out_login_enc: string | null;
+    out_mail_pass_enc: string | null;
+    out_password_enc: string | null;
+    recovery_sent_at: Date | null;
+    done_at: Date | null;
+  }>(
+    `select id, idx, mode, in_login_enc, in_password_enc, out_login_enc, out_mail_pass_enc,
+            out_password_enc, recovery_sent_at, done_at
+       from order_slot where order_id = $1 order by idx`,
+    [id],
+  );
+  const spisok = await katalog();
+  return {
+    id: Number(r.id),
+    plan: naytiTarif(spisok, r.plan_id)?.name ?? r.plan_id,
+    period: srokKratko(r.period),
+    status: r.status,
+    clientEmail: r.email,
+    operatorId: r.operator_id ? Number(r.operator_id) : null,
+    operatorEmail: r.operator_email,
+    bySertificate: r.source === 'certificate',
+    totalKop: Number(r.total_kop),
+    balanceKop: Number(r.balance_kop),
+    moneyKop: Number(r.money_kop),
+    cancelReason: r.cancel_reason,
+    secretsWiped: Boolean(r.secrets_wiped_at),
+    slots: slots.map((s) => ({
+      id: Number(s.id),
+      idx: s.idx,
+      mode: s.mode,
+      gotov: Boolean(s.done_at),
+      recoverySent: Boolean(s.recovery_sent_at),
+      clientLogin: moy ? poprobovatRasshifrovat(s.in_login_enc) : null,
+      clientPassword: moy ? poprobovatRasshifrovat(s.in_password_enc) : null,
+      outLogin: moy ? poprobovatRasshifrovat(s.out_login_enc) : null,
+      outMailPass: moy ? poprobovatRasshifrovat(s.out_mail_pass_enc) : null,
+      outPassword: moy ? poprobovatRasshifrovat(s.out_password_enc) : null,
+    })),
+  };
+}
+
+export type ZakrytyyZakaz = { id: number; status: Status; closedAt: string; plan: string; client: string };
+
+export async function zakrytye(limit = 50): Promise<ZakrytyyZakaz[]> {
+  const rows = await zapros<{ id: string; status: Status; closed_at: Date; plan_id: string; email: string }>(
+    `select o.id, o.status, o.closed_at, o.plan_id, u.email
+       from shop_order o join app_user u on u.id = o.user_id
+      where o.status in ('done', 'cancelled')
+      order by o.closed_at desc limit $1`,
+    [limit],
+  );
+  const spisok = await katalog();
+  return rows.map((r) => ({
+    id: Number(r.id),
+    status: r.status,
+    closedAt: new Date(r.closed_at).toISOString(),
+    plan: naytiTarif(spisok, r.plan_id)?.name ?? r.plan_id,
+    client: r.email,
+  }));
+}

@@ -1,17 +1,22 @@
 /**
- * ПРОВЕРКА ОПУБЛИКОВАННОЙ ВЫДАЧИ.
+ * ПРОВЕРКА СОБРАННОГО САЙТА В НАСТОЯЩЕМ БРАУЗЕРЕ.
  *
- * Статический экспорт ломается тихо: страница открывается, но часть
- * ресурсов уходит мимо и отдаёт 404. Ловится это только тем, что выдачу
- * реально поднимают и открывают браузером.
+ * Сборка ломается тихо: страница открывается, но часть ресурсов
+ * уходит мимо и отдаёт 404. Ловится это только тем, что сайт реально
+ * поднимают и открывают браузером.
  *
- * ⚠️ БОЕВОЙ ПУТЬ ТЕПЕРЬ КОРЕНЬ: сайт переехал со страниц GitHub, где жил
+ * ⚠️ ПОДНИМАЕТСЯ БОЕВОЙ СЕРВЕР, А НЕ ПАПКА. До двадцать седьмой
+ * итерации сайт был статическим экспортом, и здесь стоял свой
+ * файловый сервер поверх `out/`. Теперь это приложение, и проверять
+ * надо ровно то, что отдаёт человеку тот же код (scripts/serve-out.mjs).
+ *
+ * ⚠️ БОЕВОЙ ПУТЬ — КОРЕНЬ: сайт переехал со страниц GitHub, где жил
  * подпапкой `/spotik-shop/`, на свой домен. Класс поломки от этого
- * не исчез, а поменял знак: раньше ассет мог уйти МИМО префикса, теперь —
- * получить лишний. Ловится он тем же способом, а сверх того боевой адрес
- * проверяется ЖИВЫМ запросом с раннера после выкладки (deploy.yml).
+ * не исчез, а поменял знак: раньше ассет мог уйти МИМО префикса,
+ * теперь — получить лишний. Сверх того боевой адрес проверяется
+ * ЖИВЫМ запросом с раннера после выкладки (deploy.yml).
  *
- * Скрипт поднимает out/ и требует:
+ * Требуется:
  *   • ноль ответов со статусом 400 и выше;
  *   • ноль ошибок JavaScript;
  *   • ни одного шрифта в состоянии error (состояние unloaded — норма:
@@ -20,56 +25,39 @@
  *   • ни одного горизонтального скролла на трёх эталонных размерах;
  *   • вордмарк занимает заданную долю ширины и НЕ упирается в края,
  *     а его контур непустой (пустой путь тоже «не ломает страницу»,
- *     но это не работа).
+ *     но это не работа);
+ *   • служебные страницы кабинета и оформления ОТКРЫВАЮТСЯ БЕЗ БАЗЫ
+ *     и не роняют ни одной ошибки: сервер поднят без DATABASE_URL.
  */
-import { createServer } from 'node:http';
-import { gzipSync } from 'node:zlib';
-import { readFile, stat } from 'node:fs/promises';
-import { join, extname, resolve } from 'node:path';
 import { launch } from './browser.mjs';
+import { serveOut, PREFIX } from './serve-out.mjs';
 
-const OUT = resolve('out');
-const PREFIX = '';
 const PORT = 4178;
-const MIME = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css',
-  '.woff2': 'font/woff2', '.png': 'image/png', '.svg': 'image/svg+xml',
-  '.json': 'application/json', '.txt': 'text/plain', '.ico': 'image/x-icon',
-};
-
-const server = createServer(async (req, res) => {
-  const url = decodeURIComponent(req.url.split('?')[0]);
-  if (!url.startsWith(PREFIX)) { res.writeHead(404).end('вне basePath'); return; }
-  let f = join(OUT, url.slice(PREFIX.length) || '/');
-  try { if ((await stat(f)).isDirectory()) f = join(f, 'index.html'); } catch {}
-  try {
-    let buf = await readFile(f);
-    const ext = extname(f);
-    const head = { 'content-type': MIME[ext] || 'application/octet-stream' };
-    const compressible = ['.html', '.js', '.css', '.json', '.svg', '.txt'].includes(ext);
-    if (compressible && /gzip/.test(req.headers['accept-encoding'] || '')) {
-      buf = gzipSync(buf);
-      head['content-encoding'] = 'gzip';
-    }
-    head['content-length'] = buf.length;
-    res.writeHead(200, head);
-    res.end(buf);
-  } catch {
-    res.writeHead(404, { 'content-type': 'text/plain' }).end('404');
-  }
-});
-await new Promise((r) => server.listen(PORT, r));
+const server = await serveOut(PORT);
 
 const SIZES = [['мобильный', 390, 844, true], ['десктоп', 1920, 1080, false], ['широкий', 2560, 1440, false]];
-// Страница /fonts была временной витриной для отбора шрифтов и во второй
-// итерации удалена: набор выбран, показывать больше нечего.
-const PAGES = [['главная', `${PREFIX}/`]];
+/**
+ * Лендинг и служебные страницы раздела.
+ *
+ * ⚠️ КАБИНЕТ И ОФОРМЛЕНИЕ ПРОВЕРЯЮТСЯ БЕЗ БАЗЫ НАМЕРЕННО. Сервер
+ * поднят без `DATABASE_URL`, и обе обязаны показать человеческую
+ * строку, а не пятисотый ответ: на живом сайте так выглядит любая
+ * недоступность базы.
+ */
+const PAGES = [
+  ['главная', `${PREFIX}/`, true],
+  ['оформление', `${PREFIX}/checkout/`, false],
+  ['кабинет', `${PREFIX}/cabinet/`, false],
+  ['сертификат', `${PREFIX}/certificate/`, false],
+  ['политика', `${PREFIX}/privacy/`, false],
+  ['админка', `${PREFIX}/admin/login/`, false],
+];
 
 const browser = await launch();
 let failed = 0;
 
-for (const [pname, path] of PAGES) {
-  for (const [sname, w, h, mob] of SIZES) {
+for (const [pname, path, wm] of PAGES) {
+  for (const [sname, w, h, mob] of wm ? SIZES : [SIZES[0], SIZES[1]]) {
     const page = await browser.newPage({
       viewport: { width: w, height: h }, isMobile: mob, hasTouch: mob, deviceScaleFactor: mob ? 2 : 1,
     });
@@ -101,10 +89,10 @@ for (const [pname, path] of PAGES) {
     const fontsUsed = d.fonts.filter((f) => f.endsWith(':loaded')).length;
     // Третья итерация отменила вылет за края: слово вписано в экран
     // с отступом около 0.65 % ширины с каждой стороны.
-    const fill = d.wmWidth ? d.wmWidth / d.ww : null;
+    const fill = wm && d.wmWidth ? d.wmWidth / d.ww : null;
     const fillBad = fill !== null && (fill < 0.96 || fill > 0.995);
 
-    const pathBad = d.dLen < 500;
+    const pathBad = wm && d.dLen < 500;
     const ok = !bad.length && !xscroll && !fontErr.length && !fillBad && !pathBad;
     if (!ok) failed += 1;
     console.log(
@@ -124,5 +112,5 @@ for (const [pname, path] of PAGES) {
 
 await browser.close();
 server.close();
-console.log(failed ? `\nПРОВАЛ: ${failed} проверок не прошло` : '\nВсё прошло: выдача с корня рабочая');
+console.log(failed ? `\nПРОВАЛ: ${failed} проверок не прошло` : '\nВсё прошло: сайт с корня рабочий');
 process.exit(failed ? 1 : 0);

@@ -41,7 +41,25 @@ jobs:
     # прогона были отменены как «зависшие», а на деле между опросами
     # проходили СЕКУНДЫ — фоновый `sleep` не ждёт. Прошедшее время
     # меряют по часам, а не по числу опросов.
-    timeout-minutes: 30
+    timeout-minutes: 40
+
+    # ⚠️ БАЗА В CI — ЭТО НЕ РОСКОШЬ. Без неё сквозные проверки
+    # магазина (заказ, оплата, выдача, сертификат) пропускались бы
+    # молча, и первая настоящая проверка цепочки случалась бы
+    # на живых деньгах.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: proverka
+          POSTGRES_DB: spotik
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -53,31 +71,51 @@ jobs:
       - name: Установить зависимости
         run: npm ci
 
-      - name: Сборка статического экспорта
+      - name: Сборка приложения
         run: npm run build
         env:
           NODE_ENV: production
 
-      - name: Проверить, что выдача собрана ПОД КОРЕНЬ
+      # ⚠️ РЕЛИЗ СОБИРАЕТСЯ ЗДЕСЬ, А НЕ НА СЕРВЕРЕ. `output: standalone`
+      # даёт самодостаточный каталог с вшитыми зависимостями: на боевой
+      # машине не нужен ни `npm ci`, ни сеть до npm. Две вещи Next
+      # не кладёт туда сам, и это его задокументированное поведение:
+      # `.next/static` и `public`.
+      - name: Собрать релиз
         run: |
-          test -f out/index.html
-          test -f out/404.html
-          test -f out/fonts/inter-cyrillic.woff2
-          test -d out/_next/static
-          # Класс поломки поменял знак вместе с переездом: раньше ассет
-          # мог уйти МИМО префикса, теперь — получить лишний. Ловим
-          # обе стороны.
-          grep -q '"/_next/static' out/index.html
-          grep -q "url('/fonts/inter-cyrillic.woff2')" out/index.html
-          if grep -q '/spotik-shop/' out/index.html; then
-            echo "::error::в выдаче остался префикс /spotik-shop/ — сайт живёт в корне домена"; exit 1
+          rm -rf release
+          cp -r .next/standalone release
+          mkdir -p release/.next
+          cp -r .next/static release/.next/static
+          cp -r public release/public
+          # Миграции и их прогон едут вместе с кодом: схему накатывает
+          # ТА ЖЕ версия, которая сейчас встанет.
+          mkdir -p release/scripts
+          cp -r db release/db
+          cp scripts/migrate.mjs release/scripts/migrate.mjs
+
+          test -f release/server.js
+          test -d release/.next/static
+          test -f release/public/fonts/inter-cyrillic.woff2
+          test -f release/db/migrations/001-osnova.sql
+          # Лендинг обязан быть СТАТИЧЕСКИМ: если он вдруг стал
+          # серверным, готовой разметки рядом со сборкой не будет,
+          # и первый экран поехал бы считаться на каждый запрос.
+          test -f release/.next/server/app/index.html
+          # Класс поломки, поменявший знак вместе с переездом с GitHub
+          # Pages: раньше ассет мог уйти МИМО префикса, теперь —
+          # получить лишний. Ловим обе стороны.
+          grep -q '"/_next/static' release/.next/server/app/index.html
+          grep -q "url('/fonts/inter-cyrillic.woff2')" release/.next/server/app/index.html
+          if grep -q '/spotik-shop/' release/.next/server/app/index.html; then
+            echo "::error::в разметке остался префикс /spotik-shop/ — сайт живёт в корне домена"; exit 1
           fi
-          echo "выдача собрана под корень"
+          echo "релиз собран: $(du -sh release | cut -f1)"
 
       # Открывает собранную выдачу в настоящем браузере: 404 на ассетах,
       # ошибки JS, незагруженные шрифты и горизонтальный скролл ловятся
       # только так.
-      - name: Открыть выдачу в браузере
+      - name: Открыть сайт в браузере
         run: |
           npx playwright install --with-deps chromium
           node scripts/verify-export.mjs
@@ -123,6 +161,22 @@ jobs:
           node scripts/verify-menu.mjs
           node scripts/verify-focus.mjs
 
+      # ⚠️ МАГАЗИН ПРОВЕРЯЕТСЯ ЦЕЛИКОМ, А НЕ ПО ЧАСТЯМ. Заказ, оплата
+      # и выдача — три разных места, и ошибка живёт в стыке между
+      # ними. Оба сторожа поднимают настоящий сервер с настоящей
+      # базой и ходят по нему браузером.
+      #
+      # verify-pay отдельно доказывает то, что нельзя проверить
+      # на живой Робокассе, пока у магазина нет ключей: подпись
+      # паролем №2 принимается, паролем №1 — нет, и возврат человека
+      # на страницу успеха не подтверждает ничего.
+      - name: "Проверить магазин: заказ, оплата, выдача, сертификат"
+        env:
+          DATABASE_URL: postgres://postgres:proverka@localhost:5433/spotik
+        run: |
+          node scripts/verify-shop.mjs
+          node scripts/verify-pay.mjs
+
       # Закон проекта: ни three.js, ни огибающей звука в сборке нет
       # вовсе. Сторож у этого закона один, и он должен стоять в CI,
       # а не в голове.
@@ -135,7 +189,7 @@ jobs:
       # состоялось. Сторожа при этом лишнего файла в выдаче не видят.
       - name: Положить метку сборки
         run: |
-          printf '%s\n' "$GITHUB_SHA" > out/_build.txt
+          printf '%s\n' "$GITHUB_SHA" > release/_build.txt
           echo "метка: $GITHUB_SHA"
 
       # ⚠️ ХОСТ, ПОЛЬЗОВАТЕЛЬ И КЛЮЧ УЕЗЖАЮТ В ~/.ssh/config, И ДАЛЬШЕ
@@ -167,8 +221,13 @@ jobs:
           } > ~/.ssh/config
           chmod 600 ~/.ssh/config
           ssh-keyscan -T 10 "$HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
-          ssh spotik 'test -d /srv/spotik/releases' \
-            || { echo "::error::на сервере нет /srv/spotik/releases — сначала прогоните «Первичная настройка сервера»"; exit 1; }
+          # ⚠️ ПРОВЕРЯЕМ ВСЁ ТРИ СРАЗУ И ДО ТОГО, КАК ЧТО-ТО ВЕЗТИ.
+          # Сайт стал приложением: мало каталога — нужны служба
+          # и файл окружения с паролем базы. Без них выкладка упала бы
+          # на перезапуске, УЖЕ переключив симлинк, то есть оставила
+          # бы сервер в худшем состоянии, чем застала.
+          ssh spotik 'test -d /srv/spotik/releases && test -f /etc/systemd/system/spotik.service && test -s /srv/spotik/env' \
+            || { echo "::error::сервер не настроен под приложение (нет каталога, службы spotik.service или /srv/spotik/env) — прогоните «Первичная настройка сервера»"; exit 1; }
 
       # Выкладка БЕЗ ПРОСТОЯ: папка приезжает целиком и только потом
       # подключается. Номер прогона в имени, а не только хэш: повторный
@@ -180,12 +239,26 @@ jobs:
           REL="$(echo "$GITHUB_SHA" | cut -c1-12)-${GITHUB_RUN_NUMBER}"
           echo "rel=$REL" >> "$GITHUB_OUTPUT"
           ssh spotik "mkdir -p /srv/spotik/releases/$REL"
-          rsync -a --delete --chmod=D755,F644 -e ssh out/ "spotik:/srv/spotik/releases/$REL/"
-          ssh spotik "test -f /srv/spotik/releases/$REL/index.html && test -d /srv/spotik/releases/$REL/_next/static" \
+          rsync -a --delete --chmod=D755,F644 -e ssh release/ "spotik:/srv/spotik/releases/$REL/"
+          ssh spotik "test -f /srv/spotik/releases/$REL/server.js && test -d /srv/spotik/releases/$REL/.next/static" \
             || { echo "::error::папка приехала неполной"; exit 1; }
           echo "приехало в /srv/spotik/releases/$REL"
 
-      - name: Переключить и прибрать старые
+      # ⚠️ МИГРАЦИИ ИДУТ ДО ПЕРЕКЛЮЧЕНИЯ СИМЛИНКА. Новая версия кода
+      # не должна встретить старую схему. Прогон идемпотентен:
+      # применённое второй раз не применяется.
+      - name: Накатить миграции
+        env:
+          REL: ${{ steps.put.outputs.rel }}
+        run: |
+          ssh spotik "REL='$REL' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "/srv/spotik/releases/$REL"
+          set -a; . /srv/spotik/env; set +a
+          node scripts/migrate.mjs
+          REMOTE
+
+      - name: Переключить, перезапустить и прибрать старые
         env:
           REL: ${{ steps.put.outputs.rel }}
         run: |
@@ -193,25 +266,43 @@ jobs:
           set -euo pipefail
           prev="$(readlink -f /srv/spotik/current 2>/dev/null || echo -)"
           echo "было:  $prev"
+          chown -R spotik:spotik "/srv/spotik/releases/$REL"
           # ⚠️ ПЕРЕКЛЮЧЕНИЕ АТОМАРНОЕ. `ln -sfn` на существующий
           # симлинк — это unlink + symlink, то есть кадр, в котором
-          # `current` не существует и nginx отдаёт 404. `mv -T` поверх
-          # готового симлинка — один rename(2), и такого кадра нет.
+          # `current` не существует. `mv -T` поверх готового
+          # симлинка — один rename(2), и такого кадра нет.
           ln -sfn "/srv/spotik/releases/$REL" /srv/spotik/current.new
           mv -Tf /srv/spotik/current.new /srv/spotik/current
           echo "стало: $(readlink -f /srv/spotik/current)"
 
+          # ⚠️ ПЕРЕЗАПУСК, А НЕ ПЕРЕЧИТЫВАНИЕ: подменить код на лету
+          # у Next нечем, а WorkingDirectory службы указывает
+          # на симлинк и берётся при старте.
+          systemctl restart spotik
+
+          # ⚠️ ЖДЁМ, ПОКА ПРИЛОЖЕНИЕ ОТВЕТИТ. Пока оно поднимается,
+          # nginx честно отдаёт 502, и выкладка, доложившая успех
+          # в эту секунду, соврала бы.
+          ok=0
+          for i in $(seq 1 60); do
+            code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3000/ || echo 000)"
+            if [ "$code" = "200" ]; then ok=1; echo "  приложение отвечает 200 с попытки $i"; break; fi
+            sleep 0.5
+          done
+          if [ "$ok" != 1 ]; then
+            echo "::error::приложение не поднялось"
+            systemctl status spotik --no-pager -l | tail -30
+            journalctl -u spotik -n 60 --no-pager | tail -60
+            exit 1
+          fi
+
           # Прошлые версии храним, чтобы было куда откатиться:
-          # текущая плюс четыре предыдущие. Заглушку первичной
-          # настройки не трогаем — она весит килобайт и нужна,
-          # если когда-нибудь каталог опустеет.
+          # текущая плюс четыре предыдущие.
           #
           # ⚠️ ЦЕПОЧКА СОБИРАЕТСЯ В ПЕРЕМЕННУЮ, А НЕ ГОНИТСЯ В `while`.
           # При `pipefail` grep, не нашедший НИ ОДНОЙ строки, роняет
           # весь конвейер — а «убирать нечего» это нормальное
-          # состояние первых четырёх выкладок. На этом и упал первый
-          # прогон: симлинк уже переключился, сайт уже жил, а шаг
-          # доложил провал и пропустил проверку.
+          # состояние первых четырёх выкладок.
           cd /srv/spotik/releases
           keep="$(basename "$(readlink -f /srv/spotik/current)")"
           stale="$(ls -1dt */ 2>/dev/null | sed 's#/$##' \
@@ -282,6 +373,21 @@ jobs:
 
           code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/чего-тут-нет/" || echo 000)
           chk "несуществующий путь отдаёт 404" 404 "$code"
+
+          # ⚠️ ЖИВЫМ ЗАПРОСОМ ПРОВЕРЯЕТСЯ И ПРИЛОЖЕНИЕ, А НЕ ТОЛЬКО
+          # ЛЕНДИНГ. «Главная отдаёт 200» ничего не говорит про
+          # кабинет: он мог не подняться из-за базы, ключа или
+          # миграции, а главная статическая и живёт из кэша.
+          for p in /cabinet/ /checkout/ /certificate/ /privacy/ /admin/login/; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE$p" || echo 000)
+            chk "страница $p" 200 "$code"
+          done
+
+          # ResultURL обязан СУЩЕСТВОВАТЬ и обязан ОТКАЗЫВАТЬ без
+          # подписи. Двести здесь было бы хуже пятисотого: значит
+          # «оплачено» ставится кем угодно.
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST "$BASE/api/pay/result/" || echo 000)
+          chk "уведомление без подписи отвергнуто" 400 "$code"
 
           if [ "$TLS" = 1 ]; then
             loc=$(curl -sSI --max-time 20 http://spotik.shop/ | tr -d '\r' | awk -F': ' 'tolower($1)=="location"{print $2}')

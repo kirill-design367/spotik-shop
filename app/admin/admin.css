@@ -1,0 +1,87 @@
+/*
+  ADMIN. Interface language is English — that is the brief.
+
+  Plain and legible on purpose: beauty is secondary here, and an
+  operator reading credentials from the screen needs contrast and
+  spacing, not effects. Palette is the site's, so the two do not
+  look like different products.
+
+  This file is imported by the admin layout only and never reaches
+  the landing bundle.
+*/
+
+.ad {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 24px 16px 96px;
+  font-size: 15px;
+}
+@media (min-width: 768px) { .ad { padding: 32px 32px 120px; } }
+
+.ad__bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  align-items: center;
+  padding: 0 0 18px;
+  border-bottom: 1px solid var(--hair);
+  margin: 0 0 24px;
+}
+.ad__brand { font-variation-settings: 'wght' 760; letter-spacing: -0.02em; font-size: 17px; }
+.ad__nav { display: flex; gap: 14px; flex-wrap: wrap; }
+.ad__nav a { color: var(--dim); }
+.ad__nav a:hover, .ad__nav a[aria-current] { color: #fff; }
+.ad__who { margin-left: auto; color: var(--dim-2); font-size: 13px; }
+
+.ad h1 { font-size: clamp(1.5rem, 3.2vw, 2rem); margin: 0 0 6px; font-variation-settings: 'wght' 720; letter-spacing: -0.02em; }
+.ad h2 { font-size: 1.0625rem; margin: 28px 0 12px; font-variation-settings: 'wght' 680; }
+.ad p.hint { color: var(--dim); margin: 0 0 20px; }
+
+.ad table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.ad th, .ad td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+.ad th { color: var(--dim-2); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; font-variation-settings: 'wght' 600; }
+.ad tr[data-mine] td { background: color-mix(in srgb, var(--green) 10%, transparent); }
+.ad__scroll { overflow-x: auto; }
+
+.ad__card { background: var(--surface); padding: 18px; margin: 0 0 14px; }
+.ad__card h3 { margin: 0 0 12px; font-size: 15px; font-variation-settings: 'wght' 700; }
+
+.ad__kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0 0 14px; }
+.ad__kv dt { color: var(--dim-2); font-size: 13px; }
+.ad__kv dd { margin: 0; overflow-wrap: anywhere; }
+.ad__secret {
+  background: var(--ink);
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.ad__form { display: grid; gap: 10px; max-width: 520px; }
+.ad__row { display: grid; gap: 10px; }
+@media (min-width: 640px) { .ad__row { grid-template-columns: repeat(3, 1fr); } }
+.ad label { display: grid; gap: 4px; font-size: 13px; color: var(--dim); }
+.ad input[type='text'],
+.ad input[type='email'],
+.ad input[type='password'],
+.ad input[type='number'],
+.ad select {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.34);
+  background: var(--ink);
+  color: #fff;
+  font: inherit;
+  font-size: 15px;
+}
+.ad__actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0 0; }
+
+.ad .err, .ad .ok { padding: 10px 12px; margin: 0 0 14px; font-size: 14px; }
+.ad .err { background: color-mix(in srgb, #ff5a5a 16%, var(--ink)); box-shadow: inset 0 0 0 1px rgba(255, 90, 90, 0.5); }
+.ad .ok { background: color-mix(in srgb, var(--green) 14%, var(--ink)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 50%, transparent); }
+
+.ad__tag { display: inline-block; padding: 2px 8px; font-size: 12px; background: var(--ink); color: var(--dim); }
+.ad__tag--paid { background: var(--green); color: var(--on-green-dim); }
+.ad__tag--work { background: #fff; color: var(--ink); }
+.ad__live { color: var(--dim-2); font-size: 12px; }

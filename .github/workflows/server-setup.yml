@@ -157,6 +157,176 @@ jobs:
           fi
           chmod 755 /srv /srv/spotik /var/www/certbot
 
+          echo "══ PostgreSQL ══"
+          apt-get install -y -qq postgresql postgresql-contrib >/dev/null
+          systemctl enable --now postgresql >/dev/null 2>&1 || true
+          echo "  $(psql --version 2>&1)"
+
+          # ⚠️ ПАРОЛЬ БАЗЫ И КЛЮЧ ШИФРОВАНИЯ ГЕНЕРИРУЮТСЯ ЗДЕСЬ,
+          # НА СЕРВЕРЕ, И В GIT НЕ ПОПАДАЮТ НИКОГДА — прямое
+          # требование постановки. Файл окружения читает только root
+          # и служба; при повторном прогоне уже созданные величины
+          # НЕ перегенерируются: новый ключ шифрования означал бы,
+          # что все сохранённые пароли перестали читаться.
+          mkdir -p /srv/spotik
+          touch /srv/spotik/env
+          chmod 600 /srv/spotik/env
+          chown root:root /srv/spotik/env
+
+          zadat() { # zadat ИМЯ ЗНАЧЕНИЕ — только если имени ещё нет
+            if ! grep -q "^$1=" /srv/spotik/env 2>/dev/null; then
+              printf '%s=%s\n' "$1" "$2" >> /srv/spotik/env
+              echo "  $1: создан"
+            else
+              echo "  $1: уже есть, не трогаем"
+            fi
+          }
+
+          DBPASS="$(openssl rand -base64 30 | tr -d '\n/+=' | cut -c1-32)"
+          if sudo -u postgres psql -tAc "select 1 from pg_roles where rolname='spotik'" | grep -q 1; then
+            echo "  роль spotik: уже есть"
+          else
+            sudo -u postgres psql -qc "create role spotik login password '$DBPASS'" >/dev/null
+            echo "  роль spotik: создана"
+          fi
+          if sudo -u postgres psql -tAc "select 1 from pg_database where datname='spotik'" | grep -q 1; then
+            echo "  база spotik: уже есть"
+          else
+            sudo -u postgres createdb -O spotik spotik
+            echo "  база spotik: создана"
+          fi
+          # Пароль пишем в окружение ТОЛЬКО если строки подключения
+          # там ещё нет. Есть — значит база уже живёт с прежним
+          # паролем, и менять его молча нельзя.
+          if ! grep -q '^DATABASE_URL=' /srv/spotik/env; then
+            printf 'DATABASE_URL=%s\n' "postgres://spotik:$DBPASS@127.0.0.1:5432/spotik" >> /srv/spotik/env
+            echo "  DATABASE_URL: создан"
+          else
+            echo "  DATABASE_URL: уже есть, пароль не меняем"
+          fi
+          unset DBPASS
+
+          zadat SPOTIK_CRYPTO_KEY "$(openssl rand -base64 32)"
+          zadat SPOTIK_SITE_URL "https://spotik.shop"
+          zadat NODE_ENV "production"
+          zadat PORT "3000"
+          zadat HOSTNAME "127.0.0.1"
+          # Заготовки: заполняются руками, когда появятся ключи и ящик.
+          zadat SPOTIK_ADMINS ""
+          zadat ROBOKASSA_TEST "1"
+          zadat ROBOKASSA_LOGIN ""
+          zadat ROBOKASSA_PASS1 ""
+          zadat ROBOKASSA_PASS2 ""
+          zadat ROBOKASSA_TEST_PASS1 ""
+          zadat ROBOKASSA_TEST_PASS2 ""
+          zadat ROBOKASSA_ALGO "md5"
+          zadat ROBOKASSA_SNO ""
+          zadat SMTP_HOST ""
+          zadat SMTP_PORT "587"
+          zadat SMTP_USER ""
+          zadat SMTP_PASS ""
+          zadat SMTP_FROM "Spotik Shop <no-reply@spotik.shop>"
+          zadat SPOTIK_FAKE_PAY_SECRET "$(openssl rand -hex 16)"
+
+          echo "══ Node 22 ══"
+          if command -v node >/dev/null 2>&1 && node -e 'process.exit(+process.versions.node.split(".")[0] >= 22 ? 0 : 1)'; then
+            echo "  node: $(node -v) — годится"
+          else
+            curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null 2>&1
+            apt-get install -y -qq nodejs >/dev/null
+            echo "  node: $(node -v) поставлен"
+          fi
+
+          echo "══ пользователь службы ══"
+          id -u spotik >/dev/null 2>&1 || useradd --system --home /srv/spotik --shell /usr/sbin/nologin spotik
+          chown -R spotik:spotik /srv/spotik/releases
+          # Файл окружения остаётся у root: systemd читает его сам,
+          # до запуска процесса, и службе он не виден.
+          echo "  пользователь spotik: есть"
+
+          echo "══ служба ══"
+          # ⚠️ ПЕРЕЗАПУСК БЕЗ ПРОСТОЯ ДЕЛАЕТ НЕ systemd, А ПОРЯДОК
+          # ВЫКЛАДКИ: новая папка приезжает целиком, симлинк
+          # переключается одним rename(2), и только потом служба
+          # перезапускается. Окно недоступности — это время старта
+          # Next, около секунды; nginx в это время отдаёт 502,
+          # поэтому выкладка ЖДЁТ, пока приложение ответит, и только
+          # тогда считает себя успешной.
+          cat > /etc/systemd/system/spotik.service <<'UNIT'
+          [Unit]
+          Description=Spotik Shop (Next.js)
+          After=network.target postgresql.service
+          Wants=postgresql.service
+
+          [Service]
+          Type=simple
+          User=spotik
+          Group=spotik
+          WorkingDirectory=/srv/spotik/current
+          EnvironmentFile=/srv/spotik/env
+          ExecStart=/usr/bin/node /srv/spotik/current/server.js
+          Restart=always
+          RestartSec=2
+          # Служба не должна видеть ничего, кроме своего каталога.
+          NoNewPrivileges=yes
+          PrivateTmp=yes
+          ProtectSystem=strict
+          ProtectHome=yes
+          ReadWritePaths=/srv/spotik
+          StandardOutput=journal
+          StandardError=journal
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          systemctl daemon-reload
+          systemctl enable spotik >/dev/null 2>&1 || true
+          echo "  spotik.service: $(systemctl is-enabled spotik 2>&1)"
+
+          echo "══ ежедневная резервная копия базы ══"
+          mkdir -p /srv/spotik/backup
+          chmod 700 /srv/spotik/backup
+          cat > /usr/local/bin/spotik-backup.sh <<'BAK'
+          #!/usr/bin/env bash
+          # Копия базы с ротацией. Четырнадцать суток — это и история
+          # на две недели, и меньше сотни мегабайт на диске.
+          #
+          # ⚠️ В КОПИИ ЛЕЖАТ ШИФРОТЕКСТЫ, А НЕ ПАРОЛИ. Ключ шифрования
+          # живёт в /srv/spotik/env и в дамп не попадает: унесённая
+          # копия доступов не открывает. Именно поэтому её можно
+          # хранить рядом.
+          set -euo pipefail
+          umask 077
+          dir=/srv/spotik/backup
+          f="$dir/spotik-$(date +%Y%m%d-%H%M%S).sql.gz"
+          sudo -u postgres pg_dump spotik | gzip -9 > "$f"
+          find "$dir" -name 'spotik-*.sql.gz' -mtime +14 -delete
+          echo "копия: $f ($(du -h "$f" | cut -f1))"
+          BAK
+          chmod 700 /usr/local/bin/spotik-backup.sh
+          cat > /etc/systemd/system/spotik-backup.service <<'UNIT'
+          [Unit]
+          Description=Spotik Shop: dump the database
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/spotik-backup.sh
+          UNIT
+          cat > /etc/systemd/system/spotik-backup.timer <<'UNIT'
+          [Unit]
+          Description=Spotik Shop: daily database dump
+
+          [Timer]
+          OnCalendar=*-*-* 03:20:00
+          Persistent=true
+
+          [Install]
+          WantedBy=timers.target
+          UNIT
+          systemctl daemon-reload
+          systemctl enable --now spotik-backup.timer >/dev/null 2>&1 || true
+          echo "  spotik-backup.timer: $(systemctl is-active spotik-backup.timer 2>&1)"
+
           echo "══ общие куски конфига ══"
           mkdir -p /etc/nginx/snippets/spotik-app
 
@@ -177,12 +347,16 @@ jobs:
           add_header Strict-Transport-Security "max-age=86400" always;
           CONF
 
-          # Раздача статики. ОДИН файл на оба сценария — http-только
-          # и https, — чтобы правила кэша и try_files не разъезжались
-          # между ними.
+          # ⚠️ САЙТ ТЕПЕРЬ ПРИЛОЖЕНИЕ, А НЕ ПАПКА С ФАЙЛАМИ.
+          # Двадцать седьмая итерация принесла кабинет, оформление,
+          # оплату и админку: страницы собирает Next на этом же
+          # сервере, а nginx стоит перед ним. С ДИСКА отдаётся только
+          # то, у чего в имени есть хэш или что не меняется, —
+          # остальное идёт в приложение.
+          #
+          # ОДИН файл на оба сценария, http и https, чтобы правила
+          # не разъезжались между ними.
           cat > /etc/nginx/snippets/spotik-static.conf <<'CONF'
-          root /srv/spotik/current;
-          index index.html;
           server_tokens off;
 
           gzip on;
@@ -196,53 +370,62 @@ jobs:
             application/xml text/xml;
           # woff2 сжат внутри: повторное сжатие только греет процессор.
 
-          # Выдача собрана с trailingSlash: ссылки идут на `/что-то/`,
-          # а на диске лежит `что-то/index.html`. Ветка `$uri.html`
-          # оставлена на случай ссылки без слеша.
-          location / {
-            try_files $uri $uri/ $uri.html =404;
-            include snippets/spotik-headers.conf;
-            add_header Cache-Control "no-cache" always;
-          }
+          client_max_body_size 1m;
 
           # ⚠️ ДОЛГИЙ КЭШ ТОЛЬКО ТАМ, ГДЕ ИМЯ ФАЙЛА СОДЕРЖИТ ХЭШ.
           # `^~` нужен, чтобы префикс победил регулярку ниже.
           location ^~ /_next/static/ {
+            alias /srv/spotik/current/.next/static/;
             include snippets/spotik-headers.conf;
             add_header Cache-Control "public, max-age=31536000, immutable" always;
             access_log off;
           }
 
-          # ⚠️ ШРИФТЫ И КАРТИНКИ НЕ IMMUTABLE: их имена БЕЗ хэша
+          # ⚠️ ШРИФТЫ НЕ IMMUTABLE: их имена БЕЗ хэша
           # (`inter-cyrillic.woff2`), и пересборка сабсета не меняет
           # адрес. Год кэша означал бы год со старым шрифтом.
-          location ~* \.(woff2|png|ico|svg|jpg|webp)$ {
+          location ^~ /fonts/ {
+            alias /srv/spotik/current/public/fonts/;
             include snippets/spotik-headers.conf;
             add_header Cache-Control "public, max-age=2592000" always;
             access_log off;
           }
 
-          error_page 404 /404.html;
-          location = /404.html { internal; }
+          # Метка сборки: по ней выкладка доказывает, что переключение
+          # состоялось. Лежит файлом рядом с приложением.
+          location = /_build.txt {
+            alias /srv/spotik/current/_build.txt;
+            include snippets/spotik-headers.conf;
+            add_header Cache-Control "no-store" always;
+            default_type text/plain;
+          }
 
-          # ⚠️ ЗАДЕЛ ПОД БЭКЕНД. Позже здесь появятся кабинет, админка
-          # и оплата. Чтобы добавить проксирование, НЕ НАДО трогать
-          # этот файл и переделывать конфиг: достаточно положить свой
-          # .conf в каталог ниже и перезагрузить nginx. Пустую маску
-          # nginx проглатывает без ошибки, поэтому задел ничего
-          # не стоит.
+          # Всё остальное ведёт приложение.
           #
-          # Пример такого файла:
-          #   location /api/ {
-          #     proxy_pass http://spotik_app;
-          #     proxy_http_version 1.1;
-          #     proxy_set_header Upgrade $http_upgrade;
-          #     proxy_set_header Connection $connection_upgrade;
-          #     proxy_set_header Host $host;
-          #     proxy_set_header X-Real-IP $remote_addr;
-          #     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-          #     proxy_set_header X-Forwarded-Proto $scheme;
-          #   }
+          # ⚠️ `proxy_hide_header Cache-Control` ОБЯЗАТЕЛЕН. Без него
+          # заголовок приходит ДВАЖДЫ: свой от Next и наш от
+          # `add_header`, — и какой из них послушает браузер, решает
+          # уже он. HTML на этом сайте не кэшируется долго нигде:
+          # у лендинга правки цен обязаны доезжать сразу, а кабинет
+          # и админка — это чужие персональные данные.
+          location / {
+            proxy_pass http://spotik_app;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_read_timeout 60s;
+            proxy_hide_header Cache-Control;
+            include snippets/spotik-headers.conf;
+            add_header Cache-Control "no-cache" always;
+          }
+
+          # Задел на будущее: свой .conf в этом каталоге добавляет
+          # локацию, не трогая ничего из написанного выше. Пустую
+          # маску nginx проглатывает без ошибки.
           include /etc/nginx/snippets/spotik-app/*.conf;
           CONF
 

@@ -76,6 +76,24 @@ jobs:
 
           ln -sfn "/srv/spotik/releases/$target" /srv/spotik/current.new
           mv -Tf /srv/spotik/current.new /srv/spotik/current
+
+          # ⚠️ САЙТ ТЕПЕРЬ ПРИЛОЖЕНИЕ, И СИМЛИНКА МАЛО. До двадцать
+          # седьмой итерации откат сводился к переключению папки:
+          # nginx читал файлы с диска на каждый запрос. Теперь
+          # страницы отдаёт служба, а её WorkingDirectory берётся
+          # при старте — без перезапуска откат не состоится.
+          systemctl restart spotik
+          ok=0
+          for i in $(seq 1 60); do
+            code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3000/ || echo 000)"
+            if [ "$code" = "200" ]; then ok=1; echo "приложение отвечает 200 с попытки $i"; break; fi
+            sleep 0.5
+          done
+          if [ "$ok" != 1 ]; then
+            echo "::error::после отката приложение не поднялось"
+            journalctl -u spotik -n 60 --no-pager | tail -60
+            exit 1
+          fi
           echo "стало:  $(readlink -f /srv/spotik/current)"
           echo "сборка: $(cat /srv/spotik/current/_build.txt 2>/dev/null || echo 'метки нет')"
           REMOTE

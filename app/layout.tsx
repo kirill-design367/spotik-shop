@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import './components.css';
 import ScrollProvider from '@/components/ScrollProvider';
-import Nav from '@/components/chrome/Nav';
+import SiteChrome from '@/components/chrome/SiteChrome';
 import { siteFontFaces, SITE, BASE_PATH as BASE } from '@/lib/fontface';
 
 export const metadata: Metadata = {
@@ -90,7 +90,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               обязана быть в потоке прокручиваемого содержимого — иначе
               колесо и палец над ней не сдвинули бы страницу вовсе. */}
           <div className="scroller__inner">
-            <Nav />
+            <SiteChrome />
             {children}
           </div>
         </div>

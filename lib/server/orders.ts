@@ -1,0 +1,376 @@
+/**
+ * Заказы: создание, оплата, работа оператора, отмена.
+ *
+ * ⚠️ ЕДИНСТВЕННАЯ ДВЕРЬ, ЧЕРЕЗ КОТОРУЮ ЗАКАЗ СТАНОВИТСЯ ОПЛАЧЕННЫМ, —
+ * `otmetitOplachennym`. В неё стучится и проверенное уведомление
+ * Робокассы, и полная оплата с баланса. Возврат человека на страницу
+ * успеха не стучится в неё НИКОГДА (постановка двадцать седьмой
+ * итерации): браузерный возврат ничего не подтверждает.
+ *
+ * ⚠️ ДЕНЬГИ ДВИГАЮТСЯ ТОЛЬКО В ТРАНЗАКЦИИ. Списание с баланса
+ * и пометка заказа — две записи, и состояния «деньги списаны,
+ * а заказ не оплачен» между ними быть не должно.
+ */
+
+import type { PoolClient } from 'pg';
+import { odna, vTranzakcii, zapros } from './db';
+import { shifrGotov, zashifrovat } from './crypto';
+import { log } from './log';
+import { soobshchitKomande } from './notify';
+import { pismoZakazGotov, pismoZakazOplachen, pismoZakazOtmenyon } from './letters';
+import { vydatSertifikat } from './certificates';
+import { cenaTarifa, katalog, naytiTarif, srokKratko } from './catalog';
+
+export type Status = 'new' | 'paid' | 'in_work' | 'done' | 'cancelled';
+export type Rezhim = 'new' | 'renew';
+
+export const STATUS_SLOVAMI: Record<Status, string> = {
+  new: 'Ждёт оплаты',
+  paid: 'Оплачен, ждёт оператора',
+  in_work: 'В работе',
+  done: 'Готов',
+  cancelled: 'Отменён',
+};
+
+export type VvodUchastnika = {
+  mode: Rezhim;
+  /** Только при mode='renew': почта и пароль СВОЕГО аккаунта Spotify. */
+  login?: string;
+  password?: string;
+};
+
+export type ItogSozdaniya =
+  | { ok: true; zakaz: number; sBalansa: number; kDoplate: number }
+  | { ok: false; pochemu: string };
+
+/** Название заказа одной строкой: для чека, письма и админки. */
+export function nazvanieZakaza(tarif: string, period: number, kind: 'plan' | 'certificate'): string {
+  return kind === 'certificate'
+    ? `Сертификат Spotik Shop на ${srokKratko(period)}`
+    : `Spotify Premium, ${tarif}, ${srokKratko(period)}`;
+}
+
+/**
+ * Создание заказа.
+ *
+ * Баланс списывается СРАЗУ и в той же транзакции: иначе между
+ * проверкой «хватает ли» и списанием помещается второй заказ,
+ * и баланс уходит в минус. Заказ, брошенный без оплаты, можно
+ * отменить в кабинете — деньги вернутся.
+ */
+export async function sozdatZakaz(opts: {
+  userId: number;
+  planId: string;
+  period: number;
+  kind: 'plan' | 'certificate';
+  uchastniki: VvodUchastnika[];
+  soglasie: boolean;
+  tratitBalans: boolean;
+}): Promise<ItogSozdaniya> {
+  if (!opts.soglasie) return { ok: false, pochemu: 'Нужно согласие на обработку персональных данных.' };
+
+  const spisok = await katalog();
+  const tarif = naytiTarif(spisok, opts.planId);
+  if (!tarif) return { ok: false, pochemu: 'Такого тарифа нет.' };
+  const cena = cenaTarifa(tarif, opts.period);
+  if (cena === null) return { ok: false, pochemu: 'На этот срок тариф пока не оформляется.' };
+
+  const nuzhno = opts.kind === 'certificate' ? 0 : tarif.people;
+  if (opts.kind !== 'certificate' && opts.uchastniki.length !== nuzhno) {
+    return { ok: false, pochemu: `Для этого тарифа нужно заполнить ${nuzhno} участника.` };
+  }
+  for (const u of opts.uchastniki) {
+    if (u.mode === 'renew') {
+      if (!u.login?.trim() || !u.password?.trim()) {
+        return { ok: false, pochemu: 'Для продления укажите почту и пароль своего аккаунта Spotify.' };
+      }
+      // ⚠️ БЕЗ КЛЮЧА ЧУЖИЕ ПАРОЛИ НЕ ПРИНИМАЮТСЯ ВОВСЕ. Положить их
+      // открытым текстом «временно» — ровно тот случай, когда
+      // временное живёт годами.
+      if (!shifrGotov()) return { ok: false, pochemu: 'Приём паролей сейчас недоступен. Попробуйте позже.' };
+    }
+  }
+
+  return vTranzakcii(async (c) => {
+    const u = await c.query<{ balance_kop: string }>('select balance_kop from app_user where id = $1 for update', [
+      opts.userId,
+    ]);
+    const balans = Number(u.rows[0]?.balance_kop ?? 0);
+    const sBalansa = opts.tratitBalans ? Math.min(balans, cena) : 0;
+    const kDoplate = cena - sBalansa;
+
+    const z = await c.query<{ id: string }>(
+      `insert into shop_order (user_id, kind, plan_id, period, status, total_kop, balance_kop, money_kop, source, consent_at)
+       values ($1, $2, $3, $4, 'new', $5, $6, 0, 'payment', now())
+       returning id`,
+      [opts.userId, opts.kind, opts.planId, opts.period, cena, sBalansa],
+    );
+    const zakaz = Number(z.rows[0]!.id);
+
+    for (let i = 0; i < opts.uchastniki.length; i++) {
+      const uch = opts.uchastniki[i]!;
+      await c.query(
+        `insert into order_slot (order_id, idx, mode, in_login_enc, in_password_enc)
+         values ($1, $2, $3, $4, $5)`,
+        [
+          zakaz,
+          i,
+          uch.mode,
+          uch.mode === 'renew' ? zashifrovat(uch.login!.trim()) : null,
+          uch.mode === 'renew' ? zashifrovat(uch.password!) : null,
+        ],
+      );
+    }
+
+    if (sBalansa > 0) {
+      await c.query('update app_user set balance_kop = balance_kop - $1 where id = $2', [sBalansa, opts.userId]);
+      await c.query(`insert into balance_move (user_id, delta_kop, reason, order_id) values ($1, $2, 'оплата заказа', $3)`, [
+        opts.userId,
+        -sBalansa,
+        zakaz,
+      ]);
+    }
+
+    if (kDoplate === 0) {
+      await oplatitVnutri(c, zakaz, 0);
+    }
+
+    log.info('заказ создан', { order: zakaz, plan: opts.planId, period: opts.period, balance_kop: sBalansa, rest_kop: kDoplate });
+    return { ok: true as const, zakaz, sBalansa, kDoplate };
+  });
+}
+
+/**
+ * Пометить заказ оплаченным. ЕДИНСТВЕННАЯ ДВЕРЬ.
+ *
+ * Идемпотентна: Робокасса повторяет уведомление, пока не получит
+ * `OK<номер>`, и второй заход обязан ничего не менять.
+ */
+async function oplatitVnutri(c: PoolClient, zakaz: number, dengiKop: number): Promise<boolean> {
+  const r = await c.query<{ status: Status }>('select status from shop_order where id = $1 for update', [zakaz]);
+  const st = r.rows[0]?.status;
+  if (!st) return false;
+  if (st !== 'new') return false; // уже оплачен или закрыт — молча выходим
+  await c.query(
+    `update shop_order set status = 'paid', paid_at = now(), money_kop = money_kop + $2 where id = $1`,
+    [zakaz, dengiKop],
+  );
+  return true;
+}
+
+export async function otmetitOplachennym(platyozh: number, prishloKop: number): Promise<void> {
+  const svezh = await vTranzakcii(async (c) => {
+    const p = await c.query<{ id: string; order_id: string; amount_kop: string; status: string }>(
+      'select id, order_id, amount_kop, status from payment where id = $1 for update',
+      [platyozh],
+    );
+    const row = p.rows[0];
+    if (!row) {
+      log.warn('уведомление о неизвестном платеже', { payment: platyozh });
+      return null;
+    }
+    if (row.status === 'paid') return null; // повтор уведомления — это норма
+
+    const zhdali = Number(row.amount_kop);
+    if (prishloKop < zhdali) {
+      // ⚠️ НЕДОПЛАТА НЕ ОПЛАТА. Подпись сошлась, значит уведомление
+      // настоящее, но сумма другая — это разбирается руками.
+      log.error('оплачено меньше выставленного', { payment: platyozh, want_kop: zhdali, got_kop: prishloKop });
+      return null;
+    }
+    await c.query(`update payment set status = 'paid', paid_at = now() where id = $1`, [platyozh]);
+    const zakaz = Number(row.order_id);
+    const stal = await oplatitVnutri(c, zakaz, prishloKop);
+    return stal ? zakaz : null;
+  });
+
+  if (svezh) await posleOplaty(svezh);
+}
+
+/** Что происходит ПОСЛЕ оплаты: письмо, сертификат, сигнал команде. */
+async function posleOplaty(zakaz: number): Promise<void> {
+  const z = await odna<{
+    id: string;
+    kind: 'plan' | 'certificate';
+    plan_id: string;
+    period: number;
+    user_id: string;
+    email: string;
+  }>(
+    `select o.id, o.kind, o.plan_id, o.period, o.user_id, u.email
+       from shop_order o join app_user u on u.id = o.user_id where o.id = $1`,
+    [zakaz],
+  );
+  if (!z) return;
+  const spisok = await katalog();
+  const tarif = naytiTarif(spisok, z.plan_id);
+  const nazvanie = nazvanieZakaza(tarif?.name ?? z.plan_id, z.period, z.kind);
+
+  if (z.kind === 'certificate') {
+    await vydatSertifikat({ userId: Number(z.user_id), email: z.email, period: z.period, zakaz });
+    // Сертификат сам по себе работы оператору не даёт: заказ закрыт.
+    await zapros(`update shop_order set status = 'done', closed_at = now() where id = $1`, [zakaz]);
+    return;
+  }
+
+  await pismoZakazOplachen(z.email, zakaz, nazvanie);
+  await soobshchitKomande({ vid: 'zakaz_oplachen', zakaz, tarif: tarif?.name ?? z.plan_id, mest: tarif?.people ?? 1 });
+}
+
+/**
+ * Заказ по сертификату: денег не берём вовсе, сразу в очередь
+ * оператору.
+ */
+export async function zakazPoSertifikatu(opts: {
+  userId: number;
+  planId: string;
+  period: number;
+  certificateId: number;
+  uchastnik: VvodUchastnika;
+}): Promise<number> {
+  if (opts.uchastnik.mode === 'renew' && !shifrGotov()) throw new Error('нет ключа шифрования');
+  return vTranzakcii(async (c) => {
+    const z = await c.query<{ id: string }>(
+      `insert into shop_order (user_id, kind, plan_id, period, status, total_kop, source, certificate_id, consent_at, paid_at)
+       values ($1, 'plan', $2, $3, 'paid', 0, 'certificate', $4, now(), now())
+       returning id`,
+      [opts.userId, opts.planId, opts.period, opts.certificateId],
+    );
+    const zakaz = Number(z.rows[0]!.id);
+    await c.query(
+      `insert into order_slot (order_id, idx, mode, in_login_enc, in_password_enc) values ($1, 0, $2, $3, $4)`,
+      [
+        zakaz,
+        opts.uchastnik.mode,
+        opts.uchastnik.mode === 'renew' ? zashifrovat(opts.uchastnik.login!.trim()) : null,
+        opts.uchastnik.mode === 'renew' ? zashifrovat(opts.uchastnik.password!) : null,
+      ],
+    );
+    await c.query('update certificate set used_at = now(), used_order_id = $2 where id = $1', [opts.certificateId, zakaz]);
+    return zakaz;
+  });
+}
+
+/* ── Работа оператора ──────────────────────────────────────────── */
+
+export async function vzyatZakaz(zakaz: number, staffId: number): Promise<boolean> {
+  return vTranzakcii(async (c) => {
+    const r = await c.query<{ status: Status; operator_id: string | null }>(
+      'select status, operator_id from shop_order where id = $1 for update',
+      [zakaz],
+    );
+    const row = r.rows[0];
+    if (!row) return false;
+    if (row.status !== 'paid' || row.operator_id) return false;
+    await c.query(`update shop_order set status = 'in_work', operator_id = $2, taken_at = now() where id = $1`, [
+      zakaz,
+      staffId,
+    ]);
+    return true;
+  });
+}
+
+export async function vernutVOchered(zakaz: number, staffId: number): Promise<boolean> {
+  const r = await zapros(
+    `update shop_order set status = 'paid', operator_id = null, taken_at = null
+      where id = $1 and status = 'in_work' and operator_id = $2 returning id`,
+    [zakaz, staffId],
+  );
+  return r.length > 0;
+}
+
+/** Выданные оператором доступы к НОВОМУ аккаунту. Шифруются те же. */
+export async function zapisatVydachu(opts: {
+  slotId: number;
+  zakaz: number;
+  staffId: number;
+  login: string;
+  mailPass: string;
+  spotifyPass: string;
+}): Promise<boolean> {
+  if (!shifrGotov()) return false;
+  const r = await zapros(
+    `update order_slot s
+        set out_login_enc = $3, out_mail_pass_enc = $4, out_password_enc = $5, done_at = now()
+       from shop_order o
+      where s.id = $1 and s.order_id = o.id and o.id = $2 and o.operator_id is not null
+      returning s.id`,
+    [opts.slotId, opts.zakaz, zashifrovat(opts.login.trim()), zashifrovat(opts.mailPass), zashifrovat(opts.spotifyPass)],
+  );
+  return r.length > 0;
+}
+
+export async function otmetitSlotGotovym(slotId: number, zakaz: number): Promise<boolean> {
+  const r = await zapros(
+    `update order_slot set done_at = now() where id = $1 and order_id = $2 and mode = 'renew' returning id`,
+    [slotId, zakaz],
+  );
+  return r.length > 0;
+}
+
+export async function zavershitZakaz(zakaz: number, staffId: number): Promise<{ ok: boolean; pochemu?: string }> {
+  const slots = await zapros<{ id: string; done_at: Date | null }>(
+    'select id, done_at from order_slot where order_id = $1',
+    [zakaz],
+  );
+  if (slots.some((s) => !s.done_at)) return { ok: false, pochemu: 'Не все участники заполнены.' };
+  const r = await zapros(
+    `update shop_order set status = 'done', closed_at = now()
+      where id = $1 and status = 'in_work' and operator_id = $2 returning user_id`,
+    [zakaz, staffId],
+  );
+  if (!r.length) return { ok: false, pochemu: 'Заказ не в работе у вас.' };
+  const u = await odna<{ email: string }>(
+    'select u.email from shop_order o join app_user u on u.id = o.user_id where o.id = $1',
+    [zakaz],
+  );
+  if (u) await pismoZakazGotov(u.email, zakaz);
+  await soobshchitKomande({ vid: 'zakaz_zakryt', zakaz });
+  return { ok: true };
+}
+
+/**
+ * Отмена заказа с возвратом денег НА БАЛАНС.
+ *
+ * ⚠️ ВОЗВРАЩАЕТСЯ ВСЁ, ЧЕМ ЗАКАЗ БЫЛ ЗАКРЫТ, — и то, что пришло
+ * с баланса, и то, что пришло картой. Деньги уходят на баланс,
+ * а не обратно на карту: так велит постановка, и так человек может
+ * оформить заново в один клик.
+ */
+export async function otmenitZakaz(zakaz: number, pochemu: string, staffId: number | null): Promise<{ ok: boolean; pochemuNet?: string }> {
+  const itog = await vTranzakcii(async (c) => {
+    const r = await c.query<{ status: Status; user_id: string; balance_kop: string; money_kop: string; certificate_id: string | null }>(
+      'select status, user_id, balance_kop, money_kop, certificate_id from shop_order where id = $1 for update',
+      [zakaz],
+    );
+    const row = r.rows[0];
+    if (!row) return { ok: false as const, pochemuNet: 'Заказа нет.' };
+    if (row.status === 'done' || row.status === 'cancelled') return { ok: false as const, pochemuNet: 'Заказ уже закрыт.' };
+
+    const vernut = Number(row.balance_kop) + Number(row.money_kop);
+    if (vernut > 0) {
+      await c.query('update app_user set balance_kop = balance_kop + $1 where id = $2', [vernut, row.user_id]);
+      await c.query(
+        `insert into balance_move (user_id, delta_kop, reason, order_id) values ($1, $2, 'возврат за отменённый заказ', $3)`,
+        [row.user_id, vernut, zakaz],
+      );
+    }
+    // Сертификат, по которому заказ оформляли, возвращается к жизни:
+    // человек не виноват, что доступ не оформили.
+    if (row.certificate_id) {
+      await c.query('update certificate set used_at = null, used_order_id = null where id = $1', [row.certificate_id]);
+    }
+    await c.query(
+      `update shop_order set status = 'cancelled', closed_at = now(), cancel_reason = $2, operator_id = coalesce(operator_id, $3)
+        where id = $1`,
+      [zakaz, pochemu.slice(0, 500), staffId],
+    );
+    return { ok: true as const, vernut, userId: Number(row.user_id) };
+  });
+
+  if (!itog.ok) return itog;
+  const u = await odna<{ email: string }>('select email from app_user where id = $1', [itog.userId]);
+  if (u) await pismoZakazOtmenyon(u.email, zakaz, itog.vernut, pochemu);
+  await soobshchitKomande({ vid: 'zakaz_otmenyon', zakaz });
+  return { ok: true };
+}

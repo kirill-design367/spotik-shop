@@ -27,7 +27,13 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-const root = 'out/_next/static/chunks';
+/**
+ * ⚠️ СМОТРИМ В `.next`, А НЕ В `out`. Двадцать седьмая итерация
+ * увела сайт со статического экспорта на серверную сборку: каталога
+ * `out/` больше нет вовсе. Чанки и разметка статически собранного
+ * лендинга лежат там же, где их берёт боевой сервер.
+ */
+const root = '.next/static/chunks';
 const all = [];
 const walk = (d) => {
   for (const f of readdirSync(d)) {
@@ -38,9 +44,11 @@ const walk = (d) => {
 };
 walk(root);
 
-const html = readFileSync('out/index.html', 'utf8');
+// Готовая разметка ЛЕНДИНГА: он статический, и Next кладёт её рядом
+// со сборкой ровно в том виде, в каком отдаёт браузеру.
+const html = readFileSync('.next/server/app/index.html', 'utf8');
 // чанки, на которые ссылается сама страница (то есть критический путь)
-const referenced = all.filter((p) => html.includes(p.replace('out', '')));
+const referenced = all.filter((p) => html.includes(p.replace('.next', '/_next')));
 
 /** Опознавательные знаки three.js: они переживают минификацию. */
 const THREE = ['WebGLRenderer', 'WebGLProgram', 'ShaderMaterial'];
