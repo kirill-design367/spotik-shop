@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { MORPH_DAMP_TOUCH_MS, finePointer, onLayoutChange, onScrollY, scroller } from '@/lib/scroll';
 import { prefersReducedMotion } from '@/lib/motion';
 
@@ -108,16 +108,34 @@ type Built = {
 };
 
 /**
- * СКОЛЬКО КУСКОВ У ЛЕНТЫ — ЭТО ЧИСЛО ШАГОВ, И ОНО НЕ СЛУЧАЙНО.
+ * НА СКОЛЬКО КУСКОВ РЕЖЕТСЯ ЛЕНТА.
  *
- * ⚠️ РЕЗАТЬ НАДО ПО ВЕРШИНАМ ПЕТЕЛЬ, А ОНИ ЗА КРАЕМ ЭКРАНА. На стыке
- * двух кусков сходятся два круглых конца штриха, и у полупрозрачных
- * ореолов они дают заметный узелок: 0.09 поверх 0.09 — это уже 0.17.
- * За краем вьюпорта этого узелка не видно вовсе. Вершин петель ровно
- * на одну меньше, чем шагов, значит кусков ровно столько же, сколько
- * шагов.
+ * Фронт стоит в ОДНОМ куске, и только он перерисовывается в кадре:
+ * куски выше горят сплошным цветом, куски ниже не рисуются вовсе.
+ * Значит цена кадра — площадь одного куска, и чем их больше, тем
+ * она меньше. Двадцать четыре дают на десктопе кусок высотой
+ * около 170 px, на мобильной — около 290 при экране 851.
  */
-const CHUNKS = 5;
+const CHUNKS = 24;
+/**
+ * ГДЕ МОЖНО РЕЗАТЬ — РЕШАЕТ ПУНКТИР, И ЭТО НЕ ПРИДИРКА.
+ *
+ * ⚠️ На стыке двух кусков сходятся два КРУГЛЫХ КОНЦА штриха, и
+ * у полупрозрачных ореолов они складываются: 0.09 поверх 0.09 —
+ * это уже 0.17, то есть по ленте идут узелки. Но если рез попал
+ * в ПРОПУСК между штрихами, на стыке не рисует никто: предыдущий
+ * кусок закончил штрих раньше, следующий начнёт позже, а фаза
+ * у них общая. Пропуск 24 px, круглый конец самой широкой обводки
+ * выступает на 6.5 px с каждой стороны — безопасна середина
+ * пропуска, то есть длина `≡ 38` по модулю периода.
+ */
+const CUT_PHASE = 38;
+
+/** Ближайший к `s` рез, попадающий в середину пропуска пунктира. */
+function cutAt(s: number, len: number): number {
+  const v = Math.round((s - CUT_PHASE) / DASH) * DASH + CUT_PHASE;
+  return Math.min(len, Math.max(0, v));
+}
 
 /** Сколько огней бежит по ленте, длина каждого и период круга. */
 const GLINTS = 4;
@@ -140,8 +158,8 @@ const GLINT_HOLD = 260;
 /** Период пунктира ленты. Ровно тот же, что в CSS: штрих плюс пропуск. */
 const DASH = 50;
 
-/** Точка на ломаной по длине вдоль неё — «x y» для атрибута `d`. */
-function atLen(pts: Pt[], cum: number[], s: number): string {
+/** Точка на ломаной по длине вдоль неё. */
+function ptAt(pts: Pt[], cum: number[], s: number): Pt {
   let lo = 0;
   let hi = cum.length - 1;
   while (hi - lo > 1) {
@@ -151,9 +169,13 @@ function atLen(pts: Pt[], cum: number[], s: number): string {
   }
   const span = cum[hi] - cum[lo];
   const t = span > 0 ? (s - cum[lo]) / span : 0;
-  const x = pts[lo].x + (pts[hi].x - pts[lo].x) * t;
-  const y = pts[lo].y + (pts[hi].y - pts[lo].y) * t;
-  return `${x.toFixed(1)} ${y.toFixed(1)}`;
+  return { x: pts[lo].x + (pts[hi].x - pts[lo].x) * t, y: pts[lo].y + (pts[hi].y - pts[lo].y) * t };
+}
+
+/** То же, но строкой для атрибута `d`. */
+function atLen(pts: Pt[], cum: number[], s: number): string {
+  const p = ptAt(pts, cum, s);
+  return `${p.x.toFixed(1)} ${p.y.toFixed(1)}`;
 }
 
 /**
@@ -182,25 +204,6 @@ function buildPath(
   const pts: Pt[] = [start];
   const cum: number[] = [0];
   let at: Pt = start;
-
-  /* Тот же путь, но разрезанный: по куску на шаг. Рез — в вершине
-     петли, то есть за краем экрана (см. CHUNKS). */
-  const ds: string[] = [];
-  const cy0: number[] = [];
-  const cy1: number[] = [];
-  const cat: number[] = [];
-  let chunk = d;
-  let chunkY = start.y;
-  let chunkAt = 0;
-  const cut = () => {
-    ds.push(chunk);
-    cy0.push(chunkY);
-    cy1.push(at.y);
-    cat.push(chunkAt);
-    chunkY = at.y;
-    chunkAt = cum[cum.length - 1];
-    chunk = `M${at.x.toFixed(1)} ${at.y.toFixed(1)}`;
-  };
   const sample = (p1: Pt, s: Seg) => {
     /* ⚠️ ШАГ ПО ДУГЕ, А НЕ ПО ПАРАМЕТРУ. Перегоны разной длины:
        вертикаль из номера — полсотни пикселей, дуга за край экрана —
@@ -230,12 +233,10 @@ function buildPath(
     }
   };
   const put = (s: Seg) => {
-    const seg =
+    d +=
       `C${s.c1.x.toFixed(1)} ${s.c1.y.toFixed(1)} ` +
       `${s.c2.x.toFixed(1)} ${s.c2.y.toFixed(1)} ` +
       `${s.p2.x.toFixed(1)} ${s.p2.y.toFixed(1)}`;
-    d += seg;
-    chunk += seg;
     sample(at, s);
     at = s.p2;
   };
@@ -279,7 +280,6 @@ function buildPath(
 
     run(p.x, p.y, g1);
     put({ c1: { x: p.x, y: g1 + h1 * 0.62 }, c2: { x: far, y: ym - h1 * 0.58 }, p2: { x: far, y: ym } });
-    cut();
     put({ c1: { x: far, y: ym + h2 * 0.58 }, c2: { x: q.x, y: g2 - h2 * 0.62 }, p2: { x: q.x, y: g2 } });
     run(q.x, g2, q.y);
   }
@@ -294,9 +294,43 @@ function buildPath(
     p2: { x: last.x + (STEP_SIDE[4] ? 1 : -1) * 110, y: tailY },
   });
 
-  cut();
+  const len = cum[cum.length - 1];
 
-  return { d, ds, cy0, cy1, cat, top: start.y, bot: tailY, pts, cum, len: cum[cum.length - 1] };
+  /* ── ЛЕНТА РЕЖЕТСЯ НА КУСКИ ПО ЛОМАНОЙ ───────────────────────
+     Куски вырезаются из той же ломаной, что и огни: шаг отсчётов
+     около девяти пикселей, и на дуге радиусом в три сотни хорда
+     отходит от кривой на три сотых пикселя. Непройденная часть
+     остаётся ОДНИМ гладким путём — она статична. */
+  const ds: string[] = [];
+  const cy0: number[] = [];
+  const cy1: number[] = [];
+  const cat: number[] = [];
+  let from = 0;
+  for (let k = 0; k < CHUNKS; k += 1) {
+    const to = k === CHUNKS - 1 ? len : cutAt(((k + 1) * len) / CHUNKS, len);
+    if (to <= from) {
+      ds.push('');
+      cy0.push(0);
+      cy1.push(0);
+      cat.push(0);
+      continue;
+    }
+    const a = ptAt(pts, cum, from);
+    const b = ptAt(pts, cum, to);
+    let dd = `M${a.x.toFixed(1)} ${a.y.toFixed(1)}`;
+    for (let i = 0; i < pts.length; i += 1) {
+      if (cum[i] <= from || cum[i] >= to) continue;
+      dd += `L${pts[i].x.toFixed(1)} ${pts[i].y.toFixed(1)}`;
+    }
+    dd += `L${b.x.toFixed(1)} ${b.y.toFixed(1)}`;
+    ds.push(dd);
+    cy0.push(a.y);
+    cy1.push(b.y);
+    cat.push(from);
+    from = to;
+  }
+
+  return { d, ds, cy0, cy1, cat, top: start.y, bot: tailY, pts, cum, len };
 }
 
 /**
@@ -328,25 +362,15 @@ export default function Route({ steps }: { steps: Step[] }) {
     const sc = scroller();
     if (!root || !svg || !sc) return;
 
-    /* Градиенты: своя пара на каждый кусок ленты плюс одна на огни. */
-    const gLit: SVGLinearGradientElement[] = [];
-    const gCore: SVGLinearGradientElement[] = [];
-    const chunkEls: SVGGElement[] = [];
-    for (let k = 0; k < CHUNKS; k += 1) {
-      const l = svg.querySelector<SVGLinearGradientElement>(`#route-lit-${k}`);
-      const c = svg.querySelector<SVGLinearGradientElement>(`#route-core-${k}`);
-      const g = svg.querySelector<SVGGElement>(`#route-chunk-${k}`);
-      if (!l || !c || !g) return;
-      gLit.push(l);
-      gCore.push(c);
-      chunkEls.push(g);
-    }
-    const gGlint = svg.querySelector<SVGLinearGradientElement>('#route-core');
+    const gLit = svg.querySelector<SVGLinearGradientElement>('#route-lit');
+    const gCore = svg.querySelector<SVGLinearGradientElement>('#route-core');
     const dimEl = svg.querySelector<SVGPathElement>('.route__dim');
-    if (!gGlint || !dimEl) return;
-    /* Что уже записано в каждый кусок: писать одно и то же значит
-       перерисовывать его зря. */
-    const was: number[] = new Array(CHUNKS * 2).fill(NaN);
+    const chunkEls = Array.from(svg.querySelectorAll<SVGGElement>('.route__chunk'));
+    if (!gLit || !gCore || !dimEl || chunkEls.length !== CHUNKS) return;
+    /* Состояние куска: 0 — не дошли, 1 — на фронте, 2 — пройден.
+       Классы переставляются ТОЛЬКО на смене состояния: каждая
+       перестановка — перерисовка этого куска. */
+    const state: number[] = new Array(CHUNKS).fill(-1);
 
     let items: HTMLElement[] = [];
     let ys: number[] = [];
@@ -423,14 +447,14 @@ export default function Route({ steps }: { steps: Step[] }) {
         /* ⚠️ ФАЗА ПУНКТИРА У КУСКА — ЕГО ДЛИНА ОТ НАЧАЛА ПУТИ. Без неё
            каждый кусок начинал бы штрих заново, и на стыке пунктир
            разъезжался бы с непройденной частью. Та же арифметика,
-           что у огней. */
+           что у огней, и ровно она делает рез невидимым. */
         const off = (built.cat[k] % DASH).toFixed(1);
         for (const el of chunkEls[k].querySelectorAll('path')) {
           el.setAttribute('d', built.ds[k]);
           el.setAttribute('stroke-dashoffset', off);
         }
       }
-      was.fill(NaN);
+      state.fill(-1);
 
       for (let i = 0; i < items.length; i += 1) {
         items[i].style.setProperty('--dot-x', `${ax[i].toFixed(1)}px`);
@@ -443,46 +467,29 @@ export default function Route({ steps }: { steps: Step[] }) {
 
     /** Кладёт фронт на высоту `y` внутри блока. */
     const put = (y: number) => {
-      /* ⚠️ ФРОНТ ПИШЕТСЯ ТОЛЬКО В ТОТ КУСОК, ГДЕ ОН СЕЙЧАС СТОИТ.
-         Две ординаты общего градиента перерисовывали ВЕСЬ стек обводок
-         размером с блок: 33 % кадров дороже 16.9 мс на 2560 и полтора
-         десятка длинных задач. Куску выше фронта нужен один и тот же
-         «всё горит», куску ниже — «всё темно», и обе величины
-         постоянны: записанное кэшируется, и повторной записи нет.
-         В кадре остаётся один кусок, то есть пятая часть блока. */
+      /* ⚠️ ГРАДИЕНТ ДЕРЖИТ ТОЛЬКО ТОТ КУСОК, ГДЕ СТОИТ ФРОНТ, И В ЭТОМ
+         ВЕСЬ СМЫСЛ РЕЗА. Пока пара ординат была общей на всю ленту,
+         её перезапись перерисовывала стек обводок размером с блок:
+         33 % кадров дороже 16.9 мс на 2560 и полтора десятка длинных
+         задач. Теперь кусок выше фронта горит СПЛОШНЫМ цветом
+         и градиента не знает, кусок ниже не рисуется вовсе, а пишется
+         только средний — то есть перерисовывается площадь одного
+         куска. Классы переставляются лишь на смене состояния. */
       if (built) {
+        const lo = y - EDGE;
         for (let k = 0; k < CHUNKS; k += 1) {
-          const t = built.cy0[k];
-          const b = built.cy1[k];
-          let a0: number;
-          let a1: number;
-          if (y <= t) {
-            /* Весь кусок ниже фронта: градиент уводится ВЫШЕ него. */
-            a0 = t - 2;
-            a1 = t - 1;
-          } else if (y - EDGE >= b) {
-            /* Весь кусок выше фронта: градиент уводится НИЖЕ него. */
-            a0 = b + 1;
-            a1 = b + 2;
-          } else {
-            a0 = y - EDGE;
-            a1 = y;
-          }
-          if (was[k * 2] === a0 && was[k * 2 + 1] === a1) continue;
-          was[k * 2] = a0;
-          was[k * 2 + 1] = a1;
-          const s0 = a0.toFixed(1);
-          const s1 = a1.toFixed(1);
-          gLit[k].setAttribute('y1', s0);
-          gLit[k].setAttribute('y2', s1);
-          gCore[k].setAttribute('y1', s0);
-          gCore[k].setAttribute('y2', s1);
+          const st = built.cy1[k] <= lo ? 2 : built.cy0[k] >= y ? 0 : 1;
+          if (state[k] === st) continue;
+          state[k] = st;
+          const cl = chunkEls[k].classList;
+          cl.toggle('route__chunk--on', st === 2);
+          cl.toggle('route__chunk--at', st === 1);
         }
       }
-      /* У огней градиент свой: они короткие, и его перезапись
-         перерисовывает полсотни пикселей, а не блок. */
-      gGlint.setAttribute('y1', (y - EDGE).toFixed(1));
-      gGlint.setAttribute('y2', y.toFixed(1));
+      gLit.setAttribute('y1', (y - EDGE).toFixed(1));
+      gLit.setAttribute('y2', y.toFixed(1));
+      gCore.setAttribute('y1', (y - EDGE).toFixed(1));
+      gCore.setAttribute('y2', y.toFixed(1));
       if (built) {
         const p = (y - built.top) / Math.max(1, built.bot - built.top);
         root.style.setProperty('--lit', (p < 0 ? 0 : p > 1 ? 1 : p).toFixed(6));
@@ -650,64 +657,27 @@ export default function Route({ steps }: { steps: Step[] }) {
               ниже пусто; в кадре меняются только две ординаты. Дашарей
               при этом свободен и держит пунктир на всей линии.
 
-              ⚠️ ПАРА ГРАДИЕНТОВ У КАЖДОГО КУСКА СВОЯ. Один общий
-              перерисовывал бы весь стек обводок размером с блок;
-              со своими пишется только тот кусок, где фронт сейчас
-              стоит, — остальные держат постоянное значение и
-              не трогаются вовсе. */}
-          {Array.from({ length: CHUNKS }, (_, k) => (
-            <Fragment key={k}>
-              <linearGradient
-                id={`route-lit-${k}`}
-                className="route__g-lit"
-                gradientUnits="userSpaceOnUse"
-                x1="0"
-                x2="0"
-                y1="-9999"
-                y2="-9998"
-              >
-                <stop offset="0" stopOpacity="1" />
-                <stop offset="1" stopOpacity="0" />
-              </linearGradient>
-              <linearGradient
-                id={`route-core-${k}`}
-                className="route__g-core"
-                gradientUnits="userSpaceOnUse"
-                x1="0"
-                x2="0"
-                y1="-9999"
-                y2="-9998"
-              >
-                <stop offset="0" stopOpacity="1" />
-                <stop offset="1" stopOpacity="0" />
-              </linearGradient>
-            </Fragment>
-          ))}
-          {/* Огни бегут по всей ленте и в куски не укладываются:
-              у них свой градиент, и его перезапись стоит полсотни
-              пикселей перерисовки. */}
-          <linearGradient
-            id="route-core"
-            className="route__g-core"
-            gradientUnits="userSpaceOnUse"
-            x1="0"
-            x2="0"
-            y1="-9999"
-            y2="-9998"
-          >
+              Пара одна на всю ленту, но ссылается на неё РОВНО ОДИН
+              кусок — тот, где фронт сейчас стоит. Поэтому перезапись
+              ординат перерисовывает его одного. */}
+          <linearGradient id="route-lit" className="route__g-lit" gradientUnits="userSpaceOnUse" x1="0" x2="0" y1="-9999" y2="-9998">
+            <stop offset="0" stopOpacity="1" />
+            <stop offset="1" stopOpacity="0" />
+          </linearGradient>
+          <linearGradient id="route-core" className="route__g-core" gradientUnits="userSpaceOnUse" x1="0" x2="0" y1="-9999" y2="-9998">
             <stop offset="0" stopOpacity="1" />
             <stop offset="1" stopOpacity="0" />
           </linearGradient>
         </defs>
         {/* Непройденная часть: еле различимый пунктир того же шага —
             дашарей общий, поэтому штрихи ЗАГОРАЮТСЯ на своих местах.
-            Это ОДИН путь: он статичен и не перерисовывается никогда. */}
+            Это ОДИН гладкий путь: он статичен и не перерисовывается. */}
         <path className="route__dim" />
         {/* Пройденная часть — светодиод: три ореола и почти белое ядро,
-            и так на каждом куске ленты. Рез идёт по вершинам петель,
-            то есть за краем экрана: стыка не видно. */}
+            и так на каждом куске ленты. Рез приходится на середину
+            пропуска пунктира, поэтому стыка не видно по построению. */}
         {Array.from({ length: CHUNKS }, (_, k) => (
-          <g key={k} id={`route-chunk-${k}`} className={`route__chunk route__chunk--${k}`}>
+          <g key={k} className="route__chunk">
             <path className="route__halo route__halo--3" />
             <path className="route__halo route__halo--2" />
             <path className="route__halo route__halo--1" />

@@ -3,7 +3,7 @@
 производительность  99   доступность 100   практики 100   SEO 100
   First Contentful Paint            0.9 s
   Largest Contentful Paint          2.1 s
-  Total Blocking Time               90 ms
+  Total Blocking Time               70 ms
   Cumulative Layout Shift               0
   Speed Index                       1.2 s
 
