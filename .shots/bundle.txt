@@ -4,13 +4,12 @@
       8.2 KB  934-d916dd300e581947.js
       8.4 KB  app/layout-a4d7b77541f0c34e.js
       8.5 KB  app/not-found-20e4dd2756df0969.js
-     29.5 KB  app/page-c08dc9284a35c660.js
+     29.0 KB  app/page-d3b0acbce5e4980e.js
       0.5 KB  main-app-430fdc162aee449b.js
     110.0 KB  polyfills-42372ed130431b0a.js
-      3.4 KB  webpack-ce03d1c53610d3f4.js
+      3.3 KB  webpack-5319f75c3dc9ca88.js
 
-всего в критическом пути: 507.5 KB
-three.js в асинхронных чанках: b536a0f1.68e596ed9ed721ac.js (348 KB), bd904a5c.e0ee8d7d091b02ad.js (203 KB)
-асинхронный вес three.js: 551.6 KB при потолке 640
+всего в критическом пути: 506.9 KB
+three.js в чанках: нет ни в одном
 огибающая звука в чанках: нет ни в одном
-ОК: three.js только в асинхронных чанках, огибающей звука в сборке нет
+ОК: ни three.js, ни огибающей звука в сборке нет

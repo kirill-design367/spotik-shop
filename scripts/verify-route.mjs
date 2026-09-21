@@ -309,7 +309,12 @@ for (const [w, h, mob] of [
      и справа. */
   let touchL = 0;
   let touchR = 0;
-  for (let t = 0; t <= 1.0001; t += 0.05) {
+  /* ⚠️ ОГНИ НА ВРЕМЯ ПРОВЕРКИ ГАСЯТСЯ. Они бегут по ленте сами
+     и попадают в крайний столбец случайно: два прогона подряд
+     на ОДНОМ И ТОМ ЖЕ коде давали 292 px и 47 px. Считать надо
+     саму линию, а она стоит. */
+  await page.addStyleTag({ content: '.route__glints{visibility:hidden!important}' });
+  for (let t = 0; t <= 1.0001; t += 0.04) {
     await park(range.from + total * t);
     const band = await page.evaluate(() => {
       const r = document.querySelector('.route').getBoundingClientRect();
@@ -325,14 +330,99 @@ for (const [w, h, mob] of [
         const rr = png.data[i];
         const gg = png.data[i + 1];
         const bb = png.data[i + 2];
-        if (gg > 40 && gg > rr + 14 && gg > bb + 14) {
+        /* Порог берёт и тусклую часть: «линия дошла до края» — это
+           про геометрию, а не про то, зажглась ли она там. */
+        if (gg > 30 && gg > rr + 10 && gg > bb + 8) {
           if (side === 'L') touchL += 1;
           else touchR += 1;
         }
       }
     }
   }
+  await page.evaluate(() => {
+    for (const st of document.querySelectorAll('style')) {
+      if (st.textContent.includes('route__glints{visibility')) st.remove();
+    }
+  });
   const okOut = touchL > 0 && touchR > 0;
+
+  /* ── ЛИНИЯ ПРОХОДИТ СКВОЗЬ ЦЕНТР КАЖДОЙ ЦИФРЫ ─────────────────────
+     Требование двадцать четвёртой итерации, и оно жёсткое: с 1 по 5
+     включительно, на всех трёх размерах.
+
+     ⚠️ СУДИМ ПО РАСТРУ, А НЕ ПО КООРДИНАТАМ В КОДЕ. Именно координаты
+     и врали: точка бралась из центра номера, но `getBoundingClientRect`
+     отдаёт бокс ВМЕСТЕ С ТРАНСФОРМОМ, а на номере висел приезд
+     на 10 px. Любая проверка, читающая те же `--dot-x`, что пишет
+     предмет, сошлась бы с ним по построению (Р-47).
+
+     Как меряется: цифра ставится на середину экрана (там фронт её уже
+     прошёл), НОМЕР И УЗЕЛ СВЕТА ПРЯЧУТСЯ — цифра сама зелёная, а узел
+     света стоит ровно на точке и подменил бы собой линию, — и берётся
+     полоса шириной ±44 px и высотой 60 px вокруг центра. Там линия
+     идёт строго вертикально (прямой участок из номера вниз и в номер
+     сверху), поэтому у столбцов есть явный пик. Пик обязан стоять
+     на центре цифры с допуском 4 px. Порог берётся по ЯДРУ: ореолы
+     полупрозрачные и шириной до 13 px, по ним промах в 10 px
+     не отличить от попадания. */
+  const thru = new Array(5).fill(null);
+  let pastLast = -1;
+  {
+    await page.addStyleTag({
+      content: '.rstep__num,.rstep__dot{visibility:hidden!important}',
+    });
+    const core = (img, x0) => {
+      const cols = new Map();
+      let total = 0;
+      for (let yy = 0; yy < img.height; yy += 1) {
+        for (let xx = 0; xx < img.width; xx += 1) {
+          const q = (yy * img.width + xx) * 4;
+          const r = img.data[q];
+          const g = img.data[q + 1];
+          const b = img.data[q + 2];
+          if (g > 140 && g > r + 30 && g > b + 25) {
+            cols.set(x0 + xx, (cols.get(x0 + xx) ?? 0) + 1);
+            total += 1;
+          }
+        }
+      }
+      let peak = null;
+      let best = 0;
+      for (const [x, n] of cols) if (n > best) ((best = n), (peak = x));
+      return { total, peak };
+    };
+    const strip = async (x0, y0, wid, hei) => {
+      const xa = Math.max(0, Math.round(x0));
+      const ya = Math.max(0, Math.round(y0));
+      const xb = Math.min(w, Math.round(x0 + wid));
+      const yb = Math.min(h, Math.round(y0 + hei));
+      if (xb - xa < 4 || yb - ya < 4) return { total: 0, peak: null };
+      const png = PNG.sync.read(
+        await page.screenshot({ clip: { x: xa, y: ya, width: xb - xa, height: yb - ya } }),
+      );
+      return core(png, xa);
+    };
+    for (let i = 0; i < 5; i += 1) {
+      await park(dots.y[i] - dots.vh * 0.5);
+      const c = await page.evaluate((k) => {
+        const r = document.querySelectorAll('.rstep')[k]
+          .querySelector('.rstep__num')
+          .getBoundingClientRect();
+        return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+      }, i);
+      const got = await strip(c.cx - 44, c.cy - 30, 88, 60);
+      thru[i] = got.total >= 8 && got.peak !== null ? Math.abs(got.peak + 0.5 - c.cx) : null;
+      /* И отдельно: линия обязана ДОЙТИ до пятой цифры и ПРОЙТИ ЕЁ. */
+      if (i === 4) pastLast = (await strip(c.cx - 44, c.cy + 40, 88, 70)).total;
+    }
+    await page.evaluate(() => {
+      for (const st of document.querySelectorAll('style')) {
+        if (st.textContent.includes('rstep__num,.rstep__dot{visibility')) st.remove();
+      }
+    });
+  }
+  const okThru = thru.every((v) => v !== null && v <= 4);
+  const okPast = pastLast > 0;
 
   /* ── ФРОНТ СТОИТ РОВНО НА НОМЕРЕ, КОГДА ТОТ ЗАГОРЕЛСЯ ──────────────
      Постановка: «номер загорается только когда линия до него дошла».
@@ -389,7 +479,7 @@ for (const [w, h, mob] of [
 
   if (
     backSlip || fwdSlip || orderBad || !okEnds || !okDraw || !okLive || !okWhen || !okAhead ||
-    crossed || !okOut || !okFront
+    crossed || !okOut || !okFront || !okThru || !okPast
   )
     failed = true;
 
@@ -412,6 +502,14 @@ for (const [w, h, mob] of [
       `за край экрана: слева ${touchL} px, справа ${touchR} px  ` +
       `в момент зажигания 3-го номера ленты выше точки ${aboveN} px, ниже ${belowN} px` +
       (okFront ? '' : '   !!! НОМЕР ЗАГОРАЕТСЯ РАНЬШЕ ЛИНИИ') +
+      '',
+  );
+  console.log(
+    `            ядро ленты от центра цифры: ${thru
+      .map((v) => (v === null ? 'нет линии' : `${v.toFixed(1)} px`))
+      .join(' / ')} (допуск 4.0)  ниже пятой цифры ядра ${pastLast} px` +
+      (okThru ? '' : '   !!! ЛИНИЯ НЕ ПРОХОДИТ СКВОЗЬ ЦИФРУ') +
+      (okPast ? '' : '   !!! ЛИНИЯ НЕ ДОХОДИТ ДО ПЯТОЙ ЦИФРЫ') +
       (okOut ? '' : '   !!! ЛИНИЯ НЕ ВЫХОДИТ ЗА КРАЙ') +
       (okWhen ? '' : '   !!! ЗАГОРАЕТСЯ ПОЗДНО') +
       (okAhead ? '' : '   !!! МАРШРУТ НЕ ДОЙДЁН') +

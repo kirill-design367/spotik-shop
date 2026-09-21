@@ -1,58 +1,86 @@
 /**
- * ВОПРОС И ОТВЕТ: ЖЁСТКОЕ ПЕРЕКЛЮЧЕНИЕ — СПЛОШНОЙ ПЕРЕБОР.
+ * ВОПРОСЫ: ОТВЕТ БЕЖИТ ОДНОЙ СТРОКОЙ.
  *
- * Постановка двадцать третьей итерации сняла шторку и поставила
- * четыре условия. Все четыре проверяются здесь перебором ВСЕЙ
- * прокрутки блока, а не выбранными положениями:
+ * Постановка двадцать четвёртой итерации, шесть требований, и каждое
+ * проверяется отдельно:
  *
- *   1. НИ ОДНОГО ПОЛОЖЕНИЯ, ГДЕ ВИДНО ДВА ОТВЕТА;
- *   2. НИ ОДНОГО НАЛОЖЕНИЯ и НИ ОДНОГО ПУСТОГО положения: в каждой
- *      ячейке в каждый момент видна ровно одна половина;
- *   3. ПЕРЕХОД ЗАНИМАЕТ ОДИН КАДР. Промежуточных состояний не бывает
- *      ни в пространстве прокрутки (мелкий проход шагом 1 px), ни
- *      во времени (прыжок через точку переключения и чтение
- *      на СЛЕДУЮЩЕМ кадре);
- *   4. НАЗАД РАБОТАЕТ СИММЕТРИЧНО: тот же проход снизу вверх даёт
- *      те же состояния на тех же положениях.
+ *   1. ответ строго в ОДНУ строку, без переносов;
+ *   2. петля БЕЗ ШВА;
+ *   3. скорость спокойная;
+ *   4. ушёл курсор — строка уходит ПЛАВНО;
+ *   5. одновременно бежит ТОЛЬКО ОДНА строка;
+ *   6. раскладка НЕ ПРЫГАЕТ, когда строка появилась.
  *
- * ⚠️ ПРОВЕРЯТЬ ВОПРОСЫ ПООДИНОЧКЕ НЕЛЬЗЯ. Дефект «два ответа разом»
- * у каждого вопроса по отдельности выглядит правильным — сторож
- * двадцать первой итерации ровно на этом и промолчал. Здесь на каждом
- * положении считаются ВСЕ шесть сразу.
+ * ⚠️ ПРО МЕТОДИКУ. Три из шести судятся по ГОТОВОМУ КАДРУ или
+ * по фактическому трансформу, а не по нашим же числам: шов ловится
+ * ПОБИТОВЫМ сравнением начала и конца круга, скорость — сдвигом
+ * дорожки за известное время, прыжок раскладки — координатами
+ * всех шести вопросов до и после включения строки. Сторож, который
+ * читал бы `--dur` и сравнивал его с формулой из предмета, сошёлся
+ * бы с ним по построению (Р-47).
  *
- * ЧИТАТЬ НАДО ЧЕРЕЗ ДВА КАДРА ПОСЛЕ ЗАПИСИ `scrollTop`, а не сразу.
- * На точном указателе позицию ведёт Lenis: он сверяется с фактическим
- * значением и доводит её сам, поэтому мгновенное чтение возвращает
- * то предыдущее положение, то промежуточное (Р-61).
- *
- * И ОТДЕЛЬНОЙ СТРОКОЙ — РАСТР. Вся арифметика выше сойдётся и на сборке,
- * где текст не рисуется вовсе: состояния правильные, а показывать
- * нечего. Поэтому на двух положениях — «виден вопрос» и «виден ответ» —
- * считаются живые пиксели в ячейке.
+ * ⚠️ ПРО ДВА ПУТИ. На точном указателе строку ведёт `:hover` в CSS,
+ * на касаниях — ближайший к линии отсчёта. Это РАЗНЫЕ механизмы,
+ * и проверяются они врозь: перебор прокрутки на мобильном профиле
+ * и наведение на десктопном.
  */
 import { PNG } from 'pngjs';
 import { launch } from './browser.mjs';
 import { serveOut, PREFIX } from './serve-out.mjs';
 
-const PORT = 4262;
-/**
- * Ниже этого половина считается СКРЫТОЙ.
- *
- * ⚠️ «ВИДИМА» — ЭТО НЕ «РОВНО ЕДИНИЦА». Неактивный вопрос приглушён,
- * и его видимое состояние — доля, а не единица. Поэтому сторож НЕ
- * ЗНАЕТ эту долю заранее: он собирает все значения за проход и
- * требует, чтобы их оказалось ровно ДВА на половину. Промежуточное
- * значение — это третье значение, и оно ловится само.
- */
-const OFF = 0.02;
-/** Допуск на совпадение с одним из двух законных значений. */
-const EPS = 0.005;
-
+const PORT = 4267;
 const server = await serveOut(PORT);
 const browser = await launch();
 let failed = false;
 
-console.log('ВОПРОС И ОТВЕТ: сплошной перебор прокрутки блока.\n');
+/**
+ * ШОВ: СКОЛЬКО СТОЛБЦОВ ПОЛОСЫ ЗАПОЛНЕНЫ В ОДНОМ КАДРЕ И ПУСТЫ В ДРУГОМ.
+ *
+ * ⚠️ ПОБИТОВОЕ СРАВНЕНИЕ ЗДЕСЬ НЕ ГОДИТСЯ, И ЭТО ЗАМЕР. Ширина одной
+ * копии дробная (1055.75 px на 1920), значит в конце круга дорожка
+ * стоит на той же букве, но в ДРУГОЙ доле пикселя — сглаживание
+ * глифов выходит иным. Шумовая полка: сдвиг на 0.12 px даёт уже
+ * 1791 различающийся пиксель, на 0.5 px — 6991. Строгий сторож ловил
+ * бы эту долю пикселя и звал её швом.
+ *
+ * Настоящий шов выглядит иначе: в конце круга справа открывается
+ * ПУСТОТА — дорожка кончилась. Поэтому считаются СТОЛБЦЫ: в одном
+ * кадре чернила есть, в другом их нет вовсе (с допуском в соседний
+ * столбец). Пустота на полтысячи пикселей даёт полтысячи таких
+ * столбцов, сглаживание — ни одного.
+ */
+function diff(a, b) {
+  const x = PNG.sync.read(a);
+  const y = PNG.sync.read(b);
+  if (x.width !== y.width || x.height !== y.height) return Infinity;
+  const ink = (img) => {
+    const c = new Array(img.width).fill(0);
+    for (let j = 0; j < img.height; j += 1) {
+      for (let i = 0; i < img.width; i += 1) {
+        const p = (j * img.width + i) * 4;
+        const r = img.data[p];
+        const g = img.data[p + 1];
+        const bl = img.data[p + 2];
+        if (g > 60 && g > r + 20 && g > bl + 15) c[i] += 1;
+      }
+    }
+    return c;
+  };
+  const ia = ink(x);
+  const ib = ink(y);
+  /* ⚠️ И СТОРОЖ ОБЯЗАН ПАДАТЬ, КОГДА НЕ НАРИСОВАНО НИЧЕГО. Без этой
+     строки «пустых столбцов ноль» вышло бы и на сборке, где строки
+     нет вовсе: пусто в обоих кадрах — значит расхождений нет (Р-47). */
+  if (!ia.some((v) => v >= 2) || !ib.some((v) => v >= 2)) return Infinity;
+  const near = (arr, i) => Math.max(arr[i - 1] ?? 0, arr[i], arr[i + 1] ?? 0);
+  let n = 0;
+  for (let i = 0; i < ia.length; i += 1) {
+    if ((ia[i] >= 2 && near(ib, i) === 0) || (ib[i] >= 2 && near(ia, i) === 0)) n += 1;
+  }
+  return n;
+}
+
+console.log('ВОПРОСЫ: ответ бежит одной строкой.\n');
 
 for (const [w, h, mob] of [
   [390, 844, true],
@@ -69,162 +97,210 @@ for (const [w, h, mob] of [
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(700);
 
-  const range = await page.evaluate(() => {
-    const el = document.getElementById('faq');
-    const sc = document.getElementById('scroller');
-    const base = sc.getBoundingClientRect().top - sc.scrollTop;
-    const r = el.getBoundingClientRect();
-    return { from: r.top - base - sc.clientHeight, to: r.bottom - base, step: 8 };
-  });
-
-  /* Отдаём фактическую прозрачность обеих половин: она и есть
-     состояние, которое видит человек. */
-  const look = (top, frames = 2) =>
-    page.evaluate(
-      async ([t, f]) => {
-        const sc = document.getElementById('scroller');
-        sc.scrollTop = Math.max(0, t);
-        for (let i = 0; i < f; i += 1) await new Promise((r) => requestAnimationFrame(r));
-        return [...document.querySelectorAll('.qa__item')].map((it) => [
-          +getComputedStyle(it.querySelector('.qa__half--a')).opacity,
-          +getComputedStyle(it.querySelector('.qa__half--q')).opacity,
-        ]);
-      },
-      [top, frames],
-    );
-
-  let spots = 0;
-  let twoAnswers = 0;
-  let both = 0;
-  let neither = 0;
-  const aVals = new Set();
-  const qVals = new Set();
-  const seen = [[], []]; // сколько раз каждый вопрос побывал открытым и закрытым
-  const trace = new Map();
-  let switchAt = null;
-  let prevOpen = null;
-
-  for (let y = range.from; y <= range.to; y += range.step) {
-    const row = await look(y);
-    spots += 1;
-    let open = 0;
-    let cur = -1;
-    for (let i = 0; i < row.length; i += 1) {
-      const [a, q] = row[i];
-      aVals.add(a.toFixed(3));
-      qVals.add(q.toFixed(3));
-      const aOn = a > OFF;
-      const qOn = q > OFF;
-      if (aOn && qOn) both += 1;
-      if (!aOn && !qOn) neither += 1;
-      if (aOn) {
-        open += 1;
-        cur = i;
-        seen[0][i] = (seen[0][i] || 0) + 1;
-      } else {
-        seen[1][i] = (seen[1][i] || 0) + 1;
-      }
-    }
-    if (open > 1) twoAnswers += 1;
-    trace.set(y, cur);
-    if (prevOpen !== null && prevOpen !== cur && switchAt === null && cur >= 0 && prevOpen >= 0) {
-      switchAt = y;
-    }
-    prevOpen = cur;
-  }
-
-  /* Законных значений ровно два на половину — «видно» и «скрыто».
-     Всё остальное и есть промежуточное состояние. */
-  const levels = (set) => [...set].map(Number).sort((x, y2) => x - y2);
-  const aLv = levels(aVals);
-  const qLv = levels(qVals);
-  const outside = (v, lv) => Math.abs(v - lv[0]) > EPS && Math.abs(v - lv[lv.length - 1]) > EPS;
-  const middle = aLv.length - 2 + (qLv.length - 2);
-
-  /* ── обратный проход: назад обязано работать симметрично ─────────── */
-  let asym = 0;
-  for (let y = range.to; y >= range.from; y -= range.step) {
-    const key = range.from + Math.round((y - range.from) / range.step) * range.step;
-    if (!trace.has(key)) continue;
-    const row = await look(key);
-    let cur = -1;
-    for (let i = 0; i < row.length; i += 1) if (row[i][0] > OFF) cur = i;
-    if (cur !== trace.get(key)) asym += 1;
-  }
-
-  /* ── переход в ПРОСТРАНСТВЕ: мелкий проход шагом 1 px ────────────── */
-  let band = -1;
-  if (switchAt !== null) {
-    let first = null;
-    let last = null;
-    for (let y = switchAt - range.step - 2; y <= switchAt + 2; y += 1) {
-      const row = await look(y);
-      const mid = row.some(([a, q]) => outside(a, aLv) || outside(q, qLv));
-      if (mid) {
-        if (first === null) first = y;
-        last = y;
-      }
-    }
-    band = first === null ? 0 : last - first + 1;
-  }
-
-  /* ── переход ВО ВРЕМЕНИ: прыжок через точку и чтение на след. кадре ─ */
-  let settle = -1;
-  if (switchAt !== null) {
-    await look(switchAt - range.step - 4);
-    const row = await look(switchAt + 4, 1);
-    settle = row.some(([a, q]) => outside(a, aLv) || outside(q, qLv)) ? 1 : 0;
-  }
-
-  /* ── растр: состояния могут быть верными, а рисовать нечего ──────── */
-  const ink = async (wantOpen) => {
-    for (let y = range.from; y <= range.to; y += 12) {
-      const row = await look(y);
-      const a = row[1][0];
-      if (wantOpen ? a < 1 - EPS : a > OFF) continue;
-      const box = await page.evaluate(() => {
-        const r = document.querySelectorAll('.qa__item')[1].getBoundingClientRect();
-        return {
-          x: Math.max(0, Math.round(r.x)),
-          y: Math.max(0, Math.round(r.y)),
-          width: Math.round(r.width),
-          height: Math.round(r.height),
-        };
-      });
-      if (box.y < 0 || box.height < 8 || box.y + box.height > h) continue;
-      const png = PNG.sync.read(await page.screenshot({ clip: box }));
-      let n = 0;
-      for (let i = 0; i < png.data.length; i += 4) if (png.data[i] > 90) n += 1;
-      return n;
-    }
-    return -1;
-  };
-  const inkOpen = await ink(true);
-  const inkShut = await ink(false);
-
-  const stuck = seen[0].filter((v) => v > 0).length !== 6 || seen[1].filter((v) => v > 0).length !== 6;
-  const okOne = twoAnswers === 0;
-  const okFit = both === 0 && neither === 0;
-  const okHard = middle === 0 && band === 0 && settle === 0 && aLv[0] <= OFF && qLv[0] <= OFF;
-  const okBack = asym === 0;
-  const okInk = inkOpen > 200 && inkShut > 200;
-  if (!okOne || !okFit || !okHard || !okBack || !okInk || stuck) failed = true;
-
-  console.log(
-    `  ${String(w).padStart(4)}×${h}  положений ${String(spots).padStart(3)}  ` +
-      `два ответа ${twoAnswers}  наложений ${both}  пустых ${neither}  ` +
-      `уровней прозрачности: ответ ${aLv.length}, вопрос ${qLv.length}` +
-      (okOne ? '' : '   !!! ДВА ОТВЕТА РАЗОМ') +
-      (okFit ? '' : '   !!! НАЛОЖЕНИЕ ИЛИ ПУСТОТА') +
-      (stuck ? '   !!! ВОПРОС ЗАСТРЯЛ В ОДНОМ СОСТОЯНИИ' : ''),
+  // ── 1. ОДНА СТРОКА, БЕЗ ПЕРЕНОСОВ ──────────────────────────────────
+  const lines = await page.evaluate(() =>
+    [...document.querySelectorAll('.qa__item')].map((it) => {
+      const c = it.querySelector('.qa__copy');
+      const r = c.getBoundingClientRect();
+      const lh = parseFloat(getComputedStyle(c).lineHeight);
+      return {
+        wrap: getComputedStyle(c).whiteSpace,
+        /* Высота копии больше одного интерлиньяжа — значит перенос. */
+        rows: Math.round(r.height / lh),
+      };
+    }),
   );
+  const okOne = lines.length === 6 && lines.every((l) => l.wrap === 'nowrap' && l.rows === 1);
+
+  // ── 2. ПЕТЛЯ БЕЗ ШВА ────────────────────────────────────────────────
+  /* Кадр в начале круга и кадр в его конце обязаны совпасть: дорожка
+     несёт две одинаковые копии, ход ровно −50 % её ширины. Судится
+     ПОБИТОВО по растру полосы, а не по числам в CSS. */
+  const K = 1;
+  /* ⚠️ ПОЗИЦИЮ СТАВИМ НАПРЯМУЮ И ДАЁМ ЕЙ СОЙТИСЬ. `scrollIntoView`
+     при вложенной прокрутке двигает не то (Р-37), а на точном
+     указателе позицию ведёт Lenis и доводит её сам — мгновенное
+     чтение после записи возвращает промежуточное значение, и два
+     кадра снимаются с РАЗНЫХ мест. Ровно на этом сторож и падал
+     «швом» в 15 % пикселей (Р-45, Р-61). */
+  await page.evaluate((k) => {
+    const it = document.querySelectorAll('.qa__item')[k];
+    const sc = document.getElementById('scroller');
+    sc.scrollTop += it.getBoundingClientRect().top - sc.clientHeight * 0.4;
+    it.setAttribute('data-on', '');
+  }, K);
+  await page.waitForTimeout(700);
+  const strip = await page.evaluate((k) => {
+    const r = document.querySelectorAll('.qa__item')[k]
+      .querySelector('.qa__tick')
+      .getBoundingClientRect();
+    return { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) };
+  }, K);
+  const at = async (ms) => {
+    await page.evaluate(
+      ([k, t]) => {
+        const run = document.querySelectorAll('.qa__item')[k].querySelector('.qa__run');
+        for (const a of run.getAnimations()) {
+          a.pause();
+          a.currentTime = t;
+        }
+      },
+      [K, ms],
+    );
+    await page.waitForTimeout(120);
+    /* Прямоугольник читается ЗАНОВО перед каждым кадром: если полоса
+       всё-таки уехала, сторож обязан упасть на несовпадении рамки,
+       а не выдать это за шов. */
+    const now = await page.evaluate((k) => {
+      const r = document.querySelectorAll('.qa__item')[k]
+        .querySelector('.qa__tick')
+        .getBoundingClientRect();
+      return Math.round(r.y);
+    }, K);
+    if (now !== strip.y) return null;
+    return page.screenshot({ clip: strip });
+  };
+  const dur = await page.evaluate((k) => {
+    const run = document.querySelectorAll('.qa__item')[k].querySelector('.qa__run');
+    const a = run.getAnimations()[0];
+    return a ? a.effect.getTiming().duration : 0;
+  }, K);
+  const a0 = dur ? await at(0.5) : null;
+  const a1 = dur ? await at(dur - 0.5) : null;
+  const seam = a0 && a1 ? diff(a0, a1) : Infinity;
+  const okSeam = seam <= Math.round(strip.width * 0.01);
+
+  // ── 3. СКОРОСТЬ ─────────────────────────────────────────────────────
+  /* Меряется ФАКТИЧЕСКИМ сдвигом дорожки за известное время, а не
+     нашей же формулой. Спокойная — это десятки пикселей в секунду. */
+  const speed = await page.evaluate(
+    async ([k]) => {
+      const run = document.querySelectorAll('.qa__item')[k].querySelector('.qa__run');
+      const a = run.getAnimations()[0];
+      if (!a) return 0;
+      const x = () => new DOMMatrixReadOnly(getComputedStyle(run).transform).m41;
+      a.pause();
+      a.currentTime = 1000;
+      const x1 = x();
+      a.currentTime = 3000;
+      const x2 = x();
+      return Math.abs(x2 - x1) / 2;
+    },
+    [K],
+  );
+  const okSpeed = speed > 30 && speed < 110;
+
+  // ── 6. РАСКЛАДКА НЕ ПРЫГАЕТ ─────────────────────────────────────────
+  const jump = await page.evaluate(() => {
+    const items = [...document.querySelectorAll('.qa__item')];
+    for (const it of items) it.removeAttribute('data-on');
+    const off = items.map((it) => it.querySelector('.qa__q').getBoundingClientRect().top);
+    let worst = 0;
+    for (let k = 0; k < items.length; k += 1) {
+      items[k].setAttribute('data-on', '');
+      const on = items.map((it) => it.querySelector('.qa__q').getBoundingClientRect().top);
+      for (let i = 0; i < on.length; i += 1) worst = Math.max(worst, Math.abs(on[i] - off[i]));
+      items[k].removeAttribute('data-on');
+    }
+    return worst;
+  });
+  const okJump = jump < 0.01;
+
+  // ── 4 и 5: два пути, и они разные ───────────────────────────────────
+  let many = 0;
+  let seen = 0;
+  let fade = -1;
+  if (mob) {
+    /* НА КАСАНИЯХ — перебор всей прокрутки блока: одновременно
+       бежит не больше одной строки, и хотя бы раз бежит ровно одна. */
+    const range = await page.evaluate(() => {
+      const el = document.querySelector('.qa');
+      const sc = document.getElementById('scroller');
+      const base = sc.getBoundingClientRect().top - sc.scrollTop;
+      const r = el.getBoundingClientRect();
+      return { from: r.top - base - sc.clientHeight, to: r.bottom - base };
+    });
+    let pos = 0;
+    for (let y = range.from; y <= range.to; y += 14) {
+      await page.evaluate((t) => {
+        document.getElementById('scroller').scrollTop = Math.max(0, t);
+      }, y);
+      await page.waitForTimeout(24);
+      const n = await page.evaluate(
+        () =>
+          [...document.querySelectorAll('.qa__item')].filter(
+            (it) => Number(getComputedStyle(it).getPropertyValue('--on')) > 0.01,
+          ).length,
+      );
+      pos += 1;
+      if (n > 1) many += 1;
+      if (n === 1) seen += 1;
+    }
+    console.log(
+      `  ${String(w).padStart(4)}×${h}  касания: положений ${pos}, с двумя строками ${many}, ` +
+        `с одной ${seen}`,
+    );
+  } else {
+    /* НА ТОЧНОМ УКАЗАТЕЛЕ — наведение. Ведёт его CSS, поэтому
+       проверяем и то, что бежит ровно одна, и то, что после ухода
+       курсора строка гаснет ПЛАВНО, а не пропадает в один кадр. */
+    await page.evaluate(() => {
+      const it = document.querySelectorAll('.qa__item')[2];
+      it.scrollIntoView({ block: 'center' });
+    });
+    await page.waitForTimeout(300);
+    const b = await page.evaluate(() => {
+      const r = document.querySelectorAll('.qa__item')[2].querySelector('.qa__q').getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    });
+    await page.mouse.move(b.x, b.y);
+    await page.waitForTimeout(500);
+    const onNow = await page.evaluate(
+      () =>
+        [...document.querySelectorAll('.qa__item')].filter(
+          (it) => Number(getComputedStyle(it).getPropertyValue('--on')) > 0.01,
+        ).length,
+    );
+    if (onNow > 1) many += 1;
+    if (onNow === 1) seen += 1;
+    /* Уход курсора: снимаем прозрачность покадрово и считаем,
+       сколько миллисекунд она падала. Мгновенное исчезновение —
+       это ноль. */
+    await page.mouse.move(4, h - 4);
+    fade = await page.evaluate(
+      () =>
+        new Promise((res) => {
+          const el = document.querySelectorAll('.qa__item')[2].querySelector('.qa__tick');
+          const t0 = performance.now();
+          const step = () => {
+            const v = Number(getComputedStyle(el).opacity);
+            const dt = performance.now() - t0;
+            if (v < 0.02 || dt > 1500) res(Math.round(dt));
+            else requestAnimationFrame(step);
+          };
+          requestAnimationFrame(step);
+        }),
+    );
+    console.log(
+      `  ${String(w).padStart(4)}×${h}  наведение: бежит строк ${onNow}, ` +
+        `гаснет за ${fade} мс (окно 150…900)`,
+    );
+  }
+  const okOnly = many === 0 && seen > 0;
+  const okFade = mob || (fade >= 150 && fade <= 900);
+
+  if (!okOne || !okSeam || !okSpeed || !okJump || !okOnly || !okFade) failed = true;
   console.log(
-    `            переход: ${band} px прокрутки и ${settle ? 'НЕ ' : ''}укладывается в один кадр; ` +
-      `обратный проход расходится в ${asym} положениях; ` +
-      `живых пикселей: ответ ${inkOpen}, вопрос ${inkShut}` +
-      (okHard ? '' : '   !!! ПЕРЕХОД НЕ МГНОВЕННЫЙ') +
-      (okBack ? '' : '   !!! НАЗАД РАБОТАЕТ ИНАЧЕ') +
-      (okInk ? '' : '   !!! В ЯЧЕЙКЕ НИЧЕГО НЕ НАРИСОВАНО'),
+    `            строк в ответе ${lines.map((l) => l.rows).join('')}  ` +
+      `шов: пустых столбцов ${seam === Infinity ? '—' : seam} из ${strip.width}  ` +
+      `скорость ${speed.toFixed(1)} px/с  круг ${(dur / 1000).toFixed(1)} с  ` +
+      `прыжок раскладки ${jump.toFixed(3)} px` +
+      (okOne ? '' : '   !!! ОТВЕТ НЕ В ОДНУ СТРОКУ') +
+      (okSeam ? '' : '   !!! ШОВ В ПЕТЛЕ') +
+      (okSpeed ? '' : '   !!! СКОРОСТЬ ВНЕ ОКНА') +
+      (okJump ? '' : '   !!! РАСКЛАДКА ПРЫГАЕТ') +
+      (okOnly ? '' : '   !!! БЕЖИТ НЕ ОДНА СТРОКА') +
+      (okFade ? '' : '   !!! СТРОКА ПРОПАДАЕТ РЫВКОМ'),
   );
   await page.close();
 }
@@ -233,7 +309,7 @@ await browser.close();
 server.close();
 console.log(
   failed
-    ? '\nПРОВАЛ: переключение вопроса на ответ ведёт себя не так, как задумано'
-    : '\nНа всей прокрутке виден ровно один ответ, и смена занимает один кадр',
+    ? '\nПРОВАЛ: бегущая строка ответа ведёт себя не так, как задумано'
+    : '\nОтвет бежит одной строкой: петля без шва, одна за раз, раскладка стоит',
 );
 process.exit(failed ? 1 : 0);

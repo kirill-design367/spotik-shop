@@ -108,6 +108,7 @@ jobs:
           node scripts/verify-navsweep.mjs
           node scripts/verify-motion.mjs
           node scripts/verify-qa.mjs
+          node scripts/verify-cards.mjs
           node scripts/verify-route.mjs
           node scripts/verify-menu.mjs
           node scripts/verify-focus.mjs

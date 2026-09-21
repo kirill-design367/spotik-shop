@@ -82,9 +82,11 @@ console.log('\nПриёмы середины при «уменьшить дви�
     off: document.querySelector('.route').style.getPropertyValue('--lit') || '0',
     spark: getComputedStyle(document.querySelector('.route__glints')).display,
     nums: [...document.querySelectorAll('.rstep__num')].map((e) => +getComputedStyle(e).opacity),
-    swap: document.querySelector('.qa').hasAttribute('data-swap'),
+    /* Вопросы видны целиком, ответ стоит неподвижно и виден: строка
+       не бежит вовсе, а полоса открыта. */
+    run: [...document.querySelectorAll('.qa__run')].map((e) => getComputedStyle(e).animationName),
     q: [...document.querySelectorAll('.qa__q')].map((e) => +getComputedStyle(e).opacity),
-    a: [...document.querySelectorAll('.qa__a')].map((e) => +getComputedStyle(e).opacity),
+    a: [...document.querySelectorAll('.qa__tick')].map((e) => +getComputedStyle(e).opacity),
   }));
   for (let i = 0; i < 12; i += 1) { await page.mouse.wheel(0, 90); await page.waitForTimeout(25); }
   await page.waitForTimeout(600);
@@ -98,14 +100,20 @@ console.log('\nПриёмы середины при «уменьшить дви�
   const okLit = Number(before.off) === 1 && Number(after) === 1;
   const okSpark = before.spark === 'none';
   const okNums = before.nums.length === 5 && before.nums.every((v) => v > 0.99);
-  const okAns = dim === 0 && !before.swap && before.q.length === 6 && before.a.length === 6;
+  const okAns =
+    dim === 0 &&
+    before.q.length === 6 &&
+    before.a.length === 6 &&
+    before.run.length === 6 &&
+    before.run.every((v) => v === 'none');
   if (!okMq || !okLit || !okNums || !okAns || !okSpark) failed = true;
   console.log(`  бегущая строка: animation-name=${before.mq} ${okMq ? '— стоит' : '— ИДЁТ'}`);
   console.log(`  маршрут: подсветка ${before.off} → ${after} ${okLit ? '— целиком и не двигается' : '— ЕДЕТ'}`);
   console.log(`  бегущие огни маршрута: display=${before.spark} ${okSpark ? '— их нет' : '— ЕСТЬ'}`);
   console.log(`  номера шагов: видно ${before.nums.filter((v) => v > 0.99).length} из ${before.nums.length}`);
   console.log(`  вопрос и ответ: видно ${before.q.length + before.a.length - dim} из `
-    + `${before.q.length + before.a.length}, подмена ${before.swap ? 'ВКЛЮЧЕНА' : 'выключена'}`);
+    + `${before.q.length + before.a.length}, строк бежит `
+    + `${before.run.filter((v) => v !== 'none').length} из ${before.run.length}`);
 
   /* КАРТОЧКА ОБЯЗАНА СТОЯТЬ ЦЕЛИКОМ. Волны внутри больше нет, наклон
      под указателем не заводится, подсветка сзади статична — значит два

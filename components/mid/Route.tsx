@@ -522,7 +522,16 @@ export default function Route({ steps }: { steps: Step[] }) {
       const h = Math.max(1, Math.round(box.height));
 
       /* Точка маршрута — ЦЕНТР НОМЕРА, обе координаты: линия обязана
-         проходить сквозь цифру, а не мимо неё. */
+         проходить сквозь цифру, а не мимо неё.
+
+         ⚠️ У ИЗМЕРЯЕМОГО ЭЛЕМЕНТА НЕ ДОЛЖНО БЫТЬ ТРАНСФОРМА.
+         `getBoundingClientRect` отдаёт бокс ПОСЛЕ трансформа, а приезд
+         номера (`--n`) двигал его на 10 px. Померено это было в момент,
+         когда шаг ещё не загорелся, то есть при полном сдвиге, — и
+         каждая точка ложилась на 10 px наружу. Сдвиг уехал на внутренний
+         `.rstep__n`; здесь читается чистый бокс. Тот же класс ошибки,
+         что «мерить до того, как рельеф развёл шаги» (Р-64), только
+         двигала бокс не раскладка, а состояние. */
       const ax: number[] = [];
       ys = items.map((el) => {
         const num = el.querySelector<HTMLElement>('.rstep__num');
@@ -877,8 +886,14 @@ export default function Route({ steps }: { steps: Step[] }) {
         {steps.map((s, i) => (
           <li key={s.t} className="rstep">
             <span className="rstep__dot" aria-hidden="true" />
+            {/* ⚠️ ЦИФРУ ДВИГАЕТ ВНУТРЕННИЙ СПАН, А НЕ САМ `.rstep__num`.
+                Точка маршрута снимается с `.rstep__num`, а
+                `getBoundingClientRect` ВОЗВРАЩАЕТ БОКС ВМЕСТЕ
+                С ТРАНСФОРМОМ. Пока приезд номера висел на нём самом,
+                каждая точка ложилась на 10 px в сторону — линия шла
+                мимо цифры. Внешний бокс теперь чистый. */}
             <span className="rstep__num tnum" aria-hidden="true">
-              {i + 1}
+              <span className="rstep__n">{i + 1}</span>
             </span>
             <span className="rstep__body">
               <span className="rstep__t">

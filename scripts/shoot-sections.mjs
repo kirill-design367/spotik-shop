@@ -25,7 +25,7 @@ for (const [name, w, h] of [['mobile', 390, 844], ['desktop', 1920, 1080]]) {
   const diag = await page.evaluate(() => ({
     docW: document.documentElement.scrollWidth, winW: window.innerWidth,
     docH: document.documentElement.scrollHeight,
-    gl: document.querySelectorAll('.cards__gl').length,
+    gl: document.querySelectorAll('.cards__aura').length,
   }));
   console.log(`${name} ${w}x${h}: документ ${diag.docW} / окно ${diag.winW} ${diag.docW > diag.winW + 1 ? '!!! ГОРИЗОНТАЛЬНЫЙ СКРОЛЛ' : 'скролла по X нет'}, высота ${diag.docH}, холстов сцены: ${diag.gl}`);
   if (errs.length) console.log('  ОШИБКИ:', [...new Set(errs)].slice(0, 5).join(' | '));
