@@ -19,6 +19,7 @@
 import { launch } from './browser.mjs';
 import { serveOut } from './serve-out.mjs';
 import pg from 'pg';
+import { execFileSync } from 'node:child_process';
 
 const URL_BAZY = process.env.DATABASE_URL || '';
 if (!URL_BAZY) {
@@ -45,6 +46,12 @@ const DARENYY = 'drug@spotik.test';
 
 /* Чистая база на каждый прогон: иначе второй запуск спотыкается
    о заказы первого, и «проверка упала» значит «проверка засорена». */
+/* ⚠️ СХЕМУ НАКАТЫВАЕМ САМИ. Сторож должен работать на ПУСТОЙ базе:
+   в CI она поднимается сервисом и таблиц в ней нет вовсе, а забытая
+   строка `node scripts/migrate.mjs` в workflow даёт отказ, который
+   читается как «сломан магазин», хотя сломана подготовка. */
+execFileSync(process.execPath, ['scripts/migrate.mjs'], { stdio: 'inherit', env: process.env });
+
 const pool = new pg.Pool({ connectionString: URL_BAZY, max: 1 });
 await pool.query(`truncate balance_move, payment, order_slot, certificate, shop_order,
   session, login_code, app_user, staff, plan_price, setting restart identity cascade`);
