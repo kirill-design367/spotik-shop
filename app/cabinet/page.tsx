@@ -31,7 +31,17 @@ const ZNACHOK: Record<Status, string> = {
  * в ящике навсегда и по пути не шифруется; кабинет закрыт сессией
  * и одноразовым кодом.
  */
-export default async function Cabinet() {
+export default async function Cabinet({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await searchParams;
+  /* ⚠️ ОТКАЗ В ОПЛАТЕ ОБЯЗАН БЫТЬ ВИДЕН. Пока ключей Робокассы нет,
+     кнопка «Оплатить» возвращает человека сюда, и без этой строки
+     он видел бы только тот же кабинет — как будто нажатие
+     не сработало. */
+  const neOplatili = (Array.isArray(sp.error) ? sp.error[0] : sp.error) === 'pay';
   if (!bazaEst()) {
     return (
       <main id="main" className="page" tabIndex={-1}>
@@ -63,6 +73,13 @@ export default async function Cabinet() {
     <main id="main" className="page" tabIndex={-1}>
       <a className="page__back" href="/">← На главную</a>
       <h1 className="page__h">Личный кабинет</h1>
+
+      {neOplatili && (
+        <p className="err">
+          Оплата картой ещё не подключена: магазин Робокассы не настроен. Заказ сохранён
+          и ждёт оплаты здесь же.
+        </p>
+      )}
 
       <div className="cab__top">
         <span className="cab__mail">{kto.email}</span>

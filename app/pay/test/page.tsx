@@ -1,5 +1,6 @@
 import '../../shop.css';
 import type { Metadata } from 'next';
+import { notFound } from 'next/navigation';
 import { odna } from '@/lib/server/db';
 import { ktoKlient } from '@/lib/server/auth';
 import { imitatorVklyuchyon } from '@/lib/server/payments';
@@ -10,11 +11,12 @@ export const metadata: Metadata = { title: 'Тестовая оплата — Sp
 export const dynamic = 'force-dynamic';
 
 /**
- * ТЕСТОВАЯ ОПЛАТА — пока у магазина нет ключей Робокассы.
+ * ТЕСТОВАЯ ОПЛАТА — только в проверках и только на своей машине.
  *
- * ⚠️ СТРАНИЦЫ НЕ СУЩЕСТВУЕТ, ЕСЛИ ИМИТАТОР ВЫКЛЮЧЕН. Появятся боевые
- * ключи — здесь будет 404, даже если секрет забыли убрать
- * из окружения. Нажатие зовёт ТУ ЖЕ дверь, что и настоящее
+ * ⚠️ СТРАНИЦЫ НЕ СУЩЕСТВУЕТ, ЕСЛИ ИМИТАТОР ВЫКЛЮЧЕН: настоящий 404,
+ * а не страница со словами «не найдено». На боевом сервере секрета
+ * нет вовсе, поэтому её там нет; появятся ключи Робокассы — не будет
+ * и при забытом секрете. Нажатие зовёт ТУ ЖЕ дверь, что и настоящее
  * уведомление: проверяется вся цепочка целиком.
  */
 export default async function PayTest({
@@ -22,13 +24,7 @@ export default async function PayTest({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  if (!imitatorVklyuchyon()) {
-    return (
-      <main id="main" className="page" tabIndex={-1}>
-        <h1 className="page__h">Страница не найдена</h1>
-      </main>
-    );
-  }
+  if (!imitatorVklyuchyon()) notFound();
   const sp = await searchParams;
   const platyozh = Number(Array.isArray(sp.payment) ? sp.payment[0] : sp.payment);
   const kto = await ktoKlient();

@@ -180,6 +180,12 @@ chk('заказ по-прежнему не оплачен', (await statusZakaza(
 console.log('── ИМИТАТОР ВЫКЛЮЧЕН НА НАСТОЯЩИХ КЛЮЧАХ ──');
 const im = await fetch(`http://localhost:${PORT}/api/pay/fake/?secret=proverka&payment=${p3.id}`, { method: 'POST' });
 chk('путь имитатора не существует', im.status === 404, `статус ${im.status}`);
+/* Дверей у имитатора две: служебный путь и страница с кнопкой.
+   Закрыта обязана быть и вторая, и закрыта НАСТОЯЩИМ отказом —
+   страница со словами «не найдено» отвечает двести, и снаружи её
+   от живой не отличить. Ровно этим и проверяется боевой сервер. */
+const ims = await fetch(`http://localhost:${PORT}/pay/test/?payment=${p3.id}`);
+chk('страницы тестовой оплаты нет', ims.status === 404, `статус ${ims.status}`);
 
 await pool.end();
 await browser.close();

@@ -404,6 +404,16 @@ jobs:
           code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST "$BASE/api/pay/result/" || echo 000)
           chk "уведомление без подписи отвергнуто" 400 "$code"
 
+          # ⚠️ ИМИТАТОРА ОПЛАТЫ НА БОЕВОМ СЕРВЕРЕ НЕТ ВОВСЕ, и это
+          # проверяется С РАННЕРА, по живому адресу, а не по нашему
+          # представлению о том, что лежит в /srv/spotik/env. Обе
+          # двери имитатора обязаны отвечать «такого нет»: пока
+          # Робокасса не подключена, подтвердить оплату нечем.
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST "$BASE/api/pay/fake/" || echo 000)
+          chk "дверь имитатора закрыта" 404 "$code"
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/pay/test/" || echo 000)
+          chk "страницы тестовой оплаты нет" 404 "$code"
+
           if [ "$TLS" = 1 ]; then
             loc=$(curl -sSI --max-time 20 http://spotik.shop/ | tr -d '\r' | awk -F': ' 'tolower($1)=="location"{print $2}')
             chk "http ведёт на https" "https://spotik.shop/" "$loc"

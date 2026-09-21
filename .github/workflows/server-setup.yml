@@ -182,6 +182,17 @@ jobs:
             fi
           }
 
+          SNYATO=0
+          snyat() { # snyat ИМЯ — убрать переменную, если она вдруг есть
+            if grep -q "^$1=" /srv/spotik/env 2>/dev/null; then
+              sed -i "/^$1=/d" /srv/spotik/env
+              SNYATO=1
+              echo "  $1: убран из окружения"
+            else
+              echo "  $1: и не было"
+            fi
+          }
+
           DBPASS="$(openssl rand -base64 30 | tr -d '\n/+=' | cut -c1-32)"
           if sudo -u postgres psql -tAc "select 1 from pg_roles where rolname='spotik'" | grep -q 1; then
             echo "  роль spotik: уже есть"
@@ -226,7 +237,13 @@ jobs:
           zadat SMTP_USER ""
           zadat SMTP_PASS ""
           zadat SMTP_FROM "Spotik Shop <no-reply@spotik.shop>"
-          zadat SPOTIK_FAKE_PAY_SECRET "$(openssl rand -hex 16)"
+          # ⚠️ ИМИТАТОРА ОПЛАТЫ НА БОЕВОМ СЕРВЕРЕ НЕТ НИ ПРИ КАКОМ
+          # РАСКЛАДЕ. Он живёт только в проверках — в CI и на своей
+          # машине, — и секрет ему задаёт сам сторож. Прежние прогоны
+          # настройки его здесь СОЗДАВАЛИ, поэтому теперь он снимается,
+          # и снимается на каждом прогоне: вернуть его может только
+          # рука человека, и тогда следующая настройка уберёт снова.
+          snyat SPOTIK_FAKE_PAY_SECRET
 
           echo "══ Node 22 ══"
           if command -v node >/dev/null 2>&1 && node -e 'process.exit(+process.versions.node.split(".")[0] >= 22 ? 0 : 1)'; then
@@ -282,6 +299,17 @@ jobs:
           systemctl daemon-reload
           systemctl enable spotik >/dev/null 2>&1 || true
           echo "  spotik.service: $(systemctl is-enabled spotik 2>&1)"
+          # Окружение читается ОДИН РАЗ, при старте процесса: пока
+          # службу не перезапустить, снятая переменная живёт в её
+          # памяти как ни в чём не бывало.
+          if [ "$SNYATO" = 1 ] && systemctl is-active --quiet spotik; then
+            systemctl restart spotik
+            for i in $(seq 1 30); do
+              curl -fsS -o /dev/null --max-time 3 http://127.0.0.1:3000/ && break
+              sleep 1
+            done
+            echo "  spotik.service: перезапущен, окружение перечитано"
+          fi
 
           echo "══ ежедневная резервная копия базы ══"
           mkdir -p /srv/spotik/backup
