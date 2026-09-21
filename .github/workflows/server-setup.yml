@@ -1,0 +1,416 @@
+# ПЕРВИЧНАЯ НАСТРОЙКА СЕРВЕРА. Запускается руками и рассчитана
+# на ПОВТОРНЫЕ прогоны: каждый шаг проверяет, сделано ли уже, и
+# ничего не ломает, если сделано. Гонять её можно сколько угодно —
+# в частности, чтобы выпустить сертификат позже, когда разойдётся DNS.
+#
+# ⚠️ ПОРЯДОК ШАГОВ ЗАДАН ОДНИМ ОГРАНИЧЕНИЕМ: сертификата ещё нет,
+# а nginx с `ssl_certificate` на несуществующий файл не стартует
+# вовсе. Поэтому конфиг пишется В ДВА ЗАХОДА: сначала только http
+# (сайт живой, плюс каталог для проверки Let's Encrypt), и только
+# когда сертификат на диске — полный конфиг с https и редиректами.
+# При повторном прогоне первый заход просто переписывает то же самое.
+#
+# ⚠️ СКРИПТ СНАЧАЛА КЛАДЁТСЯ ФАЙЛОМ, И ТОЛЬКО ПОТОМ ЗАПУСКАЕТСЯ.
+# Соблазн отдать его в `ssh … 'bash -s' <<'EOF'` велик, но тогда
+# скрипт и стандартный ввод — одно и то же: первая же команда,
+# которая читает ввод (apt при неожиданном вопросе, snap, certbot),
+# съедает остаток скрипта, и половина настройки молча не выполнится.
+name: Первичная настройка сервера
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_cert:
+        description: 'Не трогать сертификат (только nginx и файрвол)'
+        type: boolean
+        default: false
+
+concurrency:
+  # Настройка и выкладка делят один сервер: одновременно им там делать
+  # нечего. Группа общая с deploy.yml намеренно.
+  group: server
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      # ⚠️ ХОСТ, ПОЛЬЗОВАТЕЛЬ И КЛЮЧ УЕЗЖАЮТ В ~/.ssh/config, И ДАЛЬШЕ
+      # ВЕЗДЕ ПРОСТО `ssh spotik`. Так короче, но взято это не ради
+      # краткости: общий набор опций в переменной окружения не годится
+      # вовсе — `~` в значении переменной НЕ раскрывается (тильду
+      # подставляет разбор строки, а не подстановка), и `-i ~/.ssh/…`
+      # молча ищет файл с именем «~».
+      - name: Проверить секреты и настроить ssh
+        env:
+          HOST: ${{ secrets.SSH_HOST }}
+          USER_NAME: ${{ secrets.SSH_USER }}
+          KEY: ${{ secrets.SSH_KEY }}
+        run: |
+          for n in HOST USER_NAME KEY; do
+            [ -n "${!n}" ] || { echo "::error::не задан секрет $n"; exit 1; }
+          done
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keygen -y -f ~/.ssh/id_deploy > /dev/null \
+            || { echo "::error::SSH_KEY не разбирается как закрытый ключ"; exit 1; }
+          {
+            echo "Host spotik"
+            echo "  HostName $HOST"
+            echo "  User $USER_NAME"
+            echo "  IdentityFile ~/.ssh/id_deploy"
+            echo "  IdentitiesOnly yes"
+            echo "  StrictHostKeyChecking accept-new"
+            echo "  BatchMode yes"
+            echo "  ConnectTimeout 20"
+            echo "  ServerAliveInterval 20"
+          } > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+          ssh-keyscan -T 10 "$HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh spotik 'echo подключение есть: $(hostname)'
+
+      # DNS смотрим С РАННЕРА, а не с сервера: Let's Encrypt проверяет
+      # домен снаружи, и важно то, что видит внешний мир.
+      - name: Разошёлся ли DNS
+        id: dns
+        env:
+          HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          ok=1
+          for h in spotik.shop www.spotik.shop; do
+            a=$(getent ahostsv4 "$h" | awk '{print $1}' | sort -u | paste -sd, -)
+            if [ "$a" = "$HOST" ]; then echo "$h указывает на сервер"
+            else echo "$h -> ${a:-НЕ РЕЗОЛВИТСЯ} (ждали адрес сервера)"; ok=0; fi
+          done
+          echo "ready=$ok" >> "$GITHUB_OUTPUT"
+          [ "$ok" = 1 ] || echo "::warning::DNS ещё не разошёлся — сайт поднимем по http, сертификат отложим"
+
+      - name: Собрать скрипт настройки
+        run: |
+          mkdir -p /tmp/remote
+          cat > /tmp/remote/setup.sh <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          echo "══ пакеты ══"
+          apt-get update -qq
+          # Ubuntu 26.04: имена пакетов те же, что на 24.04, ставятся
+          # так же. Единственное, чего может не оказаться в свежем
+          # релизе, — certbot в universe; тогда берём из snap
+          # и говорим об этом в логе.
+          apt-get install -y -qq nginx rsync ufw unattended-upgrades ca-certificates openssl >/dev/null
+          if command -v certbot >/dev/null 2>&1; then
+            echo "certbot: уже стоит"
+          elif apt-get install -y -qq certbot >/dev/null 2>&1; then
+            echo "certbot: поставлен из apt"
+          else
+            echo "certbot: в apt не нашёлся, ставим из snap"
+            apt-get install -y -qq snapd >/dev/null
+            snap install core >/dev/null
+            snap refresh core >/dev/null
+            snap install --classic certbot >/dev/null
+            ln -sf /snap/bin/certbot /usr/bin/certbot
+          fi
+          echo "  nginx:   $(nginx -v 2>&1)"
+          echo "  certbot: $(certbot --version 2>&1)"
+
+          echo "══ файрвол ══"
+          # ⚠️ 22 РАЗРЕШАЕМ ПЕРВЫМ И ДО ВКЛЮЧЕНИЯ. Иначе ufw обрубит
+          # текущую же сессию, и починить будет нечем.
+          ufw allow 22/tcp   >/dev/null
+          ufw allow 80/tcp   >/dev/null
+          ufw allow 443/tcp  >/dev/null
+          ufw default deny incoming  >/dev/null
+          ufw default allow outgoing >/dev/null
+          ufw --force enable >/dev/null
+          ufw status verbose | sed 's/^/  /'
+
+          echo "══ вход по паролю ══"
+          # Постановка: вход по паролю НЕ отключать — заказчик заходит
+          # им сам. Поэтому sshd не трогаем вовсе, только печатаем
+          # текущее состояние, чтобы было видно: оно не менялось.
+          sshd -T 2>/dev/null | grep -E '^(passwordauthentication|permitrootlogin)' | sed 's/^/  /' || true
+
+          echo "══ автообновления безопасности ══"
+          cat > /etc/apt/apt.conf.d/20auto-upgrades <<'CONF'
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+          APT::Periodic::Download-Upgradeable-Packages "1";
+          APT::Periodic::AutocleanInterval "7";
+          CONF
+          systemctl enable --now unattended-upgrades >/dev/null 2>&1 || true
+          echo "  unattended-upgrades: $(systemctl is-enabled unattended-upgrades 2>&1), $(systemctl is-active unattended-upgrades 2>&1)"
+
+          echo "══ каталоги сайта ══"
+          mkdir -p /srv/spotik/releases /var/www/certbot
+          # Первая выкладка приедет позже; чтобы nginx поднялся уже
+          # сейчас, кладём заглушку и целим на неё симлинк. Повторный
+          # прогон её не тронет: симлинк уже существует.
+          if [ ! -e /srv/spotik/current ]; then
+            mkdir -p /srv/spotik/releases/placeholder
+            printf '%s\n' '<!doctype html><meta charset="utf-8"><title>spotik.shop</title><p>Сервер настроен, выкладка ещё не приезжала.' \
+              > /srv/spotik/releases/placeholder/index.html
+            ln -sfn /srv/spotik/releases/placeholder /srv/spotik/current
+          fi
+          chmod 755 /srv /srv/spotik /var/www/certbot
+
+          echo "══ общие куски конфига ══"
+          mkdir -p /etc/nginx/snippets/spotik-app
+
+          # ⚠️ `add_header` В ЛОКАЦИИ ОТМЕНЯЕТ ВСЕ УНАСЛЕДОВАННЫЕ.
+          # Поэтому общие заголовки лежат отдельным файлом и
+          # подключаются В КАЖДОЙ локации, где есть свой add_header.
+          cat > /etc/nginx/snippets/spotik-headers.conf <<'CONF'
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+          add_header X-Frame-Options "SAMEORIGIN" always;
+          CONF
+
+          # Раздача статики. ОДИН файл на оба сценария — http-только
+          # и https, — чтобы правила кэша и try_files не разъезжались
+          # между ними.
+          cat > /etc/nginx/snippets/spotik-static.conf <<'CONF'
+          root /srv/spotik/current;
+          index index.html;
+
+          # Выдача собрана с trailingSlash: ссылки идут на `/что-то/`,
+          # а на диске лежит `что-то/index.html`. Ветка `$uri.html`
+          # оставлена на случай ссылки без слеша.
+          location / {
+            try_files $uri $uri/ $uri.html =404;
+            include snippets/spotik-headers.conf;
+            add_header Cache-Control "no-cache" always;
+          }
+
+          # ⚠️ ДОЛГИЙ КЭШ ТОЛЬКО ТАМ, ГДЕ ИМЯ ФАЙЛА СОДЕРЖИТ ХЭШ.
+          # `^~` нужен, чтобы префикс победил регулярку ниже.
+          location ^~ /_next/static/ {
+            include snippets/spotik-headers.conf;
+            add_header Cache-Control "public, max-age=31536000, immutable" always;
+            access_log off;
+          }
+
+          # ⚠️ ШРИФТЫ И КАРТИНКИ НЕ IMMUTABLE: их имена БЕЗ хэша
+          # (`inter-cyrillic.woff2`), и пересборка сабсета не меняет
+          # адрес. Год кэша означал бы год со старым шрифтом.
+          location ~* \.(woff2|png|ico|svg|jpg|webp)$ {
+            include snippets/spotik-headers.conf;
+            add_header Cache-Control "public, max-age=2592000" always;
+            access_log off;
+          }
+
+          error_page 404 /404.html;
+          location = /404.html { internal; }
+
+          # ⚠️ ЗАДЕЛ ПОД БЭКЕНД. Позже здесь появятся кабинет, админка
+          # и оплата. Чтобы добавить проксирование, НЕ НАДО трогать
+          # этот файл и переделывать конфиг: достаточно положить свой
+          # .conf в каталог ниже и перезагрузить nginx. Пустую маску
+          # nginx проглатывает без ошибки, поэтому задел ничего
+          # не стоит.
+          #
+          # Пример такого файла:
+          #   location /api/ {
+          #     proxy_pass http://spotik_app;
+          #     proxy_http_version 1.1;
+          #     proxy_set_header Upgrade $http_upgrade;
+          #     proxy_set_header Connection $connection_upgrade;
+          #     proxy_set_header Host $host;
+          #     proxy_set_header X-Real-IP $remote_addr;
+          #     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          #     proxy_set_header X-Forwarded-Proto $scheme;
+          #   }
+          include /etc/nginx/snippets/spotik-app/*.conf;
+          CONF
+
+          # `map` и `upstream` живут на верхнем уровне http, поэтому
+          # лежат отдельным файлом в conf.d. Они тоже задел: пока
+          # никто не проксирует, они ничего не делают.
+          cat > /etc/nginx/conf.d/spotik-upstream.conf <<'CONF'
+          map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+          upstream spotik_app { server 127.0.0.1:3000; keepalive 16; }
+          CONF
+
+          cat > /etc/nginx/conf.d/spotik-gzip.conf <<'CONF'
+          server_tokens off;
+          gzip on;
+          gzip_vary on;
+          gzip_comp_level 6;
+          gzip_min_length 512;
+          gzip_proxied any;
+          gzip_types
+            text/plain text/css text/javascript application/javascript
+            application/json application/manifest+json image/svg+xml
+            application/xml text/xml;
+          # woff2 сжат внутри: повторное сжатие только греет процессор.
+          CONF
+
+          echo "══ nginx по http ══"
+          cat > /etc/nginx/sites-available/spotik <<'CONF'
+          server {
+            listen 80 default_server;
+            listen [::]:80 default_server;
+            server_name spotik.shop www.spotik.shop;
+
+            # Проверка Let's Encrypt обязана отвечать по http ВСЕГДА,
+            # в том числе когда всё остальное уже уехало на https.
+            location ^~ /.well-known/acme-challenge/ {
+              root /var/www/certbot;
+              default_type "text/plain";
+            }
+
+            include snippets/spotik-static.conf;
+          }
+          CONF
+          ln -sfn /etc/nginx/sites-available/spotik /etc/nginx/sites-enabled/spotik
+          rm -f /etc/nginx/sites-enabled/default
+
+          nginx -t
+          systemctl enable nginx >/dev/null 2>&1 || true
+          systemctl reload nginx 2>/dev/null || systemctl restart nginx
+          echo "  nginx поднят по http"
+          SCRIPT
+
+          cat > /tmp/remote/cert.sh <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [ -d /etc/letsencrypt/live/spotik.shop ]; then
+            echo "сертификат уже есть:"
+            certbot certificates 2>/dev/null | sed 's/^/  /'
+          else
+            # webroot, а не --nginx: плагин переписывает конфиг сам,
+            # а конфиг у нас свой и пересобирается этим же workflow
+            # при каждом прогоне — правки плагина затёрлись бы.
+            certbot certonly --webroot -w /var/www/certbot \
+              -d spotik.shop -d www.spotik.shop \
+              --non-interactive --agree-tos \
+              -m lev.menashe@yandex.ru \
+              --deploy-hook 'systemctl reload nginx'
+          fi
+
+          echo "══ автопродление ══"
+          # Молчаливо не продлившийся сертификат — это упавший сайт
+          # через три месяца, поэтому таймер проверяем явно, а не
+          # «пакет же ставит».
+          systemctl list-timers --all 2>/dev/null | grep -i certbot | sed 's/^/  /' \
+            || echo "  ВНИМАНИЕ: таймера продления не видно"
+          # Пробное продление НЕ обязано проходить, чтобы шаг считался
+          # успешным: сертификат к этому моменту уже выпущен, а
+          # черновой сервер Let's Encrypt имеет право отказать
+          # по своим ограничениям. Роняя здесь workflow, мы бы
+          # уронили его ПОСЛЕ успешной работы.
+          certbot renew --dry-run 2>&1 | tail -6 | sed 's/^/  /' \
+            || echo "::warning::пробное продление не прошло — посмотреть логи certbot"
+          SCRIPT
+
+          cat > /tmp/remote/https.sh <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [ ! -d /etc/letsencrypt/live/spotik.shop ]; then
+            echo "::warning::сертификата нет, https-конфиг не ставим"
+            exit 0
+          fi
+
+          # Параметры TLS одним файлом: обычно их кладёт certbot,
+          # но при установке из snap файла может не быть, а конфиг
+          # на него ссылается.
+          if [ ! -f /etc/letsencrypt/options-ssl-nginx.conf ]; then
+            cat > /etc/letsencrypt/options-ssl-nginx.conf <<'CONF'
+          ssl_session_cache shared:le_nginx_SSL:10m;
+          ssl_session_timeout 1440m;
+          ssl_session_tickets off;
+          ssl_protocols TLSv1.2 TLSv1.3;
+          ssl_prefer_server_ciphers off;
+          ssl_ciphers "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384";
+          CONF
+          fi
+
+          cat > /etc/nginx/sites-available/spotik <<'CONF'
+          # ── http: только проверка Let's Encrypt и редирект ──
+          server {
+            listen 80 default_server;
+            listen [::]:80 default_server;
+            server_name spotik.shop www.spotik.shop;
+
+            location ^~ /.well-known/acme-challenge/ {
+              root /var/www/certbot;
+              default_type "text/plain";
+            }
+            # Оба имени уходят СРАЗУ на канонический адрес: цепочка
+            # http://www → https://www → https://apex была бы вторым
+            # редиректом на ровном месте.
+            location / { return 301 https://spotik.shop$request_uri; }
+          }
+
+          # ── https www: только редирект на без-www ──
+          server {
+            listen 443 ssl;
+            listen [::]:443 ssl;
+            http2 on;
+            server_name www.spotik.shop;
+
+            ssl_certificate     /etc/letsencrypt/live/spotik.shop/fullchain.pem;
+            ssl_certificate_key /etc/letsencrypt/live/spotik.shop/privkey.pem;
+            include /etc/letsencrypt/options-ssl-nginx.conf;
+
+            return 301 https://spotik.shop$request_uri;
+          }
+
+          # ── https: сам сайт ──
+          server {
+            listen 443 ssl default_server;
+            listen [::]:443 ssl default_server;
+            http2 on;
+            server_name spotik.shop;
+
+            ssl_certificate     /etc/letsencrypt/live/spotik.shop/fullchain.pem;
+            ssl_certificate_key /etc/letsencrypt/live/spotik.shop/privkey.pem;
+            include /etc/letsencrypt/options-ssl-nginx.conf;
+
+            include snippets/spotik-static.conf;
+          }
+          CONF
+
+          nginx -t
+          systemctl reload nginx
+          echo "nginx поднят по https"
+          SCRIPT
+
+          # Скрипты собраны локально и проверены на синтаксис ДО того,
+          # как что-то трогать на сервере: половина настройки, упавшая
+          # на опечатке, хуже настройки, не начатой вовсе.
+          for f in /tmp/remote/*.sh; do bash -n "$f" && echo "синтаксис ок: $f"; done
+
+      - name: Пакеты, файрвол, автообновления, nginx по http
+        run: |
+          ssh spotik 'cat > /tmp/spotik-setup.sh' < /tmp/remote/setup.sh
+          ssh spotik 'bash /tmp/spotik-setup.sh; r=$?; rm -f /tmp/spotik-setup.sh; exit $r'
+
+      - name: Выпустить сертификат
+        if: ${{ steps.dns.outputs.ready == '1' && !inputs.skip_cert }}
+        run: |
+          ssh spotik 'cat > /tmp/spotik-cert.sh' < /tmp/remote/cert.sh
+          ssh spotik 'bash /tmp/spotik-cert.sh; r=$?; rm -f /tmp/spotik-cert.sh; exit $r'
+
+      - name: nginx по https с редиректами
+        if: ${{ steps.dns.outputs.ready == '1' && !inputs.skip_cert }}
+        run: |
+          ssh spotik 'cat > /tmp/spotik-https.sh' < /tmp/remote/https.sh
+          ssh spotik 'bash /tmp/spotik-https.sh; r=$?; rm -f /tmp/spotik-https.sh; exit $r'
+
+      - name: Проверить снаружи
+        run: |
+          # Проверяем С РАННЕРА и ПО ИМЕНИ, а не по адресу: нас
+          # интересует ровно то, что увидит человек в браузере.
+          echo "http://spotik.shop/ -> $(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 http://spotik.shop/ || echo нет-ответа)"
+          if curl -fsS -o /dev/null --max-time 20 https://spotik.shop/ 2>/dev/null; then
+            curl -sSI --max-time 20 https://spotik.shop/     | head -1 | sed 's/^/  apex: /'
+            curl -sSI --max-time 20 https://www.spotik.shop/ | grep -iE '^(HTTP|location)' | sed 's/^/  www:  /'
+            curl -sSI --max-time 20 http://spotik.shop/      | grep -iE '^(HTTP|location)' | sed 's/^/  http: /'
+            echo "::notice::сайт отвечает по https"
+          else
+            echo "::warning::https ещё не поднят — сайт живёт по http. Перезапустите этот workflow, когда разойдётся DNS"
+          fi

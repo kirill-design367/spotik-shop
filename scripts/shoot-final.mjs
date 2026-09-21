@@ -1,10 +1,10 @@
-/** Итоговые скриншоты с собранной выдачи, по боевому пути /spotik-shop/. */
+/** Итоговые скриншоты с собранной выдачи, по боевому пути — с корня. */
 import { createServer } from 'node:http';
 import { readFile, stat, mkdir } from 'node:fs/promises';
 import { join, extname, resolve } from 'node:path';
 import { launch } from './browser.mjs';
 
-const OUT = resolve('out'), PREFIX = '/spotik-shop', PORT = 4185;
+const OUT = resolve('out'), PREFIX = '', PORT = 4185;
 const MIME = { '.html':'text/html; charset=utf-8','.js':'text/javascript','.css':'text/css','.woff2':'font/woff2','.png':'image/png','.svg':'image/svg+xml' };
 const server = createServer(async (req, res) => {
   const u = decodeURIComponent(req.url.split('?')[0]);

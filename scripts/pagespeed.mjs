@@ -1,7 +1,7 @@
 /**
  * PageSpeed локально через Lighthouse — тот же движок, что у сервиса Google.
  * Сам сервис из этой среды недоступен: исходящие запросы к google.com
- * закрыты политикой. Выдача поднимается по боевому пути /spotik-shop/.
+ * закрыты политикой. Выдача поднимается по боевому пути — с корня.
  */
 import { createServer } from 'node:http';
 import { gzipSync } from 'node:zlib';
@@ -10,7 +10,7 @@ import { join, extname, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 
 const OUT = resolve('out');
-const PREFIX = '/spotik-shop';
+const PREFIX = '';
 const PORT = 4182;
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css',

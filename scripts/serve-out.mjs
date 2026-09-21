@@ -1,14 +1,20 @@
 /**
- * Поднимает собранную выдачу out/ по боевому пути /spotik-shop/.
- * Один и тот же сервер для всех проверок: локальная раздача с корня
- * не воспроизводит поломки basePath, а они самые дорогие.
+ * Поднимает собранную выдачу out/ по боевому пути.
+ *
+ * ⚠️ БОЕВОЙ ПУТЬ ТЕПЕРЬ КОРЕНЬ. До переезда со страниц GitHub сайт
+ * жил в подпапке `/spotik-shop/`, и раздача с корня не воспроизводила
+ * поломок basePath — самых дорогих. На spotik.shop подпапки нет,
+ * и корень и есть боевой путь.
+ *
+ * Величина одна и она здесь; вторая половина — `BASE`
+ * в `next.config.mjs`. Поедет сайт снова в подпапку — менять оба.
  */
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { join, extname, resolve } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
-export const PREFIX = '/spotik-shop';
+export const PREFIX = '';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css',
@@ -29,7 +35,8 @@ export async function serveOut(port, { gzip = true, dir = 'out' } = {}) {
       const ext = extname(f);
       const head = {
         'content-type': MIME[ext] || 'application/octet-stream',
-        // GitHub Pages отдаёт статику сжатой и с длинным кэшем
+        // Те же заголовки, что ставит nginx на сервере: HTML без
+        // долгого кэша, остальное неизменяемое на год.
         'cache-control': ext === '.html' ? 'no-cache' : 'public, max-age=31536000, immutable',
       };
       if (gzip && COMPRESSIBLE.includes(ext) && /gzip/.test(req.headers['accept-encoding'] || '')) {
@@ -40,8 +47,9 @@ export async function serveOut(port, { gzip = true, dir = 'out' } = {}) {
       res.writeHead(200, head);
       res.end(buf);
     } catch {
-      // GitHub Pages на неизвестный путь отдаёт 404.html из выдачи.
-      // Без этого проверка боевой 404-страницы ничего бы не проверяла.
+      // На неизвестный путь nginx отдаёт 404.html из выдачи — так же,
+      // как это делали страницы GitHub. Без этой ветки проверка боевой
+      // 404-страницы не проверяла бы ничего.
       try {
         const nf = await readFile(join(root, '404.html'));
         res.writeHead(404, { 'content-type': MIME['.html'] });
