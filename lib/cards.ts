@@ -67,9 +67,14 @@ const DT_MAX = 1 / 28;
 /** Амплитуда наклона за указателем, градусы. */
 const AMP_X = 7.2;
 const AMP_Y = 9.4;
-/** Подъём выбранной и вдавливание нажатой, пиксели. */
-const LIFT = 24;
-const PRESS = -11;
+/* ⚠️ ПОДЪЁМА И ВДАВЛИВАНИЯ ЗДЕСЬ БОЛЬШЕ НЕТ. Выдвиг вперёд ведёт
+   CSS-переход на `--pz`, и это не косметика, а починка «карта
+   реагирует через две секунды»: у цикла есть два тормоза — кадр
+   в покое идёт восемь раз в секунду, и на прокрутке цикл не считает
+   вовсе ещё 260 мс после последнего события. На инерции iOS события
+   прокрутки идут секунду-полторы после отрыва пальца, и всё это
+   время нажатие оставалось без ответа. Переход CSS ни того,
+   ни другого не знает. */
 /** Дыхание: амплитуда по углу и по глубине. */
 const BR_ROT = 0.5;
 const BR_Z = 4.2;
@@ -85,21 +90,13 @@ const SCROLL_HOLD = 260;
 type Card = {
   el: HTMLElement;
   i: number;
-  /* текущее, скорость, цель */
+  /* текущее, скорость, цель — ТОЛЬКО наклон */
   rx: number;
   ry: number;
-  tz: number;
   vx: number;
   vy: number;
-  vz: number;
   gx: number;
   gy: number;
-  gz: number;
-  /* блик */
-  px: number;
-  py: number;
-  sp: number;
-  gsp: number;
   /* очередь кадров */
   next: number;
   last: number;
@@ -107,9 +104,6 @@ type Card = {
   wx: number;
   wy: number;
   wz: number;
-  wp: number;
-  wq: number;
-  ws: number;
 };
 
 export function attachCards(root: HTMLElement): () => void {
@@ -119,13 +113,11 @@ export function attachCards(root: HTMLElement): () => void {
   const cards: Card[] = els.map((el, i) => ({
     el,
     i,
-    rx: 0, ry: 0, tz: 0,
-    vx: 0, vy: 0, vz: 0,
-    gx: 0, gy: 0, gz: 0,
-    px: 0, py: 0, sp: 0, gsp: 0,
+    rx: 0, ry: 0,
+    vx: 0, vy: 0,
+    gx: 0, gy: 0,
     next: 0, last: 0,
     wx: NaN, wy: NaN, wz: NaN,
-    wp: NaN, wq: NaN, ws: NaN,
   }));
 
   /**
@@ -149,26 +141,13 @@ export function attachCards(root: HTMLElement): () => void {
   const write = (c: Card, bx: number, by: number, bz: number) => {
     const rx = c.rx + bx;
     const ry = c.ry + by;
-    const tz = c.tz + bz;
-    if (c.wx !== rx || c.wy !== ry || c.wz !== tz) {
+    if (c.wx !== rx || c.wy !== ry || c.wz !== bz) {
       c.wx = rx;
       c.wy = ry;
-      c.wz = tz;
+      c.wz = bz;
       c.el.style.setProperty('--rx', rx.toFixed(3));
       c.el.style.setProperty('--ry', ry.toFixed(3));
-      c.el.style.setProperty('--tz', tz.toFixed(2));
-    }
-    /* ⚠️ БЛИК КЭШИРУЕТСЯ ТАК ЖЕ, КАК ПОЗА. Запись `--px/--py/--spot`
-       перерисовывает ВСЮ стопку фона плиты — четыре слоя со
-       смешиванием; в покое эти три числа не меняются, и писать их
-       восемь раз в секунду незачем. */
-    if (c.wp !== c.px || c.wq !== c.py || c.ws !== c.sp) {
-      c.wp = c.px;
-      c.wq = c.py;
-      c.ws = c.sp;
-      c.el.style.setProperty('--px', c.px.toFixed(1));
-      c.el.style.setProperty('--py', c.py.toFixed(1));
-      c.el.style.setProperty('--spot', c.sp.toFixed(3));
+      c.el.style.setProperty('--tz', bz.toFixed(2));
     }
   };
 
@@ -182,12 +161,6 @@ export function attachCards(root: HTMLElement): () => void {
   let t0 = 0;
   let scrolledAt = 0;
   let onScreen = false;
-
-  const lift = (c: Card) => {
-    const sel = c.el.getAttribute('aria-checked') === 'true';
-    const down = c.el.hasAttribute('data-press');
-    return (sel ? LIFT : 0) + (down ? PRESS : 0);
-  };
 
   const tick = (now: number) => {
     raf = requestAnimationFrame(tick);
@@ -204,15 +177,11 @@ export function attachCards(root: HTMLElement): () => void {
     const t = (now - t0) / 1000;
     for (const c of cards) {
       if (now < c.next) continue;
-      c.gz = lift(c);
       const busy =
         Math.abs(c.gx - c.rx) > 0.004 ||
         Math.abs(c.gy - c.ry) > 0.004 ||
-        Math.abs(c.gz - c.tz) > 0.02 ||
         Math.abs(c.vx) > 0.004 ||
-        Math.abs(c.vy) > 0.004 ||
-        Math.abs(c.vz) > 0.02 ||
-        Math.abs(c.gsp - c.sp) > 0.004;
+        Math.abs(c.vy) > 0.004;
       /* ⚠️ ПОТОЛОК СТОИТ ДО ИНТЕГРАТОРА, А Δt СЧИТАЕТСЯ ОТ ПРЕДЫДУЩЕГО
          ПРОСЧИТАННОГО КАДРА. Считай Δt от кадра страницы — и пружина
          сойдётся во столько раз быстрее заданного, во сколько опущен
@@ -226,11 +195,8 @@ export function attachCards(root: HTMLElement): () => void {
       const d = 2 * ZETA * OMEGA;
       c.vx += (-d * c.vx - k * (c.rx - c.gx)) * dt;
       c.vy += (-d * c.vy - k * (c.ry - c.gy)) * dt;
-      c.vz += (-d * c.vz - k * (c.tz - c.gz)) * dt;
       c.rx += c.vx * dt;
       c.ry += c.vy * dt;
-      c.tz += c.vz * dt;
-      c.sp += (c.gsp - c.sp) * (1 - Math.exp(-dt / 0.14));
 
       /* Дыхание — аналитическое, а не интегрируемое: на восьми кадрах
          в секунду численный ход давно бы уплыл. */
@@ -274,17 +240,11 @@ export function attachCards(root: HTMLElement): () => void {
     const v = (e.clientY - r.top) / r.height;
     c.gy = (u - 0.5) * 2 * AMP_Y;
     c.gx = -(v - 0.5) * 2 * AMP_X;
-    /* Блик — в ПИКСЕЛЯХ бокса: доля считалась бы от размера самого
-       пятна, а оно круглое, и по вертикали уехала бы (Р-62). */
-    c.px = e.clientX - r.left;
-    c.py = e.clientY - r.top;
-    c.gsp = 1;
     c.next = 0;
   };
   const rest = (c: Card) => {
     c.gx = 0;
     c.gy = 0;
-    c.gsp = 0;
     c.next = 0;
   };
 
@@ -342,11 +302,8 @@ export function attachCards(root: HTMLElement): () => void {
     for (const off of offs) off();
     for (const c of cards) {
       c.el.removeAttribute('data-press');
-      for (const p of ['--rx', '--ry', '--tz', '--px', '--py', '--spot']) {
-        c.el.style.removeProperty(p);
-      }
+      for (const p of ['--rx', '--ry', '--tz']) c.el.style.removeProperty(p);
       c.wx = NaN;
-      c.wp = NaN;
     }
   };
 }

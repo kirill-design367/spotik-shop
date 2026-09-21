@@ -529,10 +529,28 @@ for (const [w, h, mob] of [
   });
   const okCurve = !!curve && curve.min >= 18 && curve.tight === 0;
 
-  /* Размер куска в пикселях УСТРОЙСТВА: второй заслон от того же
-     предела. Даже если какой-то движок всё-таки заведёт буфер,
-     он будет маленьким. */
+  /* Размер поверхности в пикселях УСТРОЙСТВА. На касаниях ленту
+     рисует ХОЛСТ, и мерить надо его буфер: он и есть та величина,
+     из-за которой на iOS пропадал низ ленты. На точном указателе
+     лента по-прежнему SVG, и меряется самый крупный кусок.
+
+     ⚠️ У ХОЛСТА БУФЕР ОТ ВЫСОТЫ БЛОКА НЕ ЗАВИСИТ ВОВСЕ — он равен
+     полосе вокруг экрана. Отдельной строкой проверяется, что
+     холст ЖИВОЙ: пустой прошёл бы и так. */
   const chunk = await page.evaluate((dpr) => {
+    const cvs = [...document.querySelectorAll('.route[data-cv] .route__cvs canvas')];
+    if (cvs.length) {
+      let wm = 0;
+      let hm = 0;
+      let live = 0;
+      for (const c of cvs) {
+        const b = c.getBoundingClientRect();
+        if (b.width > 10 && b.height > 10) live += 1;
+        wm = Math.max(wm, c.width);
+        hm = Math.max(hm, c.height);
+      }
+      return { w: wm, h: hm, live, cv: true };
+    }
     let wMax = 0;
     let hMax = 0;
     let live = 0;
@@ -543,9 +561,9 @@ for (const [w, h, mob] of [
       wMax = Math.max(wMax, b.width);
       hMax = Math.max(hMax, b.height);
     }
-    return { w: Math.round(wMax * dpr), h: Math.round(hMax * dpr), live };
+    return { w: Math.round(wMax * dpr), h: Math.round(hMax * dpr), live, cv: false };
   }, mob ? 3 : 1);
-  const okChunk = chunk.live > 0 && chunk.w <= 2048 && chunk.h <= 2048;
+  const okChunk = chunk.live !== 0 && chunk.w > 10 && chunk.w <= 2048 && chunk.h <= 2048;
 
   if (!okLayer || !okCurve || !okChunk) failed = true;
 
@@ -590,7 +608,9 @@ for (const [w, h, mob] of [
   console.log(
     `            самый крутой поворот ${curve ? curve.min.toFixed(1) : '—'} px ` +
       `(порог 18), круче порога ${curve ? curve.tight : '—'} из ${curve ? curve.n : 0}  ` +
-      `кусков живых ${chunk.live}, самый крупный ${chunk.w}×${chunk.h} пикселей устройства (порог 2048)  ` +
+      (chunk.cv
+        ? `холстов ${chunk.live}, самый крупный ${chunk.w}×${chunk.h} пикселей устройства (порог 2048)  `
+        : `кусков живых ${chunk.live}, самый крупный ${chunk.w}×${chunk.h} пикселей устройства (порог 2048)  `) +
       `группового opacity в ленте: ${layers.length ? layers.join(', ') : 'нет'}` +
       (okCurve ? '' : '   !!! УГЛОВАТЫЙ ПОВОРОТ') +
       (okChunk ? '' : '   !!! КУСОК БОЛЬШЕ ПРЕДЕЛА СЛОЯ') +

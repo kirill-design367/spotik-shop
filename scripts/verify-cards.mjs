@@ -233,6 +233,18 @@ for (const [w, h, dpr] of [
     height: Math.round(grid.h + gpad * 2),
   };
   const onShot = PNG.sync.read(await page.screenshot({ clip: halo }));
+  /* ⚠️ ТРЕТИЙ КАДР — КОНТРОЛЬНЫЙ: тот же свет с ПРЯМЫМИ углами.
+     Он и есть тот брак, который видел арт-директор, и по нему
+     калибруется проверка 2б: без контроля не видно, ЧТО именно
+     число различает. */
+  await page.addStyleTag({ content: '/*sq*/.cards__glow{border-radius:0!important}' });
+  await page.waitForTimeout(300);
+  const sqShot = PNG.sync.read(await page.screenshot({ clip: halo }));
+  await page.evaluate(() => {
+    for (const st of document.querySelectorAll('style')) {
+      if (st.textContent.includes('/*sq*/')) st.remove();
+    }
+  });
   await page.addStyleTag({ content: '.cards__glow{display:none!important}' });
   await page.waitForTimeout(400);
   const offShot = PNG.sync.read(await page.screenshot({ clip: halo }));
@@ -325,6 +337,80 @@ for (const [w, h, dpr] of [
   const okNoEdge = jump <= edgeMax;
   const okNoRect = cornerMax <= FLOOR;
 
+  // ── 2б. ФОРМА СВЕТА ПОВТОРЯЕТ СКРУГЛЕНИЕ КАРТЫ ─────────────────────
+  /* ⚠️ ЭТОГО СТОРОЖ НЕ ВИДЕЛ ТРИ ИТЕРАЦИИ, И ВОТ ПОЧЕМУ. Проверка 2а
+     ищет скачок яркости и светлые углы описанного прямоугольника —
+     у размытой тени ПРЯМОУГОЛЬНИКА нет ни того, ни другого: она
+     такая же гладкая, как у скруглённой. А глазом видно другое:
+     тень обрезается по собственному border-box, и при нулевом
+     радиусе между скруглённым углом КАРТЫ и прямым углом ТЕНИ
+     остаётся мёртвый клин — свет вокруг карты обрывается прямым
+     углом. Ровно это и есть «квадраты по бокам».
+
+     Замер прямой: берутся восемь точек на одинаковом расстоянии
+     ОТ КОНТУРА КАРТЫ — четыре по нормали к сторонам и четыре
+     по диагонали из центров угловых дуг. У света, повторяющего
+     карту, все восемь равны; у прямоугольного диагональные лежат
+     в мёртвом клине и дают ноль. Расстояние берётся меньше
+     r·(√2−1): дальше клина уже нет и различать нечего. */
+  const rr = await page.evaluate(
+    () => parseFloat(getComputedStyle(document.querySelector('.card')).borderTopLeftRadius) || 0,
+  );
+  const probe = (src, b) => {
+    const D = Math.max(3, rr * 0.25);
+    const at = (px, py) => {
+      const vs = [];
+      for (let y = -1; y <= 1; y += 1) {
+        for (let x = -1; x <= 1; x += 1) {
+          const ix = Math.round((px + x) * dpr);
+          const iy = Math.round((py + y) * dpr);
+          if (ix < 0 || iy < 0 || ix >= W || iy >= H) continue;
+          vs.push(Math.abs(L(src, (iy * W + ix) * 4) - L(offShot, (iy * W + ix) * 4)));
+        }
+      }
+      vs.sort((p, q) => p - q);
+      return vs.length ? vs[vs.length >> 1] : 0;
+    };
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
+    const edges = [
+      at(cx, b.y - D),
+      at(cx, b.y + b.h + D),
+      at(b.x - D, cy),
+      at(b.x + b.w + D, cy),
+    ];
+    const k = (rr + D) / Math.SQRT2;
+    const corners = [
+      at(b.x + rr - k, b.y + rr - k),
+      at(b.x + b.w - rr + k, b.y + rr - k),
+      at(b.x + rr - k, b.y + b.h - rr + k),
+      at(b.x + b.w - rr + k, b.y + b.h - rr + k),
+    ];
+    edges.sort((p, q) => p - q);
+    const med = edges[2];
+    return med > 0.5 ? Math.min(...corners) / med : 0;
+  };
+  /* Судится ВЫБРАННАЯ карта: её свет ярче всех, и шум от соседей
+     на её долю приходится меньше всего. */
+  const selBox = await page.evaluate(
+    (o) => {
+      const el = document.querySelector(".card[aria-checked='true']") || document.querySelector('.card');
+      const b = el.getBoundingClientRect();
+      return { x: b.x - o.x, y: b.y - o.y, w: b.width, h: b.height };
+    },
+    { x: halo.x, y: halo.y },
+  );
+  const round = probe(onShot, selBox);
+  const square = probe(sqShot, selBox);
+  /* ⚠️ ПОРОГ ВЗЯТ ИЗ КОНТРОЛЯ, А НЕ НАЗНАЧЕН. У света, повторяющего
+     карту, угол даёт около 30 % яркости стороны — и это НЕ дефект,
+     а геометрия: угол выпуклый, и размытие сходится там вдвое
+     быстрее, чем у прямой стороны. У прямоугольного света на том же
+     кадре 9 %: мёртвый клин между дугой карты и прямым углом тени.
+     Порог 20 % лежит ровно посередине, с полуторным запасом
+     в обе стороны. */
+  const okRound = round >= 0.2;
+
   // ── 3. ПРУЖИНА ПЕРЕЛЕТАЕТ ───────────────────────────────────────────
   /* Курсор ставится в угол карты и стоит там; наклон обязан ПРОЙТИ
      мимо цели и вернуться. Экспоненциальный демпфер такого не даёт
@@ -407,7 +493,17 @@ for (const [w, h, dpr] of [
   });
   const okGeo = geo[0] === geo[1];
 
-  if (!okSoft || !okBleed || !okSpring || !okGeo || !okBreath || !okNoEdge || !okNoRect || !okLitSome)
+  if (
+    !okSoft ||
+    !okBleed ||
+    !okSpring ||
+    !okGeo ||
+    !okBreath ||
+    !okNoEdge ||
+    !okNoRect ||
+    !okRound ||
+    !okLitSome
+  )
     failed = true;
   console.log(
     `  ${String(w).padStart(4)}×${h} dpr ${dpr}  скругление ${r} px: сглаженных пикселей ${soft} ` +
@@ -428,6 +524,12 @@ for (const [w, h, dpr] of [
       (okLitSome ? '' : '   !!! СВЕТА НЕТ ВОВСЕ') +
       (okNoEdge ? '' : '   !!! ВИДИМАЯ КРОМКА: КОЛЬЦО ИЛИ СТУПЕНЬ') +
       (okNoRect ? '' : '   !!! ПРЯМОУГОЛЬНОЕ ПОЛЕ ВОКРУГ СЕТКИ'),
+  );
+  console.log(
+    `            форма света: у угла карты ${(round * 100).toFixed(0)} % ` +
+      `от яркости у стороны (порог 20), у прямоугольного света на том же ` +
+      `кадре ${(square * 100).toFixed(0)} %` +
+      (okRound ? '' : '   !!! СВЕТ ОБРЫВАЕТСЯ ПРЯМЫМ УГЛОМ'),
   );
   await page.close();
 }

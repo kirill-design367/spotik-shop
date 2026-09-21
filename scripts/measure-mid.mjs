@@ -186,7 +186,7 @@ for (const [name, w, h, mob, cpu] of PROFILES.filter((p) => !ONLY || String(p[1]
       await page.mouse.move(4, Math.round(h * 0.95));
       await page.waitForTimeout(400);
     };
-    await scene(page, '2. КАРТЫ ПОД УКАЗАТЕЛЕМ (наклон, фольга, блик)', NOCARD, sweep);
+    await scene(page, '2. КАРТЫ ПОД УКАЗАТЕЛЕМ (наклон)', NOCARD, sweep);
     await scene(page, '2а. СВЕТ ЗА КАРТАМИ ПОД УКАЗАТЕЛЕМ', NOGLOW, sweep);
   }
 

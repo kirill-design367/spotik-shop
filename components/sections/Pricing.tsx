@@ -48,6 +48,8 @@ export default function Pricing() {
   const [period, setPeriod] = useState<PeriodKey>(12);
   const [planId, setPlanId] = useState<string>(PLANS[0].id);
   const [account, setAccount] = useState<Record<string, 'new' | 'renew'>>({});
+  /** Какая плашка сейчас переворачивается. Снимается по концу хода. */
+  const [flip, setFlip] = useState<PeriodKey | null>(null);
   const statusId = useId();
   const cardsRef = useRef<HTMLDivElement>(null);
 
@@ -127,9 +129,17 @@ export default function Pricing() {
               aria-checked={period === p.key}
               tabIndex={period === p.key ? 0 : -1}
               className="seg__btn"
-              onClick={() => setPeriod(p.key)}
+              /* Переворот заводит АТРИБУТ, а снимает его конец самой
+                 анимации: у `:active` ход кончился бы вместе
+                 с отпусканием пальца, то есть на середине. */
+              data-flip={flip === p.key ? '' : undefined}
+              onAnimationEnd={() => setFlip((f) => (f === p.key ? null : f))}
+              onClick={() => {
+                setFlip(p.key);
+                setPeriod(p.key);
+              }}
             >
-              {p.short}
+              <span className="seg__t">{p.short}</span>
             </button>
           ))}
         </div>

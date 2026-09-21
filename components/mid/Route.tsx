@@ -501,6 +501,23 @@ const PRE_MAX = 0.2;
 /** Мягкая кромка самого фронта. */
 const EDGE = 30;
 
+/* ── ХОЛСТ НА КАСАНИЯХ ────────────────────────────────────────────────
+   Потолок плотности буфера и кадр собственного движения. Высота
+   куска холста считается от высоты экрана при раскладке. */
+const CV_DPR = 2;
+const CV_MS = 1000 / 20;
+
+/* ── МИКРОВОЛНЫ ОТ ЦИФРЫ ──────────────────────────────────────────────
+   Период кольца, число колец и предельный радиус. Те же числа
+   продублированы в CSS (`.rstep__wave`, `@keyframes rwave`):
+   на десктопе волны рисует он, на касаниях — холст. */
+const WAVE_T = 3600;
+const WAVE_N = 3;
+const WAVE_R = 92;
+const WAVE_R0 = 0.2;
+/** Доля белого в цвете ядра — та же, что у токена `--core`. */
+const CORE_MIX = 0.42;
+
 /**
  * ЛИНИЯ ОТСЧЁТА — 78 % ВЫСОТЫ ЭКРАНА, то есть заметно ниже середины.
  * Шаг загорается, пока он ещё в нижней половине кадра; к моменту,
@@ -512,6 +529,7 @@ export default function Route({ steps }: { steps: Step[] }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const glintRef = useRef<SVGGElement>(null);
+  const cvRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -545,6 +563,300 @@ export default function Route({ steps }: { steps: Step[] }) {
     let built: Built | null = null;
     let top = 0;
     let vh = 1;
+    let scrolledAt = 0;
+    /* «Уменьшить движение»: волн нет вовсе, лента стоит подсвеченной. */
+    const still = prefersReducedMotion();
+
+    /* ══ МАРШРУТ НА КАСАНИЯХ РИСУЕТ ХОЛСТ, А НЕ SVG ═══════════════════
+       Постановка двадцать шестой итерации: «перестань чинить SVG
+       на iOS». Две прежние версии причины не подтвердились ни разу
+       на живом телефоне — ни предел композитного слоя, ни групповая
+       прозрачность, — а общее у них было одно: обе оставляли ленту
+       ОДНИМ SVG-элементом высотой во весь блок, то есть 1632 CSS-px
+       при dpr 3. Холст снимает саму возможность: он режется
+       на куски, и ни один из них от высоты блока не зависит.
+
+       Десктоп не тронут: там `finePointer()` истинен, холста нет,
+       и SVG работает ровно как работал.
+
+       ⚠️ КУСКОВ НЕСКОЛЬКО, И ЭТО ЗАМЕР, А НЕ ОСТОРОЖНОСТЬ. Первый
+       заход был проще: ОДИН холст полосой вокруг экрана, который
+       ездил за прокруткой одним трансформом. Работало и выглядело
+       правильно, но полоса перерисовывалась ЦЕЛИКОМ на каждое
+       событие прокрутки — два мегапикселя, — и мобильная эмуляция
+       дала 100 % кадров дороже бюджета при медиане 50…66 мс.
+       Теперь холсты стоят НЕПОДВИЖНО, каждый на своём куске блока,
+       и в кадре перерисовывается РОВНО ОДИН — тот, в котором сейчас
+       стоит фронт. Куску выше фронта нужно постоянное «всё горит»,
+       куску ниже — постоянное «всё темно», и записанное кэшируется.
+       Ровно та же арифметика, что спасла ленту SVG в Р-72. */
+    const cvBox = cvRef.current;
+    const cvOn = !!cvBox && !finePointer();
+    if (cvOn) root.setAttribute('data-cv', '');
+
+    type Ink = { c: [number, number, number]; w: number; a: number };
+    let GREEN: [number, number, number] = [29, 185, 84];
+    let CORE: [number, number, number] = [160, 226, 183];
+    let dimInk: Ink = { c: GREEN, w: 1.6, a: 0.16 };
+    let inks: Ink[] = [];
+    let dashes: number[] = [26, 24];
+
+    /* Цвета, толщины и пунктир читаются ИЗ CSS: второй источник
+       разошёлся бы с лентой на первой же правке стилей. Зелёный
+       приходит уже разрешённым — `.route__dim` красится прямо
+       `var(--green)`; у ядра продублирована ТОЛЬКО доля белого. */
+    const readInks = () => {
+      const st = getComputedStyle(dimEl);
+      const m = /(\d+(?:\.\d+)?)[,\s]+(\d+(?:\.\d+)?)[,\s]+(\d+(?:\.\d+)?)/.exec(st.stroke);
+      if (m) GREEN = [+m[1], +m[2], +m[3]];
+      CORE = [0, 1, 2].map((i) => Math.round(GREEN[i] * CORE_MIX + 255 * (1 - CORE_MIX))) as [
+        number,
+        number,
+        number,
+      ];
+      const d = st.strokeDasharray.match(/[\d.]+/g);
+      if (d && d.length >= 2) dashes = d.map(Number);
+      const one = (sel: string, c: [number, number, number], dw: number, da: number): Ink => {
+        const el = svg.querySelector(sel);
+        const cs = el ? getComputedStyle(el) : null;
+        return {
+          c,
+          w: cs ? parseFloat(cs.strokeWidth) || dw : dw,
+          a: cs ? parseFloat(cs.strokeOpacity) || da : da,
+        };
+      };
+      dimInk = {
+        c: GREEN,
+        w: parseFloat(st.strokeWidth) || 1.6,
+        a: parseFloat(st.strokeOpacity) || 0.16,
+      };
+      inks = [
+        one('.route__halo--3', GREEN, 9, 0.09),
+        one('.route__halo--2', GREEN, 5.5, 0.14),
+        one('.route__halo--1', GREEN, 3.4, 0.2),
+        one('.route__core', CORE, 2.6, 1),
+      ];
+    };
+
+    type Slice = {
+      g: CanvasRenderingContext2D;
+      y: number;
+      h: number;
+      /** Где стоял фронт в прошлой отрисовке, прижатый к куску. */
+      f: number;
+      drawn: boolean;
+    };
+    let slices: Slice[] = [];
+    let chunks: { p: Path2D; y0: number; y1: number; off: number }[] = [];
+    let dots: { x: number; y: number }[] = [];
+    const lits = [0, 0, 0, 0, 0];
+    let cvW = 0;
+    let cvX = 0;
+    let cvS = 1;
+    let frontY = -1e6;
+
+    const rgba = (c: [number, number, number], a: number) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+
+    /**
+     * Рисует ленту, фронт и микроволны в один холст. `r` — окно
+     * в координатах блока: без него рисуется весь кусок, с ним
+     * только оно.
+     */
+    const drawAll = (
+      g: CanvasRenderingContext2D,
+      now: number,
+      top0: number,
+      bot0: number,
+      r: { x: number; y: number; w: number; h: number } | null,
+    ) => {
+      if (r) {
+        g.save();
+        g.beginPath();
+        g.rect(r.x, r.y, r.w, r.h);
+        g.clip();
+        g.clearRect(r.x, r.y, r.w, r.h);
+      }
+      g.lineCap = 'round';
+      g.lineJoin = 'round';
+      const y0 = r ? r.y : top0;
+      const y1 = r ? r.y + r.h : bot0;
+      /* Фронт — ТОТ ЖЕ вертикальный градиент, что у SVG: выше него
+         непрозрачно, ниже пусто, между ними мягкая кромка. Крайние
+         остановки холст продолжает до бесконечности сам. */
+      const grads = inks.map((k) => {
+        const gr = g.createLinearGradient(0, frontY - EDGE, 0, frontY);
+        gr.addColorStop(0, rgba(k.c, k.a));
+        gr.addColorStop(1, rgba(k.c, 0));
+        return gr;
+      });
+      g.setLineDash(dashes);
+      for (const c of chunks) {
+        if (c.y1 < y0 - 24 || c.y0 > y1 + 24) continue;
+        /* Фаза пунктира у куска — его длина от начала пути: ровно
+           та же арифметика, что в SVG, поэтому рез не виден. */
+        g.lineDashOffset = -c.off;
+        g.strokeStyle = rgba(dimInk.c, dimInk.a);
+        g.lineWidth = dimInk.w;
+        g.stroke(c.p);
+        for (let q = 0; q < inks.length; q += 1) {
+          g.strokeStyle = grads[q];
+          g.lineWidth = inks[q].w;
+          g.stroke(c.p);
+        }
+      }
+      /* ── КРУГИ НА ВОДЕ ОТ ЗАГОРЕВШЕЙСЯ ЦИФРЫ ────────────────────
+         Кольцо за кольцом расходятся из центра номера, нарастая
+         и растворяясь. Яркость помножена на `--n` того же шага,
+         поэтому волны начинаются ровно тогда, когда фронт дошёл
+         до цифры, и гаснут вместе с ней. */
+      if (!still) {
+        g.setLineDash([]);
+        for (let i = 0; i < dots.length; i += 1) {
+          const n = lits[i];
+          if (n < 0.04) continue;
+          const p = dots[i];
+          if (p.y < y0 - WAVE_R || p.y > y1 + WAVE_R) continue;
+          for (let q = 0; q < WAVE_N; q += 1) {
+            const t = (((now / WAVE_T + q / WAVE_N) % 1) + 1) % 1;
+            const a = n * 0.5 * Math.sin(Math.PI * t) ** 1.3;
+            if (a < 0.006) continue;
+            g.beginPath();
+            g.arc(p.x, p.y, WAVE_R * (WAVE_R0 + (1 - WAVE_R0) * t), 0, Math.PI * 2);
+            g.strokeStyle = rgba(CORE, a);
+            g.lineWidth = 1.6 + 5 * t;
+            g.stroke();
+          }
+        }
+      }
+      if (r) g.restore();
+    };
+
+    const drawSlice = (s: Slice, now: number) => {
+      s.g.setTransform(cvS, 0, 0, cvS, 0, 0);
+      s.g.clearRect(0, 0, cvW, s.h);
+      s.g.translate(-cvX, -s.y);
+      drawAll(s.g, now, s.y, s.y + s.h, null);
+    };
+
+    /** Положение фронта, прижатое к куску: выше него всё темно,
+     *  ниже — всё горит, и обе величины постоянны. */
+    const frontIn = (s: Slice) => Math.max(s.y - EDGE, Math.min(s.y + s.h, frontY));
+
+    /** Пересобирает холсты и пути кусков. Зовётся из `measure()`. */
+    const cvLayout = (W: number, h: number, bleed: number, over: number, vw: number) => {
+      if (!cvOn || !cvBox || !built) return;
+      readInks();
+      /* ⚠️ ПОТОЛОК ПЛОТНОСТИ, А НЕ `devicePixelRatio` КАК ЕСТЬ.
+         У телефона dpr 3, и холсты на весь блок дали бы под полтора
+         десятка мегапикселей буфера. Лента — размытый свет,
+         а не текст: половина ступеньки на ядре в 2.6 px не видна,
+         а пикселей вдвое меньше. */
+      cvS = Math.min(window.devicePixelRatio || 1, CV_DPR);
+      /* ⚠️ ХОЛСТ ШИРИНОЙ В ЭКРАН, А НЕ В ХОЛСТ SVG. Лента уходит
+         за оба края экрана на `over`, и секция подрезает её там
+         своим `overflow-x: clip`: рисовать это некуда и незачем.
+         У SVG вылет ничего не стоил — он вне области отрисовки;
+         у холста это были бы лишние 40 % пикселей в каждом кадре. */
+      cvW = Math.min(W, vw);
+      cvX = Math.max(0, Math.min(W - cvW, over));
+      cvBox.style.left = `${(cvX - bleed).toFixed(1)}px`;
+      cvBox.style.width = `${cvW.toFixed(1)}px`;
+      chunks = [];
+      for (let k = 0; k < CHUNKS; k += 1) {
+        if (!built.ds[k]) continue;
+        chunks.push({
+          p: new Path2D(built.ds[k]),
+          y0: Math.min(built.cy0[k], built.cy1[k]),
+          y1: Math.max(built.cy0[k], built.cy1[k]),
+          off: built.cat[k] % DASH,
+        });
+      }
+      /* Высота куска — около половины экрана: меньше значит больше
+         холстов и больше памяти, больше — дороже единственная
+         перерисовка в кадре. */
+      const sh = Math.max(240, Math.min(440, Math.round(vh * 0.5)));
+      const n = Math.max(1, Math.ceil(h / sh));
+      const hh = Math.ceil(h / n);
+      cvBox.textContent = '';
+      slices = [];
+      for (let k = 0; k < n; k += 1) {
+        const y = k * hh;
+        const ht = Math.min(hh, h - y);
+        if (ht < 1) continue;
+        const el = document.createElement('canvas');
+        el.style.position = 'absolute';
+        el.style.left = '0';
+        el.style.top = `${y}px`;
+        el.style.width = `${cvW.toFixed(1)}px`;
+        el.style.height = `${ht}px`;
+        el.width = Math.round(cvW * cvS);
+        el.height = Math.round(ht * cvS);
+        const g = el.getContext('2d');
+        if (!g) continue;
+        cvBox.appendChild(el);
+        slices.push({ g, y, h: ht, f: 0, drawn: false });
+      }
+    };
+
+    /**
+     * ⚠️ ПЕРЕРИСОВЫВАЕТСЯ НЕ КУСОК, А ПОЛОСА, ГДЕ ПРОШЁЛ ФРОНТ.
+     * Внутри куска меняется только она: выше фронта всё горит,
+     * ниже всё темно, и обе половины от кадра к кадру те же самые.
+     * Полоса — это пройденные за кадр пиксели плюс мягкая кромка,
+     * то есть при обычной скорости жеста сотня пикселей высоты
+     * против четырёх сотен у куска. Замер прямой: мобильный проход
+     * тачем давал 468 потерянных кадров в блоке при перерисовке
+     * куска целиком.
+     */
+    const paintFront = (now: number) => {
+      for (const s of slices) {
+        const nf = frontIn(s);
+        if (s.drawn && nf === s.f) continue;
+        if (!s.drawn) {
+          s.drawn = true;
+          s.f = nf;
+          drawSlice(s, now);
+          continue;
+        }
+        const y0 = Math.min(s.f, nf) - EDGE - 14;
+        const y1 = Math.max(s.f, nf) + 14;
+        s.f = nf;
+        s.g.setTransform(cvS, 0, 0, cvS, 0, 0);
+        s.g.translate(-cvX, -s.y);
+        drawAll(s.g, now, s.y, s.y + s.h, { x: cvX, y: y0, w: cvW, h: y1 - y0 });
+      }
+    };
+
+    /**
+     * ⚠️ КАДР ВОЛН ПЕРЕРИСОВЫВАЕТ ТОЛЬКО ОКНА ВОКРУГ ЦИФР, И ЭТО
+     * НЕ ОПТИМИЗАЦИЯ ПРО ЗАПАС, А ЗАМЕР. Первый заход перерисовывал
+     * в кадре волн всю видимую полосу — и мобильная эмуляция дала
+     * 85…90 % кадров дороже бюджета В ПОКОЕ против 0.0 % до правки.
+     * Волна живёт в круге радиусом 92 px; окно вокруг цифры — это
+     * сотая доля куска.
+     */
+    const paintWaves = (now: number) => {
+      if (still) return;
+      const pad = WAVE_R + 6;
+      for (let i = 0; i < dots.length; i += 1) {
+        if (lits[i] < 0.04) continue;
+        const p = dots[i];
+        for (const s of slices) {
+          if (p.y + pad < s.y || p.y - pad > s.y + s.h) continue;
+          s.g.setTransform(cvS, 0, 0, cvS, 0, 0);
+          s.g.translate(-cvX, -s.y);
+          drawAll(s.g, now, s.y, s.y + s.h, { x: p.x - pad, y: p.y - pad, w: pad * 2, h: pad * 2 });
+        }
+      }
+    };
+
+    /** Записывает фронт и перерисовывает кусок, в котором он стоит. */
+    const cvPut = (y: number, now: number) => {
+      if (!cvOn || !built) return;
+      frontY = y;
+      paintFront(now);
+    };
+
 
     const measure = () => {
       /* Геометрия снимается ЗДЕСЬ и только здесь. */
@@ -619,7 +931,22 @@ export default function Route({ steps }: { steps: Step[] }) {
       const W = w + bleed * 2;
       root.style.setProperty('--bleed', `${bleed.toFixed(1)}px`);
 
-      built = buildPath(h, bleed, over, vw, ax, ys, boxes, narrow0 ? CHUNKS_NARROW : CHUNKS);
+      /* ⚠️ НА ХОЛСТЕ КУСКОВ ВСЕГДА ДВАДЦАТЬ ЧЕТЫРЕ, И ЭТО ПРО ЦЕНУ,
+         А НЕ ПРО iOS. У SVG на узком экране их шесть — там рез
+         нужен был от подрезки буфера, и лишние пути стоили дороже
+         выигрыша. У холста наоборот: мелкий кусок ОТСЕКАЕТСЯ
+         целиком, а крупный приходится обходить пунктиром весь,
+         хотя в полосу попала его десятая часть. */
+      built = buildPath(
+        h,
+        bleed,
+        over,
+        vw,
+        ax,
+        ys,
+        boxes,
+        cvOn || !narrow0 ? CHUNKS : CHUNKS_NARROW,
+      );
       svg.setAttribute('viewBox', `0 0 ${W.toFixed(1)} ${h}`);
       /* Непройденная часть — ОДИН путь: он статичен и не перерисуется
          ни разу, поэтому резать его незачем. */
@@ -644,6 +971,11 @@ export default function Route({ steps }: { steps: Step[] }) {
 
       top = box.top - shift;
       vh = sc.clientHeight;
+      /* Центры номеров в системе координат холста — из них расходятся
+         микроволны. Берутся из тех же чисел, что и точки маршрута. */
+      dots = ax.map((x, i) => ({ x: x + bleed, y: ys[i] }));
+      cvLayout(W, h, bleed, over, vw);
+      if (cvOn) cvPut(frontY, performance.now());
     };
 
     /** Кладёт фронт на высоту `y` внутри блока. */
@@ -667,7 +999,11 @@ export default function Route({ steps }: { steps: Step[] }) {
          операции рисования всего куска, а на быстрой инерции границ
          пересекается много. Запись двух ординат такой перестройки
          не требует. */
-      if (built) {
+      if (cvOn) {
+        /* На касаниях ленту рисует холст: ни кусков-градиентов,
+           ни записей в SVG здесь не остаётся вовсе. */
+        cvPut(y, performance.now());
+      } else if (built) {
         for (let k = 0; k < CHUNKS; k += 1) {
           if (!built.ds[k]) continue;
           const t = built.cy0[k];
@@ -697,8 +1033,10 @@ export default function Route({ steps }: { steps: Step[] }) {
       }
       /* У огней градиент свой: они короткие, и его перезапись стоит
          полсотни пикселей перерисовки, а не блока. */
-      gGlint.setAttribute('y1', (y - EDGE).toFixed(1));
-      gGlint.setAttribute('y2', y.toFixed(1));
+      if (!cvOn) {
+        gGlint.setAttribute('y1', (y - EDGE).toFixed(1));
+        gGlint.setAttribute('y2', y.toFixed(1));
+      }
       if (built) {
         const p = (y - built.top) / Math.max(1, built.bot - built.top);
         root.style.setProperty('--lit', (p < 0 ? 0 : p > 1 ? 1 : p).toFixed(6));
@@ -712,6 +1050,7 @@ export default function Route({ steps }: { steps: Step[] }) {
         const before = (y - (ys[i] - PRE)) / PRE;
         const pre = before <= 0 ? 0 : before >= 1 ? 1 : before;
         const v = Math.max(n, pre * PRE_MAX);
+        lits[i] = v;
         items[i].style.setProperty('--n', v.toFixed(3));
       }
     };
@@ -746,8 +1085,6 @@ export default function Route({ steps }: { steps: Step[] }) {
       put(cur);
       if (cur !== target) raf = requestAnimationFrame(tick);
     };
-
-    let scrolledAt = 0;
 
     const read = (y: number) => {
       scrolledAt = performance.now();
@@ -787,6 +1124,13 @@ export default function Route({ steps }: { steps: Step[] }) {
     let gprev = 0;
     const burn = (now: number) => {
       graf = 0;
+      /* ⚠️ НА КАСАНИЯХ ОГНЕЙ НЕТ, И ЭТО ОТСТУПЛЕНИЕ, НАЗВАННОЕ
+         В ОТЧЁТЕ. Постановка требует, чтобы в покое холст СТОЯЛ,
+         а бегущий огонь — это тридцать перерисовок в секунду
+         на пустом месте. Живым мобильную ленту делают теперь
+         микроволны у цифр: они идут в том же холсте и только
+         у загоревшихся шагов. На десктопе огни как были. */
+      if (cvOn) return;
       if (!built || !glints.length) return;
       if (now - gprev >= GLINT_MS && now - scrolledAt >= GLINT_HOLD) {
         gprev = now;
@@ -817,13 +1161,33 @@ export default function Route({ steps }: { steps: Step[] }) {
       graf = requestAnimationFrame(burn);
     };
 
-    /* Гасим огни, когда блок ушёл с экрана: закон 11. */
+    /* ── МИКРОВОЛНЫ: СОБСТВЕННЫЙ КАДР ХОЛСТА ──────────────────────
+       Единственное, что будит холст в покое. Не чаще двадцати раз
+       в секунду, только пока блок на экране, только если хоть одна
+       цифра горит, и НЕ во время прокрутки — там кусок и так
+       перерисовывает сам фронт. */
+    let wraf = 0;
+    let wprev = 0;
+    const wave = (now: number) => {
+      wraf = requestAnimationFrame(wave);
+      if (now - wprev < CV_MS || now - scrolledAt < GLINT_HOLD) return;
+      if (!lits.some((v) => v > 0.04)) return;
+      wprev = now;
+      paintWaves(now);
+    };
+
+    /* Гасим огни и волны, когда блок ушёл с экрана: закон 11. */
     const io = new IntersectionObserver(
       (es) => {
         const on = es.some((e) => e.isIntersecting);
         if (on) {
           root.setAttribute('data-live', '');
-          if (!graf) {
+          if (cvOn && !still) {
+            if (!wraf) {
+              wprev = 0;
+              wraf = requestAnimationFrame(wave);
+            }
+          } else if (!graf) {
             gprev = 0;
             graf = requestAnimationFrame(burn);
           }
@@ -831,6 +1195,8 @@ export default function Route({ steps }: { steps: Step[] }) {
           root.removeAttribute('data-live');
           if (graf) cancelAnimationFrame(graf);
           graf = 0;
+          if (wraf) cancelAnimationFrame(wraf);
+          wraf = 0;
           for (const g of glints) g.removeAttribute('d');
         }
       },
@@ -838,15 +1204,48 @@ export default function Route({ steps }: { steps: Step[] }) {
     );
     io.observe(root);
 
+    /* ⚠️ МАРШРУТ ПЕРЕСЧИТЫВАЕТСЯ И НА ЗАГРУЗКУ ШРИФТОВ. Раскладку
+       блока меняет не только ширина окна: приехала гарнитура —
+       строки шагов стали выше, шаги разъехались вниз, а точки
+       маршрута остались на прежних высотах. Сторож этого не видит
+       НИКОГДА: в замерном браузере шрифты уже в кэше к первому
+       кадру. Подписка стоит один вызов. */
+    const offFonts: (() => void)[] = [];
+    const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
+    if (fonts) {
+      const again = () => measure();
+      fonts.addEventListener('loadingdone', again);
+      offFonts.push(() => fonts.removeEventListener('loadingdone', again));
+      void fonts.ready.then(again).catch(() => {});
+    }
+    /* И на изменение раскладки САМОГО блока — своим наблюдателем.
+       Общий `onLayoutChange` смотрит за обёрткой всей страницы,
+       а высота блока меняется и от переносов внутри него. */
+    let roRaf = 0;
+    const ro = new ResizeObserver(() => {
+      if (roRaf) return;
+      roRaf = requestAnimationFrame(() => {
+        roRaf = 0;
+        measure();
+      });
+    });
+    ro.observe(root);
+
     const offLayout = onLayoutChange(measure);
     const offScroll = onScrollY(read);
     return () => {
       io.disconnect();
+      ro.disconnect();
+      for (const off of offFonts) off();
       offLayout();
       offScroll();
       if (raf) cancelAnimationFrame(raf);
       if (graf) cancelAnimationFrame(graf);
+      if (wraf) cancelAnimationFrame(wraf);
+      if (roRaf) cancelAnimationFrame(roRaf);
+      if (cvBox) cvBox.textContent = '';
       root.removeAttribute('data-live');
+      root.removeAttribute('data-cv');
       for (const g of chunkEls) {
         g.style.removeProperty('--gl');
         g.style.removeProperty('--gc');
@@ -938,10 +1337,25 @@ export default function Route({ steps }: { steps: Step[] }) {
         </g>
       </svg>
 
+      {/* ХОЛСТЫ. Живут только на касаниях — там же, где спрятан SVG.
+          Сколько их, какого размера и где, решает эффект. */}
+      <div ref={cvRef} className="route__cvs" aria-hidden="true" />
+
       <ol className="route__list">
         {steps.map((s, i) => (
           <li key={s.t} className="rstep">
-            <span className="rstep__dot" aria-hidden="true" />
+            <span className="rstep__dot" aria-hidden="true">
+              {/* КРУГИ НА ВОДЕ. На точном указателе их рисует CSS —
+                  три кольца растут трансформом и гаснут прозрачностью;
+                  на касаниях их место занимает холст, и здесь они
+                  сняты. Яркость обоих идёт от `--n`, поэтому волны
+                  начинаются ровно тогда, когда линия дошла до цифры. */}
+              <span className="rstep__waves">
+                <i className="rstep__wave" />
+                <i className="rstep__wave" />
+                <i className="rstep__wave" />
+              </span>
+            </span>
             {/* ⚠️ ЦИФРУ ДВИГАЕТ ВНУТРЕННИЙ СПАН, А НЕ САМ `.rstep__num`.
                 Точка маршрута снимается с `.rstep__num`, а
                 `getBoundingClientRect` ВОЗВРАЩАЕТ БОКС ВМЕСТЕ

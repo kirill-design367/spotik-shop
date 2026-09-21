@@ -4,12 +4,12 @@
       8.2 KB  934-d916dd300e581947.js
       8.4 KB  app/layout-a4d7b77541f0c34e.js
       8.5 KB  app/not-found-20e4dd2756df0969.js
-     28.9 KB  app/page-1b533e8fb3d96a12.js
+     32.6 KB  app/page-9078ffedde3c596d.js
       0.5 KB  main-app-430fdc162aee449b.js
     110.0 KB  polyfills-42372ed130431b0a.js
       3.3 KB  webpack-f75a76404fd448cf.js
 
-всего в критическом пути: 506.6 KB
+всего в критическом пути: 510.3 KB
 three.js в чанках: нет ни в одном
 огибающая звука в чанках: нет ни в одном
 ОК: ни three.js, ни огибающей звука в сборке нет
