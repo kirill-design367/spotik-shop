@@ -1284,8 +1284,8 @@
 }
 /* Цвет остановок градиента задаётся ЗДЕСЬ, а не атрибутом: `var()`
    в презентационном атрибуте не разворачивается вовсе. */
-#route-lit stop { stop-color: var(--green); }
-#route-core stop { stop-color: var(--core); }
+.route__g-lit stop { stop-color: var(--green); }
+.route__g-core stop { stop-color: var(--core); }
 
 /* Непройденная часть — «тусклая, почти невидимая», но тем же штрихом. */
 .route__dim {
@@ -1297,7 +1297,21 @@
    меняются две ординаты градиента, и только они.
    ⚠️ НА УЗКОМ ЭКРАНЕ ОНИ УЖЕ: там dpr 2.75, и широкая полупрозрачная
    обводка через весь блок стоит первой растеризации заметно дороже. */
-.route__halo { stroke: url(#route-lit); }
+/* ⚠️ ССЫЛКА НА ГРАДИЕНТ — У КАЖДОГО КУСКА СВОЯ, И ЗАДАЁТ ЕЁ CSS.
+   Презентационный атрибут `stroke` на элементе CSS всё равно
+   перебьёт, поэтому пять пар правил пишутся явно. Число кусков
+   продублировано в `Route.tsx` (CHUNKS): разойдутся — часть ленты
+   останется без градиента и не загорится вовсе. */
+.route__chunk--0 .route__halo { stroke: url(#route-lit-0); }
+.route__chunk--0 .route__core { stroke: url(#route-core-0); }
+.route__chunk--1 .route__halo { stroke: url(#route-lit-1); }
+.route__chunk--1 .route__core { stroke: url(#route-core-1); }
+.route__chunk--2 .route__halo { stroke: url(#route-lit-2); }
+.route__chunk--2 .route__core { stroke: url(#route-core-2); }
+.route__chunk--3 .route__halo { stroke: url(#route-lit-3); }
+.route__chunk--3 .route__core { stroke: url(#route-core-3); }
+.route__chunk--4 .route__halo { stroke: url(#route-lit-4); }
+.route__chunk--4 .route__core { stroke: url(#route-core-4); }
 .route__halo--3 { stroke-width: 9; opacity: 0.09; }
 .route__halo--2 { stroke-width: 5.5; opacity: 0.14; }
 .route__halo--1 { stroke-width: 3.4; opacity: 0.2; }
@@ -1306,7 +1320,7 @@
   .route__halo--2 { stroke-width: 8; }
   .route__halo--1 { stroke-width: 4.5; }
 }
-.route__core { stroke: url(#route-core); stroke-width: 2.6; }
+.route__core { stroke-width: 2.6; }
 
 /* БЕГУЩИЕ ОГНИ. Четыре коротких куска ленты, которые едут по ней
    по кругу. Градиент фронта у них тот же, поэтому в непройденной
