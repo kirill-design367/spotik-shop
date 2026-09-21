@@ -142,6 +142,45 @@ const CHUNKS_NARROW = 6;
  */
 const CUT_PHASE = 38;
 
+/** Параметр кривой по длине вдоль неё: отсчёты равномерны по `t`. */
+function paramAt(ls: number[], L: number): number {
+  const n = ls.length - 1;
+  let lo = 0;
+  let hi = n;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (ls[mid] <= L) lo = mid;
+    else hi = mid;
+  }
+  const span = ls[hi] - ls[lo];
+  const f = span > 0 ? (L - ls[lo]) / span : 0;
+  return (lo + f) / n;
+}
+
+/** Деление кубика по Кастельжо: обе половины — точно та же кривая. */
+function splitCubic(s: { p1: Pt; c1: Pt; c2: Pt; p2: Pt }, t: number) {
+  const mix = (a: Pt, b: Pt): Pt => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+  const a1 = mix(s.p1, s.c1);
+  const b1 = mix(s.c1, s.c2);
+  const c1 = mix(s.c2, s.p2);
+  const a2 = mix(a1, b1);
+  const b2 = mix(b1, c1);
+  const m = mix(a2, b2);
+  return {
+    left: { p1: s.p1, c1: a1, c2: a2, p2: m },
+    right: { p1: m, c1: b2, c2: c1, p2: s.p2 },
+  };
+}
+
+/** Кубик в кусок атрибута `d` (начальная точка уже стоит). */
+function cubicD(s: { c1: Pt; c2: Pt; p2: Pt }): string {
+  return (
+    `C${s.c1.x.toFixed(1)} ${s.c1.y.toFixed(1)} ` +
+    `${s.c2.x.toFixed(1)} ${s.c2.y.toFixed(1)} ` +
+    `${s.p2.x.toFixed(1)} ${s.p2.y.toFixed(1)}`
+  );
+}
+
 /** Ближайший к `s` рез, попадающий в середину пропуска пунктира. */
 function cutAt(s: number, len: number): number {
   const v = Math.round((s - CUT_PHASE) / DASH) * DASH + CUT_PHASE;
@@ -216,6 +255,17 @@ function buildPath(
   const pts: Pt[] = [start];
   const cum: number[] = [0];
   let at: Pt = start;
+  /* Сегменты копятся отдельно: куски ленты режутся ИЗ КУБИКОВ,
+     а не из ломаной. Ломаная нужна только огням.
+
+     ⚠️ ЭТО ЗАМЕР, А НЕ ВКУС. Заход, где куски вырезались из ломаной
+     (сотни звеньев на весь путь), стоил на мобильном проходе тачем
+     222…230 потерянных кадров против 116 у кусков из кубиков —
+     и число кусков при этом не решало ничего (6 и 24 дали одно
+     и то же). Платим за пунктир: его браузер разворачивает
+     по КАЖДОМУ звену, а у кубика звеньев нет. */
+  const segs: { p1: Pt; c1: Pt; c2: Pt; p2: Pt; a: number; ls: number[] }[] = [];
+
   const sample = (p1: Pt, s: Seg) => {
     /* ⚠️ ШАГ ПО ДУГЕ, А НЕ ПО ПАРАМЕТРУ. Перегоны разной длины:
        вертикаль из номера — полсотни пикселей, дуга за край экрана —
@@ -229,6 +279,8 @@ function buildPath(
       Math.hypot(s.c2.x - s.c1.x, s.c2.y - s.c1.y) +
       Math.hypot(s.p2.x - s.c2.x, s.p2.y - s.c2.y);
     const n = Math.max(6, Math.min(260, Math.round(est / 9)));
+    const a = cum[cum.length - 1];
+    const ls: number[] = [a];
     for (let q = 1; q <= n; q += 1) {
       const t = q / n;
       const u = 1 - t;
@@ -242,7 +294,9 @@ function buildPath(
       };
       cum.push(cum[cum.length - 1] + Math.hypot(pt.x - pts[pts.length - 1].x, pt.y - pts[pts.length - 1].y));
       pts.push(pt);
+      ls.push(cum[cum.length - 1]);
     }
+    segs.push({ p1, c1: s.c1, c2: s.c2, p2: s.p2, a, ls });
   };
   const put = (s: Seg) => {
     d +=
@@ -313,41 +367,63 @@ function buildPath(
      около девяти пикселей, и на дуге радиусом в три сотни хорда
      отходит от кривой на три сотых пикселя. Непройденная часть
      остаётся ОДНИМ гладким путём — она статична. */
-  const ds: string[] = [];
-  const cy0: number[] = [];
-  const cy1: number[] = [];
-  const cat: number[] = [];
-  let from = 0;
-  for (let k = 0; k < CHUNKS; k += 1) {
-    if (k >= chunks) {
-      ds.push('');
-      cy0.push(0);
-      cy1.push(0);
-      cat.push(0);
-      continue;
-    }
-    const to = k === chunks - 1 ? len : cutAt(((k + 1) * len) / chunks, len);
-    if (to <= from) {
-      ds.push('');
-      cy0.push(0);
-      cy1.push(0);
-      cat.push(0);
-      continue;
-    }
-    const a = ptAt(pts, cum, from);
-    const b = ptAt(pts, cum, to);
-    let dd = `M${a.x.toFixed(1)} ${a.y.toFixed(1)}`;
-    for (let i = 0; i < pts.length; i += 1) {
-      if (cum[i] <= from || cum[i] >= to) continue;
-      dd += `L${pts[i].x.toFixed(1)} ${pts[i].y.toFixed(1)}`;
-    }
-    dd += `L${b.x.toFixed(1)} ${b.y.toFixed(1)}`;
-    ds.push(dd);
-    cy0.push(a.y);
-    cy1.push(b.y);
-    cat.push(from);
-    from = to;
+  const ds: string[] = new Array(CHUNKS).fill('');
+  const cy0: number[] = new Array(CHUNKS).fill(0);
+  const cy1: number[] = new Array(CHUNKS).fill(0);
+  const cat: number[] = new Array(CHUNKS).fill(0);
+
+  /* Длины резов: равные доли пути, подтянутые к середине пропуска. */
+  const marks: number[] = [];
+  for (let k = 1; k < chunks; k += 1) {
+    const v = cutAt((k * len) / chunks, len);
+    if (v > (marks[marks.length - 1] ?? 0) + 1 && v < len - 1) marks.push(v);
   }
+
+  let k = 0;
+  let cur = `M${start.x.toFixed(1)} ${start.y.toFixed(1)}`;
+  let curY = start.y;
+  let curAt = 0;
+  let mi = 0;
+  const close = (end: Pt, endAt: number) => {
+    ds[k] = cur;
+    cy0[k] = curY;
+    cy1[k] = end.y;
+    cat[k] = curAt;
+    k += 1;
+    cur = `M${end.x.toFixed(1)} ${end.y.toFixed(1)}`;
+    curY = end.y;
+    curAt = endAt;
+  };
+  for (const sg of segs) {
+    let cubic = { p1: sg.p1, c1: sg.c1, c2: sg.c2, p2: sg.p2 };
+    let base = sg.a;
+    let span = 1;
+    while (mi < marks.length && marks[mi] < sg.ls[sg.ls.length - 1]) {
+      const L = marks[mi];
+      if (L <= base) {
+        mi += 1;
+        continue;
+      }
+      /* Параметр реза берётся из тех же отсчётов, по которым считалась
+         длина: между соседними он линеен с точностью до сотых. */
+      const tAbs = paramAt(sg.ls, L);
+      /* У остатка кривой свой параметр: он идёт от уже отрезанного. */
+      const t0 = paramAt(sg.ls, base);
+      const t = span > 0 ? (tAbs - t0) / span : 0;
+      const cut = splitCubic(cubic, Math.min(0.999, Math.max(0.001, t)));
+      cur += cubicD(cut.left);
+      close(cut.left.p2, L);
+      cubic = cut.right;
+      base = L;
+      span = 1 - tAbs;
+      mi += 1;
+    }
+    cur += cubicD(cubic);
+  }
+  ds[k] = cur;
+  cy0[k] = curY;
+  cy1[k] = tailY;
+  cat[k] = curAt;
 
   return { d, ds, cy0, cy1, cat, top: start.y, bot: tailY, pts, cum, len };
 }
