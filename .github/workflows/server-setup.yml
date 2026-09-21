@@ -24,6 +24,15 @@ on:
         description: 'Не трогать сертификат (только nginx и файрвол)'
         type: boolean
         default: false
+      # ⚠️ СПИСОК ПЕРВЫХ АДМИНИСТРАТОРОВ ИДЁТ ВХОДОМ, А НЕ КОНСТАНТОЙ
+      # В ФАЙЛЕ. Репозиторий ПУБЛИЧНЫЙ, и почтовый адрес человека,
+      # положенный в git, достаётся сборщикам спама навсегда. Пустое
+      # значение — «не трогать то, что уже стоит на сервере»: повторный
+      # прогон настройки список не стирает.
+      admins:
+        description: 'Первые администраторы: адреса через запятую (пусто — не менять)'
+        type: string
+        default: ''
 
 concurrency:
   # Настройка и выкладка делят один сервер: одновременно им там делать
@@ -244,6 +253,38 @@ jobs:
           # и снимается на каждом прогоне: вернуть его может только
           # рука человека, и тогда следующая настройка уберёт снова.
           snyat SPOTIK_FAKE_PAY_SECRET
+
+          # ⚠️ ПРИВЕЗЁННЫЕ ВЕЛИЧИНЫ ПЕРЕЗАПИСЫВАЮТ ПРЕЖНИЕ, и этим
+          # они отличаются от `zadat`. Почта и список администраторов
+          # обязаны меняться прогоном настройки: иначе смена пароля
+          # ящика требовала бы руки на сервере. В фрагменте лежит
+          # только то, что задано, — пустое значение сюда не попадает
+          # вовсе, и стереть настроенную почту прогоном нельзя.
+          #
+          # ⚠️ ЗНАЧЕНИЕ НЕ РАЗБИРАЕТСЯ НИ ОДНОЙ ОБОЛОЧКОЙ. `read -r`
+          # без разделителей отдаёт строку как есть, и она как есть
+          # ложится в файл: пароль с пробелами, кавычками и решёткой
+          # переживает переезд. Ровно на разборе такой строки
+          # (`SMTP_FROM=Spotik Shop <no-reply@…>`) выкладка однажды
+          # и упала — см. Р-85.
+          if [ -f /tmp/spotik-extra.env ]; then
+            echo "══ почта и администраторы ══"
+            while IFS= read -r stroka; do
+              case "$stroka" in ''|'#'*) continue;; *=*) ;; *) continue;; esac
+              imya=${stroka%%=*}
+              if [ "$stroka" = "$(grep -m1 "^$imya=" /srv/spotik/env 2>/dev/null)" ]; then
+                echo "  $imya: не изменился"
+                continue
+              fi
+              grep -v "^$imya=" /srv/spotik/env > /tmp/env.new 2>/dev/null || true
+              printf '%s\n' "$stroka" >> /tmp/env.new
+              cat /tmp/env.new > /srv/spotik/env
+              rm -f /tmp/env.new
+              SNYATO=1
+              echo "  $imya: записан"
+            done < /tmp/spotik-extra.env
+            shred -u /tmp/spotik-extra.env 2>/dev/null || rm -f /tmp/spotik-extra.env
+          fi
 
           echo "══ Node 22 ══"
           if command -v node >/dev/null 2>&1 && node -e 'process.exit(+process.versions.node.split(".")[0] >= 22 ? 0 : 1)'; then
@@ -633,6 +674,56 @@ jobs:
           # на опечатке, хуже настройки, не начатой вовсе.
           for f in /tmp/remote/*.sh; do bash -n "$f" && echo "синтаксис ок: $f"; done
 
+      # ⚠️ ЗНАЧЕНИЯ ЕДУТ ФАЙЛОМ, А НЕ КОМАНДНОЙ СТРОКОЙ. Пароль
+      # в `ssh spotik "SMTP_PASS=… bash …"` виден в `ps` на сервере
+      # всё время работы скрипта, а в журнале раннера — маскируется
+      # только буквальное совпадение с секретом. Фрагмент собирается
+      # питоном из ОКРУЖЕНИЯ (ни одна оболочка его не разбирает),
+      # уезжает по ssh потоком и на сервере имеет права 600.
+      #
+      # ⚠️ ПУСТОЙ СЕКРЕТ ЗНАЧИТ «НЕ ТРОГАТЬ», А НЕ «ОЧИСТИТЬ». Пока
+      # ящика нет, письма идут в журнал сервера — это прямая
+      # постановка; случайно затереть настроенную почту прогоном
+      # настройки нельзя (Р-92).
+      - name: Отвезти почту и список администраторов
+        env:
+          ADMINS: ${{ inputs.admins }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
+        run: |
+          python3 - > /tmp/remote/extra.env <<'PY'
+          import os
+
+          # SMTP_SECURE обычно забывают, а у Яндекс 360 порт 465 —
+          # это неявный TLS, и без признака отправка молча не идёт.
+          # Выводим его из порта, если он не задан руками.
+          port = os.environ.get('SMTP_PORT', '').strip()
+          secure = os.environ.get('SMTP_SECURE', '').strip()
+          if not secure and port:
+              secure = '1' if port == '465' else '0'
+
+          pary = [
+              ('SPOTIK_ADMINS', os.environ.get('ADMINS', '').strip()),
+              ('SMTP_HOST', os.environ.get('SMTP_HOST', '').strip()),
+              ('SMTP_PORT', port),
+              ('SMTP_USER', os.environ.get('SMTP_USER', '').strip()),
+              ('SMTP_PASS', os.environ.get('SMTP_PASS', '')),
+              ('SMTP_FROM', os.environ.get('SMTP_FROM', '').strip()),
+              ('SMTP_SECURE', secure),
+          ]
+          for imya, znachenie in pary:
+              if znachenie:
+                  print(f'{imya}={znachenie}')
+          PY
+          # В журнал уходят только ИМЕНА: значения здесь секреты.
+          echo "в окружение сервера поедут: $(cut -d= -f1 /tmp/remote/extra.env | tr '\n' ' ')"
+          ssh spotik 'umask 077; cat > /tmp/spotik-extra.env' < /tmp/remote/extra.env
+          rm -f /tmp/remote/extra.env
+
       - name: Пакеты, файрвол, автообновления, nginx по http
         run: |
           ssh spotik 'cat > /tmp/spotik-setup.sh' < /tmp/remote/setup.sh
@@ -655,6 +746,28 @@ jobs:
         run: |
           ssh spotik 'cat > /tmp/spotik-https.sh' < /tmp/remote/https.sh
           ssh spotik 'bash /tmp/spotik-https.sh; r=$?; rm -f /tmp/spotik-https.sh; exit $r'
+
+      # ⚠️ ПРОВЕРЯЕМ ГОТОВОЕ СОСТОЯНИЕ, А НЕ СВОЙ ФАЙЛ ОКРУЖЕНИЯ.
+      # `/srv/spotik/env` правим мы сами, и наша же ошибка в нём
+      # спряталась бы от нашей же проверки (Р-47). Спрашиваем базу:
+      # список сотрудников заполняет САМА СЛУЖБА при старте, значит
+      # строка в таблице доказывает, что переменная доехала,
+      # прочиталась и сработала. Плюс живой адрес входа с раннера.
+      - name: Проверить администраторов
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://spotik.shop/admin/login/ || echo 000)
+          [ "$code" = 200 ] || { echo "::error::страница входа в админку ответила $code"; exit 1; }
+          echo "страница входа в админку: 200"
+          spisok=$(ssh spotik "sudo -u postgres psql -tAc \"select email || ' ' || role || ' disabled=' || disabled from staff order by email\" spotik")
+          if [ -z "$spisok" ]; then
+            echo "::warning::в таблице сотрудников пусто — список SPOTIK_ADMINS не задавали ни разу"
+          else
+            echo "$spisok" | sed 's/^/  /'
+          fi
+          # Ни одного АКТИВНОГО администратора — в админку не войдёт никто.
+          echo "$spisok" | grep -q 'admin disabled=f' \
+            || echo "::warning::активных администраторов нет: задайте вход admins при запуске настройки"
 
       - name: Проверить снаружи
         run: |
