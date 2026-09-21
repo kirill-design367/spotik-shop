@@ -127,7 +127,7 @@ type Built = {
  * в пропуск пунктира.
  */
 const CHUNKS = 24;
-const CHUNKS_NARROW = 6;
+const CHUNKS_NARROW = 1;
 /**
  * ГДЕ МОЖНО РЕЗАТЬ — РЕШАЕТ ПУНКТИР, И ЭТО НЕ ПРИДИРКА.
  *
