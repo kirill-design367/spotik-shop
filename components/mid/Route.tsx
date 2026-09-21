@@ -362,15 +362,26 @@ export default function Route({ steps }: { steps: Step[] }) {
     const sc = scroller();
     if (!root || !svg || !sc) return;
 
-    const gLit = svg.querySelector<SVGLinearGradientElement>('#route-lit');
-    const gCore = svg.querySelector<SVGLinearGradientElement>('#route-core');
     const dimEl = svg.querySelector<SVGPathElement>('.route__dim');
+    const gGlint = svg.querySelector<SVGLinearGradientElement>('#route-core');
     const chunkEls = Array.from(svg.querySelectorAll<SVGGElement>('.route__chunk'));
-    if (!gLit || !gCore || !dimEl || chunkEls.length !== CHUNKS) return;
-    /* Состояние куска: 0 — не дошли, 1 — на фронте, 2 — пройден.
-       Классы переставляются ТОЛЬКО на смене состояния: каждая
-       перестановка — перерисовка этого куска. */
-    const state: number[] = new Array(CHUNKS).fill(-1);
+    if (!dimEl || !gGlint || chunkEls.length !== CHUNKS) return;
+    const gLit: SVGLinearGradientElement[] = [];
+    const gCore: SVGLinearGradientElement[] = [];
+    for (let k = 0; k < CHUNKS; k += 1) {
+      const l = svg.querySelector<SVGLinearGradientElement>(`#route-lit-${k}`);
+      const c = svg.querySelector<SVGLinearGradientElement>(`#route-core-${k}`);
+      if (!l || !c) return;
+      gLit.push(l);
+      gCore.push(c);
+      /* Ссылка на свою пару градиентов — переменной, а не классом:
+         иначе на каждый кусок пришлось бы по паре правил в CSS. */
+      chunkEls[k].style.setProperty('--gl', `url(#route-lit-${k})`);
+      chunkEls[k].style.setProperty('--gc', `url(#route-core-${k})`);
+    }
+    /* Что уже записано в кусок: повторная запись того же значения —
+       это лишняя перерисовка и ничего больше. */
+    const was: number[] = new Array(CHUNKS * 2).fill(NaN);
 
     let items: HTMLElement[] = [];
     let ys: number[] = [];
@@ -454,7 +465,7 @@ export default function Route({ steps }: { steps: Step[] }) {
           el.setAttribute('stroke-dashoffset', off);
         }
       }
-      state.fill(-1);
+      was.fill(NaN);
 
       for (let i = 0; i < items.length; i += 1) {
         items[i].style.setProperty('--dot-x', `${ax[i].toFixed(1)}px`);
@@ -467,29 +478,56 @@ export default function Route({ steps }: { steps: Step[] }) {
 
     /** Кладёт фронт на высоту `y` внутри блока. */
     const put = (y: number) => {
-      /* ⚠️ ГРАДИЕНТ ДЕРЖИТ ТОЛЬКО ТОТ КУСОК, ГДЕ СТОИТ ФРОНТ, И В ЭТОМ
-         ВЕСЬ СМЫСЛ РЕЗА. Пока пара ординат была общей на всю ленту,
-         её перезапись перерисовывала стек обводок размером с блок:
-         33 % кадров дороже 16.9 мс на 2560 и полтора десятка длинных
-         задач. Теперь кусок выше фронта горит СПЛОШНЫМ цветом
-         и градиента не знает, кусок ниже не рисуется вовсе, а пишется
-         только средний — то есть перерисовывается площадь одного
-         куска. Классы переставляются лишь на смене состояния. */
+      /* ⚠️ ФРОНТ ПИШЕТСЯ ТОЛЬКО В ТОТ КУСОК, ГДЕ ОН СЕЙЧАС СТОИТ,
+         И В ЭТОМ ВЕСЬ СМЫСЛ РЕЗА. Пока пара ординат была общей
+         на всю ленту, её перезапись перерисовывала стек обводок
+         размером с блок: 33 % кадров дороже 16.9 мс на 2560 и полтора
+         десятка длинных задач. Куску выше фронта нужно одно и то же
+         «всё горит», куску ниже — «всё темно», и обе величины
+         постоянны, поэтому записанное кэшируется. В кадре остаётся
+         один кусок из двадцати четырёх.
+
+         ⚠️ ПЕРЕКЛЮЧАТЬ КУСКИ КЛАССОМ НЕЛЬЗЯ, ХОТЯ ЭТО И НАПРАШИВАЕТСЯ.
+         Заход, где пройденный кусок горел сплошным цветом, а
+         непройденный не рисовался вовсе, выглядел дешевле: градиент
+         тогда держит ровно один кусок. На десктопе разницы не было,
+         а на мобильном проходе тачем стало ВДВОЕ хуже — 213
+         потерянных кадров против 116 — и появились длинные задачи
+         по 50…60 мс. Платим мы за смену класса: она перестраивает
+         операции рисования всего куска, а на быстрой инерции границ
+         пересекается много. Запись двух ординат такой перестройки
+         не требует. */
       if (built) {
-        const lo = y - EDGE;
         for (let k = 0; k < CHUNKS; k += 1) {
-          const st = built.cy1[k] <= lo ? 2 : built.cy0[k] >= y ? 0 : 1;
-          if (state[k] === st) continue;
-          state[k] = st;
-          const cl = chunkEls[k].classList;
-          cl.toggle('route__chunk--on', st === 2);
-          cl.toggle('route__chunk--at', st === 1);
+          const t = built.cy0[k];
+          const b = built.cy1[k];
+          let a0: number;
+          let a1: number;
+          if (y <= t) {
+            a0 = t - 2;
+            a1 = t - 1;
+          } else if (y - EDGE >= b) {
+            a0 = b + 1;
+            a1 = b + 2;
+          } else {
+            a0 = y - EDGE;
+            a1 = y;
+          }
+          if (was[k * 2] === a0 && was[k * 2 + 1] === a1) continue;
+          was[k * 2] = a0;
+          was[k * 2 + 1] = a1;
+          const s0 = a0.toFixed(1);
+          const s1 = a1.toFixed(1);
+          gLit[k].setAttribute('y1', s0);
+          gLit[k].setAttribute('y2', s1);
+          gCore[k].setAttribute('y1', s0);
+          gCore[k].setAttribute('y2', s1);
         }
       }
-      gLit.setAttribute('y1', (y - EDGE).toFixed(1));
-      gLit.setAttribute('y2', y.toFixed(1));
-      gCore.setAttribute('y1', (y - EDGE).toFixed(1));
-      gCore.setAttribute('y2', y.toFixed(1));
+      /* У огней градиент свой: они короткие, и его перезапись стоит
+         полсотни пикселей перерисовки, а не блока. */
+      gGlint.setAttribute('y1', (y - EDGE).toFixed(1));
+      gGlint.setAttribute('y2', y.toFixed(1));
       if (built) {
         const p = (y - built.top) / Math.max(1, built.bot - built.top);
         root.style.setProperty('--lit', (p < 0 ? 0 : p > 1 ? 1 : p).toFixed(6));
@@ -638,6 +676,10 @@ export default function Route({ steps }: { steps: Step[] }) {
       if (raf) cancelAnimationFrame(raf);
       if (graf) cancelAnimationFrame(graf);
       root.removeAttribute('data-live');
+      for (const g of chunkEls) {
+        g.style.removeProperty('--gl');
+        g.style.removeProperty('--gc');
+      }
       root.style.removeProperty('--bleed');
       root.style.removeProperty('--lit');
       for (const el of items) {
@@ -657,13 +699,41 @@ export default function Route({ steps }: { steps: Step[] }) {
               ниже пусто; в кадре меняются только две ординаты. Дашарей
               при этом свободен и держит пунктир на всей линии.
 
-              Пара одна на всю ленту, но ссылается на неё РОВНО ОДИН
-              кусок — тот, где фронт сейчас стоит. Поэтому перезапись
-              ординат перерисовывает его одного. */}
-          <linearGradient id="route-lit" className="route__g-lit" gradientUnits="userSpaceOnUse" x1="0" x2="0" y1="-9999" y2="-9998">
-            <stop offset="0" stopOpacity="1" />
-            <stop offset="1" stopOpacity="0" />
-          </linearGradient>
+              ⚠️ ПАРА У КАЖДОГО КУСКА СВОЯ. Одна общая перерисовывала
+              бы весь стек обводок размером с блок; со своими пишется
+              только тот кусок, где фронт сейчас стоит. */}
+          {Array.from({ length: CHUNKS }, (_, k) => (
+            <linearGradient
+              key={`l${k}`}
+              id={`route-lit-${k}`}
+              className="route__g-lit"
+              gradientUnits="userSpaceOnUse"
+              x1="0"
+              x2="0"
+              y1="-9999"
+              y2="-9998"
+            >
+              <stop offset="0" stopOpacity="1" />
+              <stop offset="1" stopOpacity="0" />
+            </linearGradient>
+          ))}
+          {Array.from({ length: CHUNKS }, (_, k) => (
+            <linearGradient
+              key={`c${k}`}
+              id={`route-core-${k}`}
+              className="route__g-core"
+              gradientUnits="userSpaceOnUse"
+              x1="0"
+              x2="0"
+              y1="-9999"
+              y2="-9998"
+            >
+              <stop offset="0" stopOpacity="1" />
+              <stop offset="1" stopOpacity="0" />
+            </linearGradient>
+          ))}
+          {/* Огни бегут по всей ленте и в куски не укладываются:
+              у них своя пара, и перезапись стоит полсотни пикселей. */}
           <linearGradient id="route-core" className="route__g-core" gradientUnits="userSpaceOnUse" x1="0" x2="0" y1="-9999" y2="-9998">
             <stop offset="0" stopOpacity="1" />
             <stop offset="1" stopOpacity="0" />
