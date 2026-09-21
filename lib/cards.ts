@@ -111,6 +111,9 @@ type Card = {
   ax: number;
   ay: number;
   az: number;
+  wp: number;
+  wq: number;
+  ws: number;
 };
 
 export function attachCards(root: HTMLElement): () => void {
@@ -129,6 +132,7 @@ export function attachCards(root: HTMLElement): () => void {
     next: 0, last: 0,
     wx: NaN, wy: NaN, wz: NaN,
     ax: NaN, ay: NaN, az: NaN,
+    wp: NaN, wq: NaN, ws: NaN,
   }));
 
   /**
@@ -164,9 +168,18 @@ export function attachCards(root: HTMLElement): () => void {
       c.aura.style.setProperty('--ry', c.ry.toFixed(3));
       c.aura.style.setProperty('--tz', c.tz.toFixed(2));
     }
-    c.el.style.setProperty('--px', c.px.toFixed(1));
-    c.el.style.setProperty('--py', c.py.toFixed(1));
-    c.el.style.setProperty('--spot', c.sp.toFixed(3));
+    /* ⚠️ БЛИК КЭШИРУЕТСЯ ТАК ЖЕ, КАК ПОЗА. Запись `--px/--py/--spot`
+       перерисовывает ВСЮ стопку фона плиты — четыре слоя со
+       смешиванием; в покое эти три числа не меняются, и писать их
+       восемь раз в секунду незачем. */
+    if (c.wp !== c.px || c.wq !== c.py || c.ws !== c.sp) {
+      c.wp = c.px;
+      c.wq = c.py;
+      c.ws = c.sp;
+      c.el.style.setProperty('--px', c.px.toFixed(1));
+      c.el.style.setProperty('--py', c.py.toFixed(1));
+      c.el.style.setProperty('--spot', c.sp.toFixed(3));
+    }
   };
 
   /* ── БЕЗ ДВИЖЕНИЯ ──────────────────────────────────────────────────
@@ -345,6 +358,7 @@ export function attachCards(root: HTMLElement): () => void {
       }
       c.wx = NaN;
       c.ax = NaN;
+      c.wp = NaN;
     }
   };
 }
