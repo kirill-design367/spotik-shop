@@ -110,13 +110,24 @@ type Built = {
 /**
  * НА СКОЛЬКО КУСКОВ РЕЖЕТСЯ ЛЕНТА.
  *
- * Фронт стоит в ОДНОМ куске, и только он перерисовывается в кадре:
- * куски выше горят сплошным цветом, куски ниже не рисуются вовсе.
+ * Фронт стоит в ОДНОМ куске, и только он перерисовывается в кадре.
  * Значит цена кадра — площадь одного куска, и чем их больше, тем
- * она меньше. Двадцать четыре дают на десктопе кусок высотой
- * около 170 px, на мобильной — около 290 при экране 851.
+ * она меньше.
+ *
+ * ⚠️ НО ТОЛЬКО НА ШИРОКОМ ЭКРАНЕ, И ЭТО ЗАМЕР, А НЕ ДОГАДКА.
+ * На 2560 двадцать четыре куска снимают цену ленты на скролле
+ * до нуля (1.4 % против 1.5 % без неё, было 33 % и полтора десятка
+ * длинных задач). А мобильный проход тачем от того же числа
+ * становится ВДВОЕ хуже: 230 потерянных кадров против 116 при пяти.
+ * Проверено, что дело не в перестановке классов — без неё те же 230;
+ * платим за само число путей в кадре при dpr 2.75. Поэтому на узком
+ * экране кусков шесть, на широком двадцать четыре, а в разметке
+ * их всегда двадцать четыре: лишние остаются без `d` и не рисуются.
+ * Глазом число кусков не видно ни там, ни там — рез приходится
+ * в пропуск пунктира.
  */
 const CHUNKS = 24;
+const CHUNKS_NARROW = 6;
 /**
  * ГДЕ МОЖНО РЕЗАТЬ — РЕШАЕТ ПУНКТИР, И ЭТО НЕ ПРИДИРКА.
  *
@@ -192,6 +203,7 @@ function buildPath(
   ax: number[],
   ys: number[],
   boxes: { top: number; bottom: number }[],
+  chunks: number,
 ): Built {
   const a = ax.map((x, i) => ({ x: x + bleed, y: ys[i] }));
   /* Края экрана в системе координат холста и вершины петель за ними. */
@@ -307,7 +319,14 @@ function buildPath(
   const cat: number[] = [];
   let from = 0;
   for (let k = 0; k < CHUNKS; k += 1) {
-    const to = k === CHUNKS - 1 ? len : cutAt(((k + 1) * len) / CHUNKS, len);
+    if (k >= chunks) {
+      ds.push('');
+      cy0.push(0);
+      cy1.push(0);
+      cat.push(0);
+      continue;
+    }
+    const to = k === chunks - 1 ? len : cutAt(((k + 1) * len) / chunks, len);
     if (to <= from) {
       ds.push('');
       cy0.push(0);
@@ -449,7 +468,7 @@ export default function Route({ steps }: { steps: Step[] }) {
       const W = w + bleed * 2;
       root.style.setProperty('--bleed', `${bleed.toFixed(1)}px`);
 
-      built = buildPath(h, bleed, over, vw, ax, ys, boxes);
+      built = buildPath(h, bleed, over, vw, ax, ys, boxes, narrow0 ? CHUNKS_NARROW : CHUNKS);
       svg.setAttribute('viewBox', `0 0 ${W.toFixed(1)} ${h}`);
       /* Непройденная часть — ОДИН путь: он статичен и не перерисуется
          ни разу, поэтому резать его незачем. */
@@ -499,6 +518,7 @@ export default function Route({ steps }: { steps: Step[] }) {
          не требует. */
       if (built) {
         for (let k = 0; k < CHUNKS; k += 1) {
+          if (!built.ds[k]) continue;
           const t = built.cy0[k];
           const b = built.cy1[k];
           let a0: number;
