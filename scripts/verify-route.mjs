@@ -46,6 +46,27 @@ const server = await serveOut(PORT);
 const browser = await launch();
 let failed = false;
 
+/**
+ * Сколько пикселей ЛЕНТЫ на кадре.
+ *
+ * ⚠️ ПОРОГ НИЗКИЙ, И ЭТО ОБЯЗАТЕЛЬНО. Ядро ленты почти белое
+ * (160, 226, 183), а ореолы — зелёное с прозрачностью 0.09…0.2
+ * поверх `--ink`, то есть около (20, 51, 31). Строгий порог
+ * «зелёный вдвое больше соседей» не видит ни того, ни другого:
+ * у белого ядра красный слишком велик, у ореола зелёный слишком мал.
+ */
+function band2(buf) {
+  const img = PNG.sync.read(buf);
+  let n = 0;
+  for (let i = 0; i < img.data.length; i += 4) {
+    const r = img.data[i];
+    const g = img.data[i + 1];
+    const b = img.data[i + 2];
+    if (g > 26 && g > r + 8 && g > b + 8) n += 1;
+  }
+  return n;
+}
+
 /** Сколько зелёных пикселей на кадре — грубо, по превышению зелёного канала. */
 function greens(buf) {
   const img = PNG.sync.read(buf);
@@ -64,9 +85,9 @@ window.__rt = { rows: [], on: false };
 (() => {
   const tick = () => {
     if (window.__rt.on) {
-      const lit = document.querySelector('.route__lit');
+      const rt = document.querySelector('.route');
       const sc = document.getElementById('scroller');
-      if (lit && sc) window.__rt.rows.push([sc.scrollTop, 1 - Number(lit.getAttribute('stroke-dashoffset'))]);
+      if (rt && sc) window.__rt.rows.push([sc.scrollTop, Number(rt.style.getPropertyValue('--lit') || 0)]);
     }
     requestAnimationFrame(tick);
   };
@@ -108,7 +129,7 @@ for (const [w, h, mob] of [
   };
   const state = () =>
     page.evaluate(() => ({
-      p: 1 - Number(document.querySelector('.route__lit').getAttribute('stroke-dashoffset')),
+      p: Number(document.querySelector('.route').style.getPropertyValue('--lit') || 0),
       n: [...document.querySelectorAll('.rstep')].map((e) =>
         Number(getComputedStyle(e).getPropertyValue('--n')),
       ),
@@ -145,7 +166,9 @@ for (const [w, h, mob] of [
     if (prev >= 0 && r.p < prev - 1e-6) backSlip += 1;
     prev = r.p;
     for (let i = 1; i < r.n.length; i += 1) {
-      if (r.n[i] > 0.001 && r.n[i - 1] < 0.999) orderBad += 1;
+      /* Порог выше «подготовительного» свечения: оно разрешено
+         постановкой отдельно и до порядка отношения не имеет. */
+      if (r.n[i] > 0.3 && r.n[i - 1] < 0.999) orderBad += 1;
     }
     /* Где был шаг на экране в тот момент, когда его номер загорелся. */
     for (let i = 0; i < r.n.length; i += 1) {
@@ -311,9 +334,62 @@ for (const [w, h, mob] of [
   }
   const okOut = touchL > 0 && touchR > 0;
 
+  /* ── ФРОНТ СТОИТ РОВНО НА НОМЕРЕ, КОГДА ТОТ ЗАГОРЕЛСЯ ──────────────
+     Постановка: «номер загорается только когда линия до него дошла».
+     Судим по РАСТРУ, а не по нашей же арифметике: находим положение,
+     где номер третьего шага набрал полную яркость, и смотрим полосу
+     линии ВЫШЕ точки и НИЖЕ неё. Выше обязано быть заметно ярче:
+     это и значит, что фронт стоит на номере, а не прошёл раньше. */
+  let aboveN = -1;
+  let belowN = -1;
+  {
+    const K = 2;
+    let hit = null;
+    for (const y of ys) {
+      await park(y);
+      const r = await state();
+      if (r.n[K] > 0.98) {
+        hit = y;
+        break;
+      }
+    }
+    if (hit !== null) {
+      /* ⚠️ НОМЕР НА ВРЕМЯ СНИМКА ПРЯЧЕТСЯ. Линия проходит СКВОЗЬ цифру,
+         и цифра её закрывает — причём сама она тоже зелёная и попала бы
+         в счёт. `visibility` раскладку не трогает, поэтому координаты
+         остаются теми же. */
+      await page.addStyleTag({ content: '.rstep__num{visibility:hidden!important}' });
+      const bx = await page.evaluate((k) => {
+        const rt = document.querySelector('.route').getBoundingClientRect();
+        const st = document.querySelectorAll('.rstep')[k];
+        const dx = parseFloat(st.style.getPropertyValue('--dot-x') || '0');
+        const dy = parseFloat(st.style.getPropertyValue('--dot-y') || '0');
+        return {
+          x: Math.max(0, Math.round(rt.left + dx - 16)),
+          yA: Math.round(rt.top + dy - 58),
+          yB: Math.round(rt.top + dy + 70),
+        };
+      }, K);
+      /* Высота 52 при шаге штриха 50: хотя бы половина штриха попадёт
+         в окно при любой фазе пунктира. */
+      const slab = async (yy) => {
+        if (yy < 0 || yy + 52 > h) return -1;
+        return band2(await page.screenshot({ clip: { x: bx.x, y: yy, width: 32, height: 52 } }));
+      };
+      aboveN = await slab(bx.yA);
+      belowN = await slab(bx.yB);
+      await page.evaluate(() => {
+        for (const st of document.querySelectorAll('style')) {
+          if (st.textContent.includes('rstep__num{visibility')) st.remove();
+        }
+      });
+    }
+  }
+  const okFront = aboveN < 0 || belowN < 0 || aboveN > belowN * 2 + 20;
+
   if (
     backSlip || fwdSlip || orderBad || !okEnds || !okDraw || !okLive || !okWhen || !okAhead ||
-    crossed || !okOut
+    crossed || !okOut || !okFront
   )
     failed = true;
 
@@ -333,7 +409,9 @@ for (const [w, h, mob] of [
       .join(' / ')} высоты экрана (самый поздний ${lowest.toFixed(2)}, порог 0.50)  ` +
       `маршрут при низе блока на 0.7 экрана: ${early.p.toFixed(3)}  ` +
       `строк перерезано линией ${crossed} из ${geo.rects.length}  ` +
-      `за край экрана: слева ${touchL} px, справа ${touchR} px` +
+      `за край экрана: слева ${touchL} px, справа ${touchR} px  ` +
+      `в момент зажигания 3-го номера ленты выше точки ${aboveN} px, ниже ${belowN} px` +
+      (okFront ? '' : '   !!! НОМЕР ЗАГОРАЕТСЯ РАНЬШЕ ЛИНИИ') +
       (okOut ? '' : '   !!! ЛИНИЯ НЕ ВЫХОДИТ ЗА КРАЙ') +
       (okWhen ? '' : '   !!! ЗАГОРАЕТСЯ ПОЗДНО') +
       (okAhead ? '' : '   !!! МАРШРУТ НЕ ДОЙДЁН') +

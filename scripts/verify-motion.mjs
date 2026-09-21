@@ -79,7 +79,8 @@ console.log('\nПриёмы середины при «уменьшить дви�
   await page.waitForTimeout(600);
   const before = await page.evaluate(() => ({
     mq: getComputedStyle(document.querySelector('.mq__track')).animationName,
-    off: document.querySelector('.route__lit').getAttribute('stroke-dashoffset'),
+    off: document.querySelector('.route').style.getPropertyValue('--lit') || '0',
+    spark: getComputedStyle(document.querySelector('.route__glints')).display,
     nums: [...document.querySelectorAll('.rstep__num')].map((e) => +getComputedStyle(e).opacity),
     swap: document.querySelector('.qa').hasAttribute('data-swap'),
     q: [...document.querySelectorAll('.qa__q')].map((e) => +getComputedStyle(e).opacity),
@@ -88,16 +89,20 @@ console.log('\nПриёмы середины при «уменьшить дви�
   for (let i = 0; i < 12; i += 1) { await page.mouse.wheel(0, 90); await page.waitForTimeout(25); }
   await page.waitForTimeout(600);
   const after = await page.evaluate(() =>
-    document.querySelector('.route__lit').getAttribute('stroke-dashoffset'));
+    document.querySelector('.route').style.getPropertyValue('--lit') || '0');
 
   const dim = [...before.q, ...before.a].filter((v) => v < 0.99).length;
   const okMq = before.mq === 'none';
-  const okLit = Number(before.off) === 0 && Number(after) === 0;
+  /* При «уменьшить движение» фронт стоит за концом пути: маршрут
+     подсвечен целиком и не двигается ни на пиксель прокрутки. */
+  const okLit = Number(before.off) === 1 && Number(after) === 1;
+  const okSpark = before.spark === 'none';
   const okNums = before.nums.length === 5 && before.nums.every((v) => v > 0.99);
   const okAns = dim === 0 && !before.swap && before.q.length === 6 && before.a.length === 6;
-  if (!okMq || !okLit || !okNums || !okAns) failed = true;
+  if (!okMq || !okLit || !okNums || !okAns || !okSpark) failed = true;
   console.log(`  бегущая строка: animation-name=${before.mq} ${okMq ? '— стоит' : '— ИДЁТ'}`);
   console.log(`  маршрут: подсветка ${before.off} → ${after} ${okLit ? '— целиком и не двигается' : '— ЕДЕТ'}`);
+  console.log(`  бегущие огни маршрута: display=${before.spark} ${okSpark ? '— их нет' : '— ЕСТЬ'}`);
   console.log(`  номера шагов: видно ${before.nums.filter((v) => v > 0.99).length} из ${before.nums.length}`);
   console.log(`  вопрос и ответ: видно ${before.q.length + before.a.length - dim} из `
     + `${before.q.length + before.a.length}, подмена ${before.swap ? 'ВКЛЮЧЕНА' : 'выключена'}`);

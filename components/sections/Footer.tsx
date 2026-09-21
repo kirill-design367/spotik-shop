@@ -46,7 +46,6 @@ export default function Footer() {
 
       <div className="footer__body shell">
         <div className="footer__col">
-          <p className="footer__head">Реквизиты</p>
           <dl className="footer__req">
             <dt>Исполнитель</dt>
             <dd>Менаше Лев Наумович</dd>
@@ -58,7 +57,6 @@ export default function Footer() {
         </div>
 
         <div className="footer__col">
-          <p className="footer__head">Связь</p>
           <dl className="footer__req">
             <dt>Телефон</dt>
             <dd>
@@ -73,9 +71,11 @@ export default function Footer() {
           </dl>
         </div>
 
-        {/* Подписи «Оговорка» здесь нет: текст говорит сам за себя, а слово
-            над ним читалось как ещё один раздел реквизитов. Первая строка
-            встаёт на линию соседних колонок распоркой в CSS. */}
+        {/* ⚠️ ПОДПИСЕЙ У КОЛОНОК БОЛЬШЕ НЕТ ВОВСЕ (двадцать третья
+            итерация): «Реквизиты» и «Связь» сняты арт-директором,
+            содержимое осталось. Ни одна колонка теперь не подписана,
+            и распорка, которая равняла оговорку по соседям, ушла
+            вместе с ними. */}
         <div className="footer__col footer__col--note">
           <p className="footer__req footer__note">
             Spotik Shop — независимый сервис. Мы не связаны со Spotify AB

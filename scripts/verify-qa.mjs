@@ -1,66 +1,56 @@
 /**
- * ВОПРОС И ОТВЕТ: ШТОРКА, И ОТВЕТ НА ЭКРАНЕ ОДИН — СПЛОШНОЙ ПЕРЕБОР.
+ * ВОПРОС И ОТВЕТ: ЖЁСТКОЕ ПЕРЕКЛЮЧЕНИЕ — СПЛОШНОЙ ПЕРЕБОР.
  *
- * Постановка двадцать второй итерации ставит три условия сразу, и все
- * три проверяются здесь перебором ВСЕЙ прокрутки блока:
+ * Постановка двадцать третьей итерации сняла шторку и поставила
+ * четыре условия. Все четыре проверяются здесь перебором ВСЕЙ
+ * прокрутки блока, а не выбранными положениями:
  *
- *   1. НИ ОДНОГО ПОЛОЖЕНИЯ, ГДЕ ВИДНО ДВА ОТВЕТА. Этот дефект и был
- *      в прошлой сборке: зона веса расширилась до 0.92 шага, два
- *      соседних вопроса стали активными разом, а прежний сторож
- *      смотрел каждый вопрос ПООДИНОЧКЕ и потому ничего не заметил.
- *   2. НИ ОДНОГО НАЛОЖЕНИЯ вопроса с ответом внутри своей ячейки.
- *   3. НИ ОДНОГО ПУСТОГО положения.
+ *   1. НИ ОДНОГО ПОЛОЖЕНИЯ, ГДЕ ВИДНО ДВА ОТВЕТА;
+ *   2. НИ ОДНОГО НАЛОЖЕНИЯ и НИ ОДНОГО ПУСТОГО положения: в каждой
+ *      ячейке в каждый момент видна ровно одна половина;
+ *   3. ПЕРЕХОД ЗАНИМАЕТ ОДИН КАДР. Промежуточных состояний не бывает
+ *      ни в пространстве прокрутки (мелкий проход шагом 1 px), ни
+ *      во времени (прыжок через точку переключения и чтение
+ *      на СЛЕДУЮЩЕМ кадре);
+ *   4. НАЗАД РАБОТАЕТ СИММЕТРИЧНО: тот же проход снизу вверх даёт
+ *      те же состояния на тех же положениях.
  *
- * ── ГРАНИЦЫ СРАВНИВАЮТСЯ В ПИКСЕЛЯХ, А НЕ В ПРОЦЕНТАХ ────────────────────
- * ⚠️ И ЭТО НЕ ПРИДИРКА. Проценты в `clip-path` считаются от бокса САМОГО
- * элемента. Пока обрезались сами тексты — разной высоты, — одна и та же
- * ордината попадала у них в разные пиксели: в процентах всё сходилось
- * до нуля, а на экране половины расходились на десятки пикселей. Сторож,
- * читавший проценты, молчал ровно по той же причине, по которой молчал
- * цветовой сторож шапки (Р-47): он пользовался моделью предмета.
- *
- * Теперь берётся ВЫЧИСЛЕННЫЙ `clip-path` обеих половин и ФАКТИЧЕСКИЕ
- * прямоугольники, и границы переводятся в пиксели ячейки:
- *
- *   наложение — граница ответа ниже границы вопроса (области налезли);
- *   пустота   — выше (между областями щель);
- *   два ответа — у двух разных вопросов открыто больше 2 % ячейки.
+ * ⚠️ ПРОВЕРЯТЬ ВОПРОСЫ ПООДИНОЧКЕ НЕЛЬЗЯ. Дефект «два ответа разом»
+ * у каждого вопроса по отдельности выглядит правильным — сторож
+ * двадцать первой итерации ровно на этом и промолчал. Здесь на каждом
+ * положении считаются ВСЕ шесть сразу.
  *
  * ЧИТАТЬ НАДО ЧЕРЕЗ ДВА КАДРА ПОСЛЕ ЗАПИСИ `scrollTop`, а не сразу.
  * На точном указателе позицию ведёт Lenis: он сверяется с фактическим
  * значением и доводит её сам, поэтому мгновенное чтение возвращает
  * то предыдущее положение, то промежуточное (Р-61).
  *
- * И ОТДЕЛЬНОЙ СТРОКОЙ — РАСТР. Вся геометрия выше сойдётся и на сборке,
- * где текст не рисуется вовсе: обрезка правильная, а обрезать нечего.
- * Поэтому на двух положениях — «шторка закрыта» и «шторка открыта» —
+ * И ОТДЕЛЬНОЙ СТРОКОЙ — РАСТР. Вся арифметика выше сойдётся и на сборке,
+ * где текст не рисуется вовсе: состояния правильные, а показывать
+ * нечего. Поэтому на двух положениях — «виден вопрос» и «виден ответ» —
  * считаются живые пиксели в ячейке.
- *
- * ХОД ШТОРКИ меряется ОТДЕЛЬНЫМ мелким проходом (шаг 2 px) по одному
- * переходу: на общем шаге 8 px он квантуется на четверть своей длины.
  */
 import { PNG } from 'pngjs';
 import { launch } from './browser.mjs';
 import { serveOut, PREFIX } from './serve-out.mjs';
 
 const PORT = 4262;
-/** Выше этого доля открытой шторки считается видимой. */
-const SEEN = 0.02;
-/** Допуск на совпадение границ, пиксели. */
-const EPS = 0.6;
+/**
+ * Ниже этого половина считается СКРЫТОЙ.
+ *
+ * ⚠️ «ВИДИМА» — ЭТО НЕ «РОВНО ЕДИНИЦА». Неактивный вопрос приглушён,
+ * и его видимое состояние — доля, а не единица. Поэтому сторож НЕ
+ * ЗНАЕТ эту долю заранее: он собирает все значения за проход и
+ * требует, чтобы их оказалось ровно ДВА на половину. Промежуточное
+ * значение — это третье значение, и оно ловится само.
+ */
+const OFF = 0.02;
+/** Допуск на совпадение с одним из двух законных значений. */
+const EPS = 0.005;
 
 const server = await serveOut(PORT);
 const browser = await launch();
 let failed = false;
-
-/** «polygon(0% -2%, 100% -2%, 100% 34.5%, 0% 20.5%)» → [-2,-2,34.5,20.5] */
-function ys(clip) {
-  const m = /polygon\(([^)]*)\)/.exec(clip || '');
-  if (!m) return null;
-  const pts = m[1].split(',').map((p) => p.trim().split(/\s+/));
-  if (pts.length !== 4) return null;
-  return pts.map((p) => parseFloat(p[1]));
-}
 
 console.log('ВОПРОС И ОТВЕТ: сплошной перебор прокрутки блока.\n');
 
@@ -87,108 +77,119 @@ for (const [w, h, mob] of [
     return { from: r.top - base - sc.clientHeight, to: r.bottom - base, step: 8 };
   });
 
-  /* Отдаём сырьё: обрезку каждой половины и её фактический бокс.
-     Перевод в пиксели ячейки делается здесь же, чтобы не тащить
-     наружу четыре числа на половину. */
-  const look = (top) =>
-    page.evaluate(async (t) => {
-      const sc = document.getElementById('scroller');
-      sc.scrollTop = Math.max(0, t);
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      return [...document.querySelectorAll('.qa__item')].map((it) => {
-        const cell = it.querySelector('.qa__swap').getBoundingClientRect();
-        const one = (sel) => {
-          const el = it.querySelector(sel);
-          const r = el.getBoundingClientRect();
-          return { clip: getComputedStyle(el).clipPath, top: r.top - cell.top, h: r.height };
-        };
-        return {
-          cell: cell.height,
-          q: one('.qa__half--q'),
-          a: one('.qa__half--a'),
-          oq: +getComputedStyle(it.querySelector('.qa__q')).opacity,
-        };
-      });
-    }, top);
-
-  /** Ординаты обрезки в пикселях ячейки. */
-  const px = (half) => {
-    const v = ys(half.clip);
-    return v && v.map((p) => half.top + (p / 100) * half.h);
-  };
+  /* Отдаём фактическую прозрачность обеих половин: она и есть
+     состояние, которое видит человек. */
+  const look = (top, frames = 2) =>
+    page.evaluate(
+      async ([t, f]) => {
+        const sc = document.getElementById('scroller');
+        sc.scrollTop = Math.max(0, t);
+        for (let i = 0; i < f; i += 1) await new Promise((r) => requestAnimationFrame(r));
+        return [...document.querySelectorAll('.qa__item')].map((it) => [
+          +getComputedStyle(it.querySelector('.qa__half--a')).opacity,
+          +getComputedStyle(it.querySelector('.qa__half--q')).opacity,
+        ]);
+      },
+      [top, frames],
+    );
 
   let spots = 0;
   let twoAnswers = 0;
-  let overlap = 0;
-  let gap = 0;
-  let worstEdge = 0;
-  let maxOpen = 0;
-  let minOpen = 1;
-  let moving = 0;
-  const wasOpen = [];
-  const marks = []; // где у второго вопроса случился переход — для мелкого прохода
+  let both = 0;
+  let neither = 0;
+  const aVals = new Set();
+  const qVals = new Set();
+  const seen = [[], []]; // сколько раз каждый вопрос побывал открытым и закрытым
+  const trace = new Map();
+  let switchAt = null;
+  let prevOpen = null;
 
   for (let y = range.from; y <= range.to; y += range.step) {
     const row = await look(y);
     spots += 1;
     let open = 0;
+    let cur = -1;
     for (let i = 0; i < row.length; i += 1) {
-      const ay = px(row[i].a);
-      const qy = px(row[i].q);
-      if (!ay || !qy) {
-        overlap += 1; // обрезки нет вовсе — считаем это провалом геометрии
-        continue;
+      const [a, q] = row[i];
+      aVals.add(a.toFixed(3));
+      qVals.add(q.toFixed(3));
+      const aOn = a > OFF;
+      const qOn = q > OFF;
+      if (aOn && qOn) both += 1;
+      if (!aOn && !qOn) neither += 1;
+      if (aOn) {
+        open += 1;
+        cur = i;
+        seen[0][i] = (seen[0][i] || 0) + 1;
+      } else {
+        seen[1][i] = (seen[1][i] || 0) + 1;
       }
-      /* Граница ответа — его нижние две ординаты, граница вопроса —
-         его верхние две. Совпадают — области ровно дополняют друг друга. */
-      const d1 = qy[0] - ay[3];
-      const d2 = qy[1] - ay[2];
-      worstEdge = Math.max(worstEdge, Math.abs(d1), Math.abs(d2));
-      if (d1 < -EPS || d2 < -EPS) overlap += 1;
-      else if (d1 > EPS || d2 > EPS) gap += 1;
-
-      const frac = Math.max(0, Math.min(1, (ay[3] + ay[2]) / 2 / row[i].cell));
-      maxOpen = Math.max(maxOpen, frac);
-      minOpen = Math.min(minOpen, frac);
-      if (frac > SEEN) open += 1;
-      if (frac > SEEN && frac < 0.98) moving += 1;
-      const isOpen = frac > 0.5;
-      if (i === 1 && wasOpen[i] !== undefined && wasOpen[i] !== isOpen) marks.push(y);
-      wasOpen[i] = isOpen;
     }
     if (open > 1) twoAnswers += 1;
+    trace.set(y, cur);
+    if (prevOpen !== null && prevOpen !== cur && switchAt === null && cur >= 0 && prevOpen >= 0) {
+      switchAt = y;
+    }
+    prevOpen = cur;
   }
 
-  /* ── ход шторки: мелкий проход по одному переходу ─────────────────── */
-  let travel = 0;
-  if (marks.length) {
+  /* Законных значений ровно два на половину — «видно» и «скрыто».
+     Всё остальное и есть промежуточное состояние. */
+  const levels = (set) => [...set].map(Number).sort((x, y2) => x - y2);
+  const aLv = levels(aVals);
+  const qLv = levels(qVals);
+  const outside = (v, lv) => Math.abs(v - lv[0]) > EPS && Math.abs(v - lv[lv.length - 1]) > EPS;
+  const middle = aLv.length - 2 + (qLv.length - 2);
+
+  /* ── обратный проход: назад обязано работать симметрично ─────────── */
+  let asym = 0;
+  for (let y = range.to; y >= range.from; y -= range.step) {
+    const key = range.from + Math.round((y - range.from) / range.step) * range.step;
+    if (!trace.has(key)) continue;
+    const row = await look(key);
+    let cur = -1;
+    for (let i = 0; i < row.length; i += 1) if (row[i][0] > OFF) cur = i;
+    if (cur !== trace.get(key)) asym += 1;
+  }
+
+  /* ── переход в ПРОСТРАНСТВЕ: мелкий проход шагом 1 px ────────────── */
+  let band = -1;
+  if (switchAt !== null) {
     let first = null;
     let last = null;
-    for (let y = marks[0] - 120; y <= marks[0] + 120; y += 2) {
+    for (let y = switchAt - range.step - 2; y <= switchAt + 2; y += 1) {
       const row = await look(y);
-      const ay = px(row[1].a);
-      if (!ay) continue;
-      const frac = Math.max(0, Math.min(1, (ay[3] + ay[2]) / 2 / row[1].cell));
-      if (frac > SEEN && frac < 0.98) {
+      const mid = row.some(([a, q]) => outside(a, aLv) || outside(q, qLv));
+      if (mid) {
         if (first === null) first = y;
         last = y;
       }
     }
-    if (first !== null) travel = last - first + 2;
+    band = first === null ? 0 : last - first + 1;
   }
 
-  /* ── растр: обрезка может быть идеальной, а рисовать нечего ───────── */
-  const ink = async (openWanted) => {
+  /* ── переход ВО ВРЕМЕНИ: прыжок через точку и чтение на след. кадре ─ */
+  let settle = -1;
+  if (switchAt !== null) {
+    await look(switchAt - range.step - 4);
+    const row = await look(switchAt + 4, 1);
+    settle = row.some(([a, q]) => outside(a, aLv) || outside(q, qLv)) ? 1 : 0;
+  }
+
+  /* ── растр: состояния могут быть верными, а рисовать нечего ──────── */
+  const ink = async (wantOpen) => {
     for (let y = range.from; y <= range.to; y += 12) {
       const row = await look(y);
-      const a = px(row[1].a);
-      if (!a) continue;
-      const frac = Math.max(0, Math.min(1, (a[3] + a[2]) / 2 / row[1].cell));
-      if (openWanted ? frac < 0.99 : frac > 0.01) continue;
+      const a = row[1][0];
+      if (wantOpen ? a < 1 - EPS : a > OFF) continue;
       const box = await page.evaluate(() => {
         const r = document.querySelectorAll('.qa__item')[1].getBoundingClientRect();
-        return { x: Math.max(0, Math.round(r.x)), y: Math.max(0, Math.round(r.y)),
-          width: Math.round(r.width), height: Math.round(r.height) };
+        return {
+          x: Math.max(0, Math.round(r.x)),
+          y: Math.max(0, Math.round(r.y)),
+          width: Math.round(r.width),
+          height: Math.round(r.height),
+        };
       });
       if (box.y < 0 || box.height < 8 || box.y + box.height > h) continue;
       const png = PNG.sync.read(await page.screenshot({ clip: box }));
@@ -201,27 +202,29 @@ for (const [w, h, mob] of [
   const inkOpen = await ink(true);
   const inkShut = await ink(false);
 
+  const stuck = seen[0].filter((v) => v > 0).length !== 6 || seen[1].filter((v) => v > 0).length !== 6;
   const okOne = twoAnswers === 0;
-  const okFit = overlap === 0 && gap === 0;
-  const okEnds = maxOpen > 0.99 && minOpen < 0.01;
+  const okFit = both === 0 && neither === 0;
+  const okHard = middle === 0 && band === 0 && settle === 0 && aLv[0] <= OFF && qLv[0] <= OFF;
+  const okBack = asym === 0;
   const okInk = inkOpen > 200 && inkShut > 200;
-  const okMove = moving > 0 && travel >= 40;
-  if (!okOne || !okFit || !okEnds || !okInk || !okMove) failed = true;
+  if (!okOne || !okFit || !okHard || !okBack || !okInk || stuck) failed = true;
 
   console.log(
     `  ${String(w).padStart(4)}×${h}  положений ${String(spots).padStart(3)}  ` +
-      `два ответа ${twoAnswers}  наложений ${overlap}  щелей ${gap}  ` +
-      `наибольший разрыв границ ${worstEdge.toFixed(2)} px  ` +
-      `шторка доходит до ${minOpen.toFixed(2)}…${maxOpen.toFixed(2)}` +
+      `два ответа ${twoAnswers}  наложений ${both}  пустых ${neither}  ` +
+      `уровней прозрачности: ответ ${aLv.length}, вопрос ${qLv.length}` +
       (okOne ? '' : '   !!! ДВА ОТВЕТА РАЗОМ') +
-      (okFit ? '' : '   !!! ГРАНИЦЫ РАЗОШЛИСЬ') +
-      (okEnds ? '' : '   !!! ШТОРКА НЕ ДОХОДИТ ДО КОНЦА'),
+      (okFit ? '' : '   !!! НАЛОЖЕНИЕ ИЛИ ПУСТОТА') +
+      (stuck ? '   !!! ВОПРОС ЗАСТРЯЛ В ОДНОМ СОСТОЯНИИ' : ''),
   );
   console.log(
-    `            ход шторки ${travel} px прокрутки на переход; ` +
-      `живых пикселей в ячейке: шторка открыта ${inkOpen}, закрыта ${inkShut}` +
-      (okInk ? '' : '   !!! В ЯЧЕЙКЕ НИЧЕГО НЕ НАРИСОВАНО') +
-      (okMove ? '' : '   !!! ШТОРКА НЕ ЕДЕТ'),
+    `            переход: ${band} px прокрутки и ${settle ? 'НЕ ' : ''}укладывается в один кадр; ` +
+      `обратный проход расходится в ${asym} положениях; ` +
+      `живых пикселей: ответ ${inkOpen}, вопрос ${inkShut}` +
+      (okHard ? '' : '   !!! ПЕРЕХОД НЕ МГНОВЕННЫЙ') +
+      (okBack ? '' : '   !!! НАЗАД РАБОТАЕТ ИНАЧЕ') +
+      (okInk ? '' : '   !!! В ЯЧЕЙКЕ НИЧЕГО НЕ НАРИСОВАНО'),
   );
   await page.close();
 }
@@ -230,7 +233,7 @@ await browser.close();
 server.close();
 console.log(
   failed
-    ? '\nПРОВАЛ: шторка ведёт себя не так, как задумано'
-    : '\nНа всей прокрутке виден ровно один ответ, и границы половин совпадают',
+    ? '\nПРОВАЛ: переключение вопроса на ответ ведёт себя не так, как задумано'
+    : '\nНа всей прокрутке виден ровно один ответ, и смена занимает один кадр',
 );
 process.exit(failed ? 1 : 0);
