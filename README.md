@@ -16,22 +16,34 @@ npm run build        # статический экспорт в out/
 
 ## Публикация
 
-GitHub Pages через Actions. Чтобы она заработала, в настройках
-репозитория нужно один раз включить:
+Свой сервер, **https://spotik.shop**. Страниц GitHub больше нет:
+сайт жил там подпапкой `/spotik-shop/`, отсюда были и `basePath`,
+и вся возня с префиксом. Теперь он в корне домена.
 
-1. **Settings → Actions → General → Allow all actions and reusable workflows**
-2. **Settings → Pages → Source → GitHub Actions**
+Три workflow, и порядок между ними есть:
 
-После этого `.github/workflows/deploy.yml` запускается на каждый push
-в рабочую ветку. Адрес выдачи: `https://<owner>.github.io/spotik-shop/`.
+| файл | когда | что делает |
+|---|---|---|
+| `server-probe.yml` | руками | ничего не меняет: заходит по SSH и печатает, что на сервере есть |
+| `server-setup.yml` | руками | nginx, файрвол, автообновления, сертификат. Идемпотентный: гонять можно сколько угодно |
+| `deploy.yml` | на каждый push | сборка, все сторожа, выкладка в новую папку, переключение, проверка живого сайта с раннера |
+| `server-rollback.yml` | руками | вернуть симлинк на прошлую выкладку |
+
+Первый раз: `server-setup.yml`, потом push. Если сертификат
+не выпустился (DNS ещё не разошёлся) — перезапустить `server-setup.yml`
+позже, сайт всё это время живёт по http.
+
+Секреты репозитория: `SSH_HOST`, `SSH_USER`, `SSH_KEY`.
 
 ## Проверки
 
 ```bash
-node scripts/verify-export.mjs    выдача по боевому пути в настоящем браузере
+node scripts/verify-export.mjs    выдача в настоящем браузере
 node scripts/measure-fps.mjs      фактический fps на трёх размерах
 node scripts/pagespeed.mjs        Lighthouse по собранной выдаче
-node scripts/verify-strokes.mjs   сверка приёма с замерами референса
-node scripts/check-bundle.mjs     three.js не попал в первый экран
+node scripts/check-bundle.mjs     ни three.js, ни огибающей звука в сборке
 npm run audit:fonts               cmap и fvar напрямую из бинарников
 ```
+
+Полный список сторожей — в [CLAUDE.md](./CLAUDE.md); все они стоят
+в `deploy.yml` и обязаны пройти до того, как что-то поедет на сервер.

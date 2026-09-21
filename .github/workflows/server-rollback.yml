@@ -1,0 +1,90 @@
+# ОТКАТ НА ПРОШЛУЮ ВЫКЛАДКУ.
+#
+# Выкладка кладёт каждую сборку в свою папку и только потом
+# переключает симлинк, поэтому откат — это переключение симлинка
+# обратно, и стоит он миллисекунды. Отдельным workflow, а не строкой
+# в инструкции: откатываются в ту минуту, когда на сайте что-то
+# сломалось, и вспоминать в эту минуту путь к каталогу — плохая идея.
+name: Откат выкладки
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Имя папки в /srv/spotik/releases; пусто — предыдущая'
+        required: false
+        default: ''
+
+concurrency:
+  group: server
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Настроить ssh
+        env:
+          HOST: ${{ secrets.SSH_HOST }}
+          USER_NAME: ${{ secrets.SSH_USER }}
+          KEY: ${{ secrets.SSH_KEY }}
+        run: |
+          for n in HOST USER_NAME KEY; do
+            [ -n "${!n}" ] || { echo "::error::не задан секрет $n"; exit 1; }
+          done
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          {
+            echo "Host spotik"
+            echo "  HostName $HOST"
+            echo "  User $USER_NAME"
+            echo "  IdentityFile ~/.ssh/id_deploy"
+            echo "  IdentitiesOnly yes"
+            echo "  StrictHostKeyChecking accept-new"
+            echo "  BatchMode yes"
+            echo "  ConnectTimeout 20"
+          } > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+          ssh-keyscan -T 10 "$HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Переключить симлинк
+        env:
+          WANT: ${{ inputs.release }}
+        run: |
+          ssh spotik "WANT='$WANT' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd /srv/spotik/releases
+          now="$(basename "$(readlink -f /srv/spotik/current)")"
+          echo "сейчас: $now"
+          echo "есть:"
+          ls -1dt */ | sed 's#/$##; s/^/  /'
+
+          if [ -n "${WANT:-}" ]; then
+            target="$WANT"
+          else
+            # «Предыдущая» — самая свежая по времени, кроме текущей.
+            # По времени, а не по имени: номер прогона растёт, но
+            # откат сам по себе порядок папок не меняет, и после
+            # второго отката имя перестало бы что-либо значить.
+            target="$(ls -1dt */ | sed 's#/$##' | grep -vx "$now" | grep -vx placeholder | head -1 || true)"
+          fi
+          [ -n "$target" ] || { echo "::error::откатываться некуда: другой выкладки на сервере нет"; exit 1; }
+          [ -d "$target" ]  || { echo "::error::папки $target нет"; exit 1; }
+          [ -f "$target/index.html" ] || { echo "::error::в $target нет index.html — это не выкладка"; exit 1; }
+
+          ln -sfn "/srv/spotik/releases/$target" /srv/spotik/current.new
+          mv -Tf /srv/spotik/current.new /srv/spotik/current
+          echo "стало:  $(readlink -f /srv/spotik/current)"
+          echo "сборка: $(cat /srv/spotik/current/_build.txt 2>/dev/null || echo 'метки нет')"
+          REMOTE
+
+      - name: Проверить живой сайт
+        run: |
+          if ssh spotik 'test -d /etc/letsencrypt/live/spotik.shop'; then BASE=https://spotik.shop; else BASE=http://spotik.shop; fi
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$BASE/" || echo 000)
+          echo "$BASE/ -> $code"
+          echo "на сайте сборка: $(curl -fsS --max-time 20 "$BASE/_build.txt" 2>/dev/null | tr -d '\r\n' || echo 'метки нет')"
+          [ "$code" = 200 ] || { echo "::error::после отката сайт отдаёт $code"; exit 1; }
+          echo "::notice::откат выполнен"

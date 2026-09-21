@@ -1,4 +1,15 @@
-name: Публикация на GitHub Pages
+# ВЫКЛАДКА НА СВОЙ СЕРВЕР, spotik.shop.
+#
+# ⚠️ ПУБЛИКАЦИИ НА GITHUB PAGES БОЛЬШЕ НЕТ. Сайт жил там подпапкой
+# `/spotik-shop/`, отсюда были и `basePath`, и вся возня с префиксом.
+# Двух мест публикации быть не должно: страницы отдавали бы старую
+# версию по старому адресу, и он бы попадал в выдачу поисковиков.
+#
+# Порядок: собрать → прогнать всех сторожей → выложить в НОВУЮ папку →
+# переключить симлинк → проверить живой сайт С РАННЕРА. Из среды
+# разработки сервер не виден вовсе, поэтому единственная настоящая
+# проверка боевого адреса — эта.
+name: Выкладка на spotik.shop
 
 on:
   push:
@@ -9,27 +20,27 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
-  # false, а не true: отменять уже идущую публикацию значит с заметной
-  # вероятностью оставить Pages с наполовину выложенной выдачей
+  # Группа общая с server-setup.yml: настройка и выкладка делят один
+  # сервер, и одновременно им там делать нечего.
+  group: server
+  # false, а не true: отменить выкладку на полпути — значит с заметной
+  # вероятностью оставить на сервере полуприехавшую папку. Она, правда,
+  # ещё не подключена симлинком, но мусор копится.
   cancel-in-progress: false
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
     # ⚠️ ПОТОЛОК ВРЕМЕНИ. Без него job висит до шести часов, а логи
     # GitHub отдаёт только после завершения — то есть диагностики
-    # не будет вовсе. Тридцать минут при обычных 25 хватает с запасом.
+    # не будет вовсе. Тридцать минут при обычных 15 хватает с запасом.
     #
     # Поставлен он после ЛОЖНОЙ ТРЕВОГИ, и её стоит записать: два
     # прогона были отменены как «зависшие», а на деле между опросами
     # проходили СЕКУНДЫ — фоновый `sleep` не ждёт. Прошедшее время
-    # меряют по часам, а не по числу опросов. Потолок при этом
-    # остаётся полезным сам по себе.
+    # меряют по часам, а не по числу опросов.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -47,28 +58,26 @@ jobs:
         env:
           NODE_ENV: production
 
-      # Без этого файла Pages отдаёт выдачу через Jekyll и выбрасывает
-      # всё, что начинается с подчёркивания, — то есть весь каталог _next
-      # с бандлами и шрифтами.
-      - name: Положить .nojekyll
-        run: touch out/.nojekyll
-
-      - name: Проверить, что ассеты на месте
+      - name: Проверить, что выдача собрана ПОД КОРЕНЬ
         run: |
           test -f out/index.html
-          test -f out/.nojekyll
+          test -f out/404.html
           test -f out/fonts/inter-cyrillic.woff2
-          test -f out/fonts/index.html || test -f out/fonts.html
           test -d out/_next/static
-          grep -q '/spotik-shop/_next/static' out/index.html
-          grep -q "/spotik-shop/fonts/inter-cyrillic.woff2" out/index.html
-          echo "выдача собрана, basePath проставлен"
+          # Класс поломки поменял знак вместе с переездом: раньше ассет
+          # мог уйти МИМО префикса, теперь — получить лишний. Ловим
+          # обе стороны.
+          grep -q '"/_next/static' out/index.html
+          grep -q "url('/fonts/inter-cyrillic.woff2')" out/index.html
+          if grep -q '/spotik-shop/' out/index.html; then
+            echo "::error::в выдаче остался префикс /spotik-shop/ — сайт живёт в корне домена"; exit 1
+          fi
+          echo "выдача собрана под корень"
 
-      # Открывает собранную выдачу по боевому пути /spotik-shop/ в настоящем
-      # браузере: 404 на ассетах, ошибки JS, незагруженные шрифты и
-      # горизонтальный скролл ловятся только так. Проверка с корня такую
-      # поломку не воспроизводит.
-      - name: Открыть выдачу в браузере по боевому пути
+      # Открывает собранную выдачу в настоящем браузере: 404 на ассетах,
+      # ошибки JS, незагруженные шрифты и горизонтальный скролл ловятся
+      # только так.
+      - name: Открыть выдачу в браузере
         run: |
           npx playwright install --with-deps chromium
           node scripts/verify-export.mjs
@@ -93,25 +102,16 @@ jobs:
       # на быстром движении, а шапка — быть светлой над тёмным и тёмной
       # над зелёным, с кромкой ровно там, где кромка зелёного.
       #
-      # Инверсия осталась только у шапки: в середине страницы её нет
-      # с девятнадцатой итерации (бегущая строка ушла на тёмный фон,
-      # белая панель снята). verify-invert удалён вместе с приёмом.
-      #
       # verify-qa и verify-route — сплошной перебор для двух приёмов
-      # середины. Первый ловит и наложение половин, и ЩЕЛЬ между ними,
-      # и положение, где открыто больше одного ответа; сравнивает он
-      # границы В ПИКСЕЛЯХ, а не в процентах — в процентах дефект
-      # двадцать второй итерации сходился до нуля (Р-67). Второй ловит
-      # подсветку маршрута, идущую не туда, и заодно проверяет, что
-      # линия выходит за оба края экрана. Оба обязаны падать и когда
-      # не рисуется НИЧЕГО: выборочные положения и «зелёные замеры
-      # на пустом месте» стоили трёх итераций (Р-47).
+      # середины. Первый судит бегущую строку ответа: одна строка без
+      # переносов, петля без шва по РАСТРУ, одновременно бежит ровно
+      # одна. Второй ловит подсветку маршрута, идущую не туда, проверяет
+      # все пять цифр растром и что линия доходит до пятой. Оба обязаны
+      # падать и когда не рисуется НИЧЕГО: выборочные положения
+      # и «зелёные замеры на пустом месте» стоили трёх итераций (Р-47).
       #
-      # verify-menu — временны́е условия постановки, которые на глаз
-      # не проверяются вовсе: длительность поворота полос, stagger
-      # пунктов и то, что накладка гаснет ПОЗЖЕ, чем крестик стал
-      # бургером. И отдельной строкой — что скругление полос совпадает
-      # с числом, по которому собирается фигура выворотки шапки.
+      # verify-cards — кромка карты сглажена, свет не задевает соседа,
+      # доводка пружинная, дыхание живое.
       - name: Проверить прокрутку, шапку, движение и фокус
         run: |
           node scripts/verify-smooth.mjs
@@ -129,16 +129,148 @@ jobs:
       - name: Проверить критический путь (ни three.js, ни огибающей звука)
         run: node scripts/check-bundle.mjs
 
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: out
+      # ⚠️ МЕТКА КЛАДЁТСЯ ПОСЛЕ СТОРОЖЕЙ. Она нужна проверке в самом
+      # конце: без неё «сайт отвечает 200» ничего не доказывает —
+      # двести отдала бы и прошлая версия, если переключение не
+      # состоялось. Сторожа при этом лишнего файла в выдаче не видят.
+      - name: Положить метку сборки
+        run: |
+          printf '%s\n' "$GITHUB_SHA" > out/_build.txt
+          echo "метка: $GITHUB_SHA"
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      # ⚠️ ХОСТ, ПОЛЬЗОВАТЕЛЬ И КЛЮЧ УЕЗЖАЮТ В ~/.ssh/config, И ДАЛЬШЕ
+      # ВЕЗДЕ ПРОСТО `ssh spotik`. Общий набор опций в переменной
+      # окружения не годится вовсе: `~` в значении переменной
+      # НЕ раскрывается, и `-i ~/.ssh/…` ищет файл с именем «~».
+      - name: Настроить ssh
+        env:
+          HOST: ${{ secrets.SSH_HOST }}
+          USER_NAME: ${{ secrets.SSH_USER }}
+          KEY: ${{ secrets.SSH_KEY }}
+        run: |
+          for n in HOST USER_NAME KEY; do
+            [ -n "${!n}" ] || { echo "::error::не задан секрет $n"; exit 1; }
+          done
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          {
+            echo "Host spotik"
+            echo "  HostName $HOST"
+            echo "  User $USER_NAME"
+            echo "  IdentityFile ~/.ssh/id_deploy"
+            echo "  IdentitiesOnly yes"
+            echo "  StrictHostKeyChecking accept-new"
+            echo "  BatchMode yes"
+            echo "  ConnectTimeout 20"
+            echo "  ServerAliveInterval 20"
+          } > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+          ssh-keyscan -T 10 "$HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh spotik 'test -d /srv/spotik/releases' \
+            || { echo "::error::на сервере нет /srv/spotik/releases — сначала прогоните «Первичная настройка сервера»"; exit 1; }
+
+      # Выкладка БЕЗ ПРОСТОЯ: папка приезжает целиком и только потом
+      # подключается. Номер прогона в имени, а не только хэш: повторный
+      # прогон того же коммита обязан поехать в СВОЮ папку, иначе
+      # rsync правил бы каталог, на который смотрит живой сайт.
+      - name: Выложить в новую папку
+        id: put
+        run: |
+          REL="$(echo "$GITHUB_SHA" | cut -c1-12)-${GITHUB_RUN_NUMBER}"
+          echo "rel=$REL" >> "$GITHUB_OUTPUT"
+          ssh spotik "mkdir -p /srv/spotik/releases/$REL"
+          rsync -a --delete --chmod=D755,F644 -e ssh out/ "spotik:/srv/spotik/releases/$REL/"
+          ssh spotik "test -f /srv/spotik/releases/$REL/index.html && test -d /srv/spotik/releases/$REL/_next/static" \
+            || { echo "::error::папка приехала неполной"; exit 1; }
+          echo "приехало в /srv/spotik/releases/$REL"
+
+      - name: Переключить и прибрать старые
+        env:
+          REL: ${{ steps.put.outputs.rel }}
+        run: |
+          ssh spotik "REL='$REL' bash -s" <<'REMOTE'
+          set -euo pipefail
+          prev="$(readlink -f /srv/spotik/current 2>/dev/null || echo -)"
+          echo "было:  $prev"
+          # ⚠️ ПЕРЕКЛЮЧЕНИЕ АТОМАРНОЕ. `ln -sfn` на существующий
+          # симлинк — это unlink + symlink, то есть кадр, в котором
+          # `current` не существует и nginx отдаёт 404. `mv -T` поверх
+          # готового симлинка — один rename(2), и такого кадра нет.
+          ln -sfn "/srv/spotik/releases/$REL" /srv/spotik/current.new
+          mv -Tf /srv/spotik/current.new /srv/spotik/current
+          echo "стало: $(readlink -f /srv/spotik/current)"
+
+          # Прошлые версии храним, чтобы было куда откатиться:
+          # текущая плюс четыре предыдущие. Заглушку первичной
+          # настройки не трогаем — она весит килобайт и нужна,
+          # если когда-нибудь каталог опустеет.
+          cd /srv/spotik/releases
+          keep="$(basename "$(readlink -f /srv/spotik/current)")"
+          ls -1dt */ 2>/dev/null | sed 's#/$##' \
+            | grep -vx "$keep" | grep -vx placeholder \
+            | tail -n +5 | while read -r old; do echo "  убираю $old"; rm -rf -- "$old"; done
+          echo "версии на сервере:"
+          ls -1dt */ | sed 's#/$##; s/^/  /'
+          REMOTE
+
+      - name: Проверить живой сайт с раннера
+        run: |
+          # ⚠️ ПРОВЕРЯЕМ С РАННЕРА И ПО ИМЕНИ. Из среды разработки
+          # сервер не виден, а раннер видит его ровно так же, как
+          # человек в браузере, — вместе с DNS, TLS и редиректами.
+          if ssh spotik 'test -d /etc/letsencrypt/live/spotik.shop'; then
+            BASE=https://spotik.shop; TLS=1
+          else
+            BASE=http://spotik.shop;  TLS=0
+            echo "::warning::сертификата ещё нет — проверяем по http. Прогоните «Первичная настройка сервера», когда разойдётся DNS"
+          fi
+          echo "проверяем $BASE"
+          fail=0
+          chk() { # chk «что» «ожидали» «получили»
+            if [ "$2" = "$3" ]; then echo "  ✓ $1: $3"
+            else echo "  ✗ $1: ждали $2, получили $3"; fail=1; fi
+          }
+
+          code=$(curl -sS -o /tmp/home.html -w '%{http_code}' --max-time 30 "$BASE/" || echo 000)
+          chk "главная отдаёт 200" 200 "$code"
+
+          # Метка доказывает, что живёт ИМЕННО эта сборка: двести
+          # отдала бы и прошлая, не переключись симлинк.
+          got=$(curl -fsS --max-time 20 "$BASE/_build.txt" 2>/dev/null | tr -d '\r\n' || echo нет)
+          chk "на сайте эта сборка" "$GITHUB_SHA" "$got"
+
+          asset=$(grep -o '/_next/static/[A-Za-z0-9._/-]*\.js' /tmp/home.html | head -1)
+          [ -n "$asset" ] || { echo "  ✗ в разметке нет ни одного скрипта из _next/static"; fail=1; }
+          if [ -n "$asset" ]; then
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE$asset" || echo 000)
+            chk "ассет $asset" 200 "$code"
+            cc=$(curl -sSI --max-time 20 "$BASE$asset" | tr -d '\r' | awk -F': ' 'tolower($1)=="cache-control"{print $2}')
+            case "$cc" in *immutable*) echo "  ✓ долгий кэш у ассета: $cc";; *) echo "  ✗ у ассета кэш «$cc», ждали immutable"; fail=1;; esac
+          fi
+
+          cc=$(curl -sSI --max-time 20 "$BASE/" | tr -d '\r' | awk -F': ' 'tolower($1)=="cache-control"{print $2}')
+          case "$cc" in *no-cache*|*no-store*) echo "  ✓ HTML без долгого кэша: $cc";; *) echo "  ✗ у HTML кэш «$cc»"; fail=1;; esac
+
+          plain=$(curl -sS -o /dev/null -w '%{size_download}' --max-time 20 "$BASE/")
+          gz=$(curl -sS -H 'Accept-Encoding: gzip' -o /dev/null -w '%{size_download}' --max-time 20 "$BASE/")
+          if [ "$gz" -lt "$plain" ]; then echo "  ✓ gzip работает: $gz из $plain байт"
+          else echo "  ✗ gzip не сжал: $gz против $plain"; fail=1; fi
+
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/чего-тут-нет/" || echo 000)
+          chk "несуществующий путь отдаёт 404" 404 "$code"
+
+          if [ "$TLS" = 1 ]; then
+            loc=$(curl -sSI --max-time 20 http://spotik.shop/ | tr -d '\r' | awk -F': ' 'tolower($1)=="location"{print $2}')
+            chk "http ведёт на https" "https://spotik.shop/" "$loc"
+            loc=$(curl -sSI --max-time 20 https://www.spotik.shop/ | tr -d '\r' | awk -F': ' 'tolower($1)=="location"{print $2}')
+            chk "www ведёт на без-www" "https://spotik.shop/" "$loc"
+            # Путь в редиректе должен сохраняться, иначе любая ссылка
+            # с www приводила бы на главную вместо своей страницы.
+            loc=$(curl -sSI --max-time 20 https://www.spotik.shop/fonts/ | tr -d '\r' | awk -F': ' 'tolower($1)=="location"{print $2}')
+            chk "редирект сохраняет путь" "https://spotik.shop/fonts/" "$loc"
+            echo "  сертификат: $(curl -sS -o /dev/null -w '%{ssl_verify_result}' --max-time 20 https://spotik.shop/ | sed 's/^0$/проверен/')"
+          fi
+
+          [ "$fail" = 0 ] || { echo "::error::живой сайт не прошёл проверку"; exit 1; }
+          echo "::notice::$BASE выложен и проверен"
