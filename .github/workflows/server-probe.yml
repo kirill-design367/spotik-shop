@@ -1,0 +1,96 @@
+# Пробник доступа на сервер. Ничего не меняет и ничего не ставит —
+# только отвечает на вопрос «заходит ли workflow по SSH и что там
+# сейчас есть». Запускается руками, сколько угодно раз.
+#
+# Из среды разработки сервер недоступен (прокси закрывает всё, кроме
+# github.com), поэтому единственное место, откуда его видно, — раннер
+# GitHub. Отсюда и пробник отдельным файлом: он дешёвый и его не жаль
+# гонять, пока настройка не сойдётся.
+name: Пробник доступа на сервер
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Проверить, что секреты вообще заданы
+        env:
+          HOST: ${{ secrets.SSH_HOST }}
+          USER_NAME: ${{ secrets.SSH_USER }}
+          KEY: ${{ secrets.SSH_KEY }}
+        run: |
+          fail=0
+          for n in HOST USER_NAME KEY; do
+            v="${!n}"
+            if [ -z "$v" ]; then echo "НЕТ СЕКРЕТА: $n"; fail=1
+            else echo "секрет $n задан, длина ${#v}"; fi
+          done
+          [ "$fail" = 0 ] || { echo "::error::не заданы секреты репозитория"; exit 1; }
+
+      - name: Что видит раннер про домен
+        run: |
+          # DNS смотрим ДО подключения: сертификат без него всё равно
+          # не выпустить, и знать это лучше сразу.
+          for h in spotik.shop www.spotik.shop; do
+            a=$(getent ahostsv4 "$h" | awk '{print $1}' | sort -u | paste -sd, -)
+            echo "$h -> ${a:-НЕ РЕЗОЛВИТСЯ}"
+          done
+
+      - name: Положить ключ
+        env:
+          KEY: ${{ secrets.SSH_KEY }}
+          HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          # Тип ключа печатаем без самого ключа: по нему видно, что
+          # в секрет положили закрытую часть, а не открытую.
+          head -1 ~/.ssh/id_deploy | sed 's/[A-Za-z0-9+/=]\{8,\}/…/g'
+          ssh-keygen -y -f ~/.ssh/id_deploy > /dev/null \
+            && echo "ключ читается" \
+            || { echo "::error::SSH_KEY не разбирается как закрытый ключ (парольная фраза? не тот формат?)"; exit 1; }
+          ssh-keyscan -T 10 "$HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          wc -l < ~/.ssh/known_hosts | xargs echo "строк в known_hosts:"
+
+      - name: Зайти и осмотреться
+        env:
+          HOST: ${{ secrets.SSH_HOST }}
+          USER_NAME: ${{ secrets.SSH_USER }}
+        run: |
+          ssh -i ~/.ssh/id_deploy \
+              -o StrictHostKeyChecking=accept-new \
+              -o ConnectTimeout=20 \
+              -o BatchMode=yes \
+              "$USER_NAME@$HOST" 'bash -se' <<'REMOTE'
+          set -u
+          echo "пользователь:      $(id -un) (uid $(id -u))"
+          echo "хост:              $(hostname)"
+          echo "система:           $(. /etc/os-release && echo "$PRETTY_NAME")"
+          echo "ядро:              $(uname -r)"
+          echo "архитектура:       $(uname -m)"
+          echo "время на сервере:  $(date -u)"
+          echo "место на диске:    $(df -h / | awk 'NR==2{print $4" свободно из "$2}')"
+          echo "память:            $(free -m | awk 'NR==2{print $2" МБ"}')"
+          echo
+          echo "-- что уже стоит --"
+          for p in nginx certbot ufw rsync curl; do
+            if command -v "$p" >/dev/null 2>&1; then echo "$p: $($p --version 2>&1 | head -1)"
+            else echo "$p: НЕТ"; fi
+          done
+          echo "unattended-upgrades: $(dpkg -s unattended-upgrades 2>/dev/null | awk -F': ' '/^Status/{print $2}' || echo НЕТ)"
+          echo
+          echo "-- сеть --"
+          echo "внешний IPv4: $(ip -4 -o addr show scope global | awk '{print $4}' | paste -sd, -)"
+          ss -lntp 2>/dev/null | awk 'NR==1 || /:(22|80|443) /' || true
+          echo
+          echo "-- права --"
+          [ "$(id -u)" = 0 ] && echo "это root, sudo не нужен" || (sudo -n true 2>/dev/null && echo "sudo без пароля есть" || echo "ВНИМАНИЕ: не root и sudo без пароля НЕТ")
+          echo
+          echo "-- каталог сайта --"
+          ls -la /srv/spotik 2>/dev/null || echo "/srv/spotik ещё нет — это нормально до первой настройки"
+          REMOTE
+          echo "::notice::SSH работает"
