@@ -124,5 +124,5 @@ for (const [pname, path] of PAGES) {
 
 await browser.close();
 server.close();
-console.log(failed ? `\nПРОВАЛ: ${failed} проверок не прошло` : '\nВсё прошло: выдача под basePath рабочая');
+console.log(failed ? `\nПРОВАЛ: ${failed} проверок не прошло` : '\nВсё прошло: выдача с корня рабочая');
 process.exit(failed ? 1 : 0);
