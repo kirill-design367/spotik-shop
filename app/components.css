@@ -1283,7 +1283,6 @@
   font-variation-settings: 'wght' 700;
 }
 .card__per { display: block; font-size: 12px; }
-.card__soon { font-style: normal; font-size: 13px; color: var(--dim-2); }
 
 @media (min-width: 560px) {
   .card__price, .card__per { font-size: 13px; }

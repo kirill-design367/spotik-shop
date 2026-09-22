@@ -46,7 +46,7 @@ export default function OrderWork({ z, staffId }: { z: ZakazOperatoru; staffId: 
           <dt>Plan</dt>
           <dd>
             {z.plan} · {z.period}
-            {z.bySertificate ? ' · paid by certificate' : ''}
+            {z.bySertificate ? <span className="ad__tag ad__tag--gift">gift</span> : null}
           </dd>
           <dt>Client</dt>
           <dd>{z.clientEmail}</dd>
@@ -57,8 +57,11 @@ export default function OrderWork({ z, staffId }: { z: ZakazOperatoru; staffId: 
           </dd>
           <dt>Money</dt>
           <dd>
-            {(z.totalKop / 100).toFixed(2)} ₽ total · {(z.balanceKop / 100).toFixed(2)} from balance ·{' '}
-            {(z.moneyKop / 100).toFixed(2)} by card
+            {/* ⚠️ У ПОДАРОЧНОГО ЗАКАЗА СУММА НУЛЕВАЯ, И ЭТО НОРМА (Р-93):
+                деньги взяли раньше, когда покупали сертификат. */}
+            {z.bySertificate
+              ? 'nothing is due — a gift certificate was redeemed, the money was taken when it was bought'
+              : `${(z.totalKop / 100).toFixed(2)} ₽ total · ${(z.balanceKop / 100).toFixed(2)} from balance · ${(z.moneyKop / 100).toFixed(2)} by card`}
           </dd>
           {z.cancelReason ? (
             <>

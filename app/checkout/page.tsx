@@ -23,6 +23,10 @@ export const dynamic = 'force-dynamic';
  * Пока человек не вошёл, форма заказа не показывается вовсе:
  * заказ привязан к человеку, и «оформить, а потом привязать»
  * означало бы заводить заказы без владельца.
+ *
+ * ⚠️ СЕРТИФИКАТ — ЭТО ПРИЗНАК `gift=1` НА ТОМ ЖЕ ТАРИФЕ, а не
+ * отдельный тариф (Р-93). Страница та же, цена та же, участников
+ * не спрашиваем: их выберет получатель, когда введёт код.
  */
 export default async function Checkout({
   searchParams,
@@ -43,6 +47,7 @@ export default async function Checkout({
   }
 
   const spisok = await katalog();
+  const podarok = odin('gift') === '1';
   const planId = odin('plan') || 'solo';
   const tarif = naytiTarif(spisok, planId) ?? spisok[0]!;
   const zapros = Number(odin('period'));
@@ -50,11 +55,13 @@ export default async function Checkout({
   const period = sroki.find((s) => s.period === zapros)?.period ?? sroki[sroki.length - 1]?.period ?? 1;
   const kto = await ktoKlient();
 
+  const zagolovok = podarok ? `Сертификат в подарок · ${tarif.name}` : tarif.name;
+
   if (!sroki.length) {
     return (
       <main id="main" className="page" tabIndex={-1}>
         <a className="page__back" href="/">← На главную</a>
-        <h1 className="page__h">{tarif.name}</h1>
+        <h1 className="page__h">{zagolovok}</h1>
         <p className="err">
           На этот тариф цена пока не назначена, оформить его нельзя. Выберите другой на главной.
         </p>
@@ -64,9 +71,9 @@ export default async function Checkout({
 
   const vvod: Vvod = {
     planId: tarif.id,
-    planName: tarif.name,
+    planName: podarok ? `Сертификат · ${tarif.name}` : tarif.name,
     people: tarif.people,
-    sertifikat: tarif.gift,
+    sertifikat: podarok,
     sroki,
     periodPoUmolchaniyu: period,
     rezhimPoUmolchaniyu: odin('mode') === 'renew' ? 'renew' : 'new',
@@ -76,8 +83,12 @@ export default async function Checkout({
   return (
     <main id="main" className="page" tabIndex={-1}>
       <a className="page__back" href="/">← На главную</a>
-      <h1 className="page__h">{tarif.name}</h1>
-      <p className="page__lead">{tarif.note}</p>
+      <h1 className="page__h">{zagolovok}</h1>
+      <p className="page__lead">
+        {podarok
+          ? `Сертификат стоит ровно столько, сколько сам тариф: ${tarif.note.charAt(0).toLowerCase()}${tarif.note.slice(1)}`
+          : tarif.note}
+      </p>
 
       {kto ? (
         <>
@@ -88,8 +99,8 @@ export default async function Checkout({
         </>
       ) : (
         <LoginBox
-          next={`/checkout/?plan=${tarif.id}&period=${period}${odin('mode') ? `&mode=${odin('mode')}` : ''}`}
-          zagolovok="Сначала вход — на эту же почту придёт доступ"
+          next={`/checkout/?plan=${tarif.id}&period=${period}${podarok ? '&gift=1' : odin('mode') ? `&mode=${odin('mode')}` : ''}`}
+          zagolovok={podarok ? 'Сначала вход — на эту же почту придёт код сертификата' : 'Сначала вход — на эту же почту придёт доступ'}
         />
       )}
     </main>

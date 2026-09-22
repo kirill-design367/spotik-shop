@@ -12,7 +12,7 @@
  * в сервер они домножаются на сто ОДИН раз, здесь.
  */
 
-import { PLANS, PERIODS, type Plan, type PeriodKey } from '@/lib/plans';
+import { DARIMYE, PERIODS, type Plan, type PeriodKey } from '@/lib/plans';
 import { tikho, zapros } from './db';
 
 export type Cena = { period: PeriodKey; kop: number };
@@ -35,7 +35,7 @@ export const SROK_SERTIFIKATA_PO_UMOLCHANIYU = 365;
 
 function umolchaniya(): Map<string, Map<number, number>> {
   const m = new Map<string, Map<number, number>>();
-  for (const p of PLANS) {
+  for (const p of DARIMYE) {
     const ceny = new Map<number, number>();
     for (const [k, v] of Object.entries(p.prices)) {
       if (typeof v === 'number') ceny.set(Number(k), Math.round(v * 100));
@@ -50,8 +50,12 @@ function umolchaniya(): Map<string, Map<number, number>> {
  *
  * Цена из базы ПЕРЕКРЫВАЕТ умолчание, а не дополняет его: админ,
  * поставивший 0, и имеет в виду ноль. Срок, которого нет ни там,
- * ни там, тарифом не оформляется вовсе — так сейчас у «На троих»
- * и у сертификата, которому цену ещё не дали.
+ * ни там, тарифом не оформляется вовсе — так сейчас у «На троих».
+ *
+ * ⚠️ КАРТОЧКИ СЕРТИФИКАТА В КАТАЛОГЕ НЕТ ВОВСЕ. Сертификат
+ * не тариф: он дарит один из этих же тарифов и стоит ровно столько же
+ * (Р-93). Заказ на сертификат несёт `plan_id` ПОДАРЕННОГО тарифа
+ * и отличается от обычного только полем `kind`.
  */
 export async function katalog(): Promise<TarifSCenami[]> {
   const ceny = umolchaniya();
@@ -64,13 +68,13 @@ export async function katalog(): Promise<TarifSCenami[]> {
     m.set(Number(r.period), Number(r.price_kop));
     ceny.set(r.plan_id, m);
   }
-  return PLANS.map((p) => svesti(p, ceny.get(p.id)));
+  return DARIMYE.map((p) => svesti(p, ceny.get(p.id)));
 }
 
 /** Тот же каталог, но без единого обращения к базе. */
 export function katalogPoUmolchaniyu(): TarifSCenami[] {
   const ceny = umolchaniya();
-  return PLANS.map((p) => svesti(p, ceny.get(p.id)));
+  return DARIMYE.map((p) => svesti(p, ceny.get(p.id)));
 }
 
 function svesti(p: Plan, ceny: Map<number, number> | undefined): TarifSCenami {
@@ -105,6 +109,17 @@ export function srokKratko(period: number): string {
 
 export function srokPolno(period: number): string {
   return PERIODS.find((p) => p.key === period)?.label ?? `${period} месяцев`;
+}
+
+/**
+ * Что подарено, одной строкой: «На двоих, Полгода».
+ *
+ * ⚠️ ОДНО МЕСТО НА ВЕСЬ САЙТ. Строка встаёт в письмо, в кабинет,
+ * на страницу активации и в админку; собери её в четырёх местах —
+ * и на четвёртой правке они разойдутся.
+ */
+export function podarokSlovami(planName: string, period: number): string {
+  return `${planName}, ${srokPolno(period).toLowerCase()}`;
 }
 
 export type { PeriodKey };

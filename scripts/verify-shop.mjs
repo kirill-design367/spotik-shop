@@ -217,37 +217,42 @@ const telo2 = await klient.textContent('body');
 chk('кабинет показывает выданные доступы', /novyy@pochta\.test/.test(telo2 ?? '') && /spotify-456/.test(telo2 ?? ''));
 chk('заказ в кабинете «Готов»', /Готов/.test(telo2 ?? ''));
 
-console.log('── СЕРТИФИКАТ ──');
+console.log('── СЕРТИФИКАТ НА ЛЮБОЙ ТАРИФ: покупка «на двоих» ──');
+/* ⚠️ ОТДЕЛЬНОЙ ЦЕНЫ У СЕРТИФИКАТА БОЛЬШЕ НЕТ (Р-93): он стоит ровно
+   столько, сколько подаренный тариф на выбранный срок. Значит и строки
+   в админских ценах у него быть не должно — проверяем это прямо. */
 await admin.goto(`http://localhost:${PORT}/admin/settings/`, { waitUntil: 'networkidle' });
-const stroki = await admin.$$('tbody tr');
-for (const tr of stroki) {
-  const t = (await tr.textContent()) ?? '';
-  if (t.includes('Сертификат') && t.includes('Год')) {
-    await tr.$eval('input[name="price"]', (el) => ((el).value = '1990'));
-    await tr.$eval('button', (b) => b.click());
-    await admin.waitForLoadState('networkidle');
-    await admin.waitForTimeout(400);
-    break;
-  }
-}
 const ceny = await admin.textContent('body');
-chk('цена сертификата сохранена', /Price saved/.test(ceny ?? ''));
+chk('цены сертификата в админке нет', !/Сертификат/.test(ceny ?? ''));
 
-await klient.goto(`http://localhost:${PORT}/checkout/?plan=gift&period=12`, { waitUntil: 'networkidle' });
+const CENA_DUO_6 = 289000; // копейки, умолчание duo на полгода
+await klient.goto(`http://localhost:${PORT}/checkout/?plan=duo&period=6&gift=1`, { waitUntil: 'networkidle' });
+const stranicaDara = await klient.textContent('body');
+chk(
+  'оформление сертификата показывает тариф и цену',
+  /Сертификат в подарок/.test(stranicaDara ?? '') && /На двоих/.test(stranicaDara ?? '') && /2\s890/.test(stranicaDara ?? ''),
+);
+
 await klient.check('input[name="consent"]');
 await nazhat(klient, 'button[type="submit"]');
+chk('сертификат ведёт на оплату', klient.url().includes('/pay/test/'), klient.url().replace(`http://localhost:${PORT}`, ''));
 await nazhat(klient, 'button[type="submit"]');
 const telo3 = await klient.textContent('body');
 const kodSert = (telo3 ?? '').match(/SPOTIK-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/)?.[0] ?? '';
 chk('сертификат выдан и код виден в кабинете', Boolean(kodSert), kodSert);
+chk('в кабинете виден подаренный тариф', /На двоих, полгода/.test(telo3 ?? ''));
 
-const p3 = await p2.query('select code_hash, code_enc from certificate');
+const p3 = await p2.query('select code_hash, code_enc, plan_id, period from certificate');
 chk('кода сертификата нет в базе открытым текстом', p3.rows.length === 1 && !p3.rows[0].code_enc.includes(kodSert) && p3.rows[0].code_enc.startsWith('v1.'));
+chk('в коде зашиты тариф и срок', p3.rows[0].plan_id === 'duo' && p3.rows[0].period === 6, `${p3.rows[0].plan_id} / ${p3.rows[0].period} мес`);
+const cenaSert = await p2.query(`select total_kop from shop_order where kind = 'certificate'`);
+chk('сертификат стоит столько же, сколько тариф', Number(cenaSert.rows[0].total_kop) === CENA_DUO_6, `${Number(cenaSert.rows[0].total_kop) / 100} ₽`);
 
+console.log('── АКТИВАЦИЯ ДРУГИМ ЧЕЛОВЕКОМ: ДВА УЧАСТНИКА ──');
 const drug = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 drug.on('pageerror', (e) => oshibkiJS.push(String(e.message)));
 await voyti(drug, DARENYY, '/certificate/');
-await drug.fill('input[name="code"]', kodSert);
+await drug.locator('form').filter({ has: drug.locator('input[name="code"]') }).first().locator('input[name="code"]').fill(kodSert);
 await nazhat(drug, 'button:has-text("Проверить код")');
 // Второй шаг появляется только если код принят; без явного ожидания
 // отказ выглядит как «тайм-аут на галочке», а не как «код не принят».
@@ -257,17 +262,47 @@ try {
   console.log('    [страница сертификата] ' + ((await drug.textContent('body')) ?? '').replace(/\s+/g, ' ').slice(0, 500));
   throw new Error('код сертификата не принят — второй шаг не появился');
 }
+const chtoPodareno = await drug.textContent('body');
+chk('получатель видит, что подарено', /На двоих, полгода/.test(chtoPodareno ?? ''));
+chk('форма просит два аккаунта', /Участник 1/.test(chtoPodareno ?? '') && /Участник 2/.test(chtoPodareno ?? ''));
+
+// Второй участник — на продление: там принимается чужой пароль.
+await drug.click('text=Участник 2 >> xpath=following::button[normalize-space()="Продлить существующий"][1]');
+await drug.fill('input[name="login1"]', 'drug@akkaunt.test');
+await drug.fill('input[name="password1"]', 'drugoy-tayny-parol');
 await drug.check('input[name="consent"]');
 await nazhat(drug, 'button:has-text("Активировать")');
 chk('сертификат активирован, заказ в кабинете', drug.url().includes('/cabinet/'), drug.url().replace(`http://localhost:${PORT}`, ''));
 const teloD = await drug.textContent('body');
 chk('заказ по сертификату сразу у оператора', /Оплачен, ждёт оператора/.test(teloD ?? ''));
 
+const mesta = await p2.query(
+  `select s.idx, s.mode from order_slot s join shop_order o on o.id = s.order_id
+    where o.source = 'certificate' order by s.idx`,
+);
+chk('оформлены оба участника', mesta.rows.length === 2 && mesta.rows[0].mode === 'new' && mesta.rows[1].mode === 'renew', mesta.rows.map((r) => r.mode).join(' + '));
+const parolDruga = await p2.query(
+  `select s.in_password_enc from order_slot s join shop_order o on o.id = s.order_id
+    where o.source = 'certificate' and s.in_password_enc is not null`,
+);
+chk(
+  'пароль второго участника в базе шифротекстом',
+  parolDruga.rows.length === 1 && parolDruga.rows[0].in_password_enc.startsWith('v1.') && !parolDruga.rows[0].in_password_enc.includes('drugoy-tayny-parol'),
+);
+chk('пароля из сертификата нет в журнале', !server.zhurnal().includes('drugoy-tayny-parol'));
+
 await drug.goto(`http://localhost:${PORT}/certificate/`, { waitUntil: 'networkidle' });
-await drug.fill('input[name="code"]', kodSert);
+await drug.locator('form').filter({ has: drug.locator('input[name="code"]') }).first().locator('input[name="code"]').fill(kodSert);
 await nazhat(drug, 'button:has-text("Проверить код")');
 const povtor = await drug.textContent('body');
 chk('код одноразовый', /уже активирован/.test(povtor ?? ''));
+
+console.log('── АДМИНИСТРАТОР ВИДИТ ВЫПУЩЕННЫЕ СЕРТИФИКАТЫ ──');
+await admin.goto(`http://localhost:${PORT}/admin/certificates/`, { waitUntil: 'networkidle' });
+const spisokSert = ((await admin.textContent('body')) ?? '').replace(/\s+/g, ' ');
+chk('в списке есть тариф, срок и статус', /На двоих/.test(spisokSert) && /6 мес/.test(spisokSert) && /used/.test(spisokSert));
+chk('видно, кто купил и кто активировал', spisokSert.includes(KLIENT) && spisokSert.includes(DARENYY));
+chk('кода сертификата в админке нет', !spisokSert.includes(kodSert) && spisokSert.includes(`…${kodSert.slice(-4)}`));
 
 console.log('── ОПЛАТА ПОДТВЕРЖДАЕТСЯ ТОЛЬКО УВЕДОМЛЕНИЕМ ──');
 const otvet = await fetch(`http://localhost:${PORT}/api/pay/result/`, { method: 'POST' });
@@ -276,17 +311,32 @@ chk('уведомление без подписи отвергнуто', otvet.s
 const baz = await p2.query(`select status, balance_kop, money_kop from shop_order order by id`);
 chk('суммы разложены по заказу', baz.rows[0].money_kop !== '0', `картой ${baz.rows[0].money_kop} коп.`);
 
-console.log('── ОТМЕНА ВОЗВРАЩАЕТ ДЕНЬГИ НА БАЛАНС ──');
-// Берём заказ по сертификату и отменяем его: денег там нет, зато
-// проверяется, что сертификат оживает.
+console.log('── ОТМЕНА: СНАЧАЛА ПИСЬМО, ПОТОМ ДЕНЬГИ НА БАЛАНС ──');
+/* Берём заказ ПО СЕРТИФИКАТУ и отменяем его. Денег за ним нет,
+   зато проверяются две вещи разом: жёсткий порядок при неверном
+   пароле (закон 37) и то, что сертификат от отмены оживает. */
 await admin.goto(`http://localhost:${PORT}/admin/`, { waitUntil: 'networkidle' });
+const ocheredDara = await admin.textContent('body');
+chk('подарочный заказ помечен в очереди', /gift/.test(ocheredDara ?? ''));
 await nazhat(admin, 'button:has-text("Take")');
+const kartaDara = await admin.textContent('body');
+chk('оператор видит, что заказ подарочный', /gift/.test(kartaDara ?? '') && /gift certificate was redeemed/.test(kartaDara ?? ''));
+
+await admin.fill('input[name="reason"]', 'Проверка отмены');
+await nazhat(admin, 'button:has-text("Cancel order")');
+const rano = await admin.textContent('body');
+chk('до письма отмена не проходит', /Send the password-recovery email first/.test(rano ?? ''));
+
+await nazhat(admin, 'button:has-text("Password does not work")');
+const posleP = await admin.textContent('body');
+chk('письмо о восстановлении отправлено', /Recovery instructions sent/.test(posleP ?? ''));
+
 await admin.fill('input[name="reason"]', 'Проверка отмены');
 await nazhat(admin, 'button:has-text("Cancel order")');
 const otmena = await admin.textContent('body');
 chk('заказ отменён', /Order is cancelled/.test(otmena ?? ''));
-const sert2 = await p2.query('select used_at from certificate');
-chk('сертификат снова годен', sert2.rows[0].used_at === null);
+const sert2 = await p2.query('select used_at, used_order_id from certificate');
+chk('сертификат снова годен', sert2.rows[0].used_at === null && sert2.rows[0].used_order_id === null);
 
 chk('ни одной ошибки JavaScript', oshibkiJS.length === 0, oshibkiJS.slice(0, 3).join(' | '));
 

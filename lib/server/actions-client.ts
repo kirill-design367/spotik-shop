@@ -24,7 +24,19 @@ import { vystavitSchet } from './payments';
 import { nayti, POCHEMU_KOD } from './certificates';
 import { katalog, naytiTarif } from './catalog';
 
-export type Otvet = { oshibka?: string; ladno?: string; shag?: string; email?: string };
+export type Otvet = {
+  oshibka?: string;
+  ladno?: string;
+  shag?: string;
+  email?: string;
+  /**
+   * Что подарено по проверенному коду сертификата. Приходит на шаге
+   * «код принят»: до него мы не знаем ни тарифа, ни числа участников,
+   * а форма активации обязана показать ровно столько полей, сколько
+   * мест в подаренном тарифе (Р-93).
+   */
+  dar?: { chto: string; mest: number };
+};
 
 const NET_BAZY = 'Сервис временно недоступен. Попробуйте чуть позже.';
 
@@ -86,7 +98,10 @@ export async function deystvieOformit(_prosh: Otvet, fd: FormData): Promise<Otve
   const tarif = naytiTarif(spisok, planId);
   if (!tarif) return { oshibka: 'Такого тарифа нет.' };
 
-  const kind = tarif.gift ? 'certificate' : 'plan';
+  /* ⚠️ СЕРТИФИКАТ — ЭТО ПРИЗНАК ЗАКАЗА, А НЕ ОТДЕЛЬНЫЙ ТАРИФ (Р-93).
+     Тариф и срок у него настоящие: цена берётся у них, и они же
+     зашиваются в код. Участников покупатель не выбирает вовсе. */
+  const kind = fd.get('gift') === '1' ? 'certificate' : 'plan';
   const uchastniki: VvodUchastnika[] = [];
   if (kind === 'plan') {
     for (let i = 0; i < tarif.people; i++) {
@@ -148,9 +163,16 @@ export async function deystvieProveritKodSertifikata(_prosh: Otvet, fd: FormData
   if (!bazaEst()) return { oshibka: NET_BAZY };
   const r = await nayti(String(fd.get('code') ?? ''));
   if (!r.ok) return { oshibka: POCHEMU_KOD[r.pochemu] };
-  return { ladno: String(r.id), shag: 'vybor' };
+  return { ladno: String(r.id), shag: 'vybor', dar: { chto: r.chto, mest: r.mest } };
 }
 
+/**
+ * Активация.
+ *
+ * ⚠️ ТАРИФ, СРОК И ЧИСЛО УЧАСТНИКОВ БЕРУТСЯ ИЗ КОДА, А НЕ ИЗ ФОРМЫ
+ * (Р-93). Форма говорит только, какой аккаунт заводить каждому:
+ * поле `mest` в разметке человек правит в браузере за секунду.
+ */
 export async function deystvieAktivirovat(_prosh: Otvet, fd: FormData): Promise<Otvet> {
   if (!bazaEst()) return { oshibka: NET_BAZY };
   const kto = await ktoKlient();
@@ -158,20 +180,39 @@ export async function deystvieAktivirovat(_prosh: Otvet, fd: FormData): Promise<
   const r = await nayti(String(fd.get('code') ?? ''));
   if (!r.ok) return { oshibka: POCHEMU_KOD[r.pochemu] };
 
-  const mode = String(fd.get('mode0') ?? 'new') === 'renew' ? 'renew' : 'new';
-  const login = String(fd.get('login0') ?? '').trim();
-  const password = String(fd.get('password0') ?? '');
-  if (mode === 'renew' && (!login || !password)) {
-    return { oshibka: 'Для продления укажите почту и пароль своего аккаунта Spotify.' };
+  const uchastniki: VvodUchastnika[] = [];
+  for (let i = 0; i < r.mest; i++) {
+    const mode = String(fd.get(`mode${i}`) ?? 'new') === 'renew' ? 'renew' : 'new';
+    const login = String(fd.get(`login${i}`) ?? '').trim();
+    const password = String(fd.get(`password${i}`) ?? '');
+    if (mode === 'renew' && (!login || !password)) {
+      return {
+        oshibka:
+          r.mest > 1
+            ? `Участник ${i + 1}: для продления укажите почту и пароль своего аккаунта Spotify.`
+            : 'Для продления укажите почту и пароль своего аккаунта Spotify.',
+        shag: 'vybor',
+        ladno: String(r.id),
+        dar: { chto: r.chto, mest: r.mest },
+      };
+    }
+    uchastniki.push({ mode, login, password });
   }
-  if (fd.get('consent') !== 'on') return { oshibka: 'Нужно согласие на обработку персональных данных.' };
+  if (fd.get('consent') !== 'on') {
+    return {
+      oshibka: 'Нужно согласие на обработку персональных данных.',
+      shag: 'vybor',
+      ladno: String(r.id),
+      dar: { chto: r.chto, mest: r.mest },
+    };
+  }
 
   const zakaz = await zakazPoSertifikatu({
     userId: kto.userId,
-    planId: 'solo',
+    planId: r.planId,
     period: r.period,
     certificateId: r.id,
-    uchastnik: { mode, login, password },
+    uchastniki,
   });
   redirect(`/cabinet/?order=${zakaz}`);
 }

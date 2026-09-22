@@ -70,7 +70,11 @@ export default function Queue({ rows, me }: { rows: StrokaOcheredi[]; me: string
                 </td>
                 <td>
                   {r.plan}
-                  {r.bySertificate ? ' · certificate' : ''}
+                  {/* ⚠️ ПОМЕТКА «ПОДАРОЧНЫЙ» ОБЯЗАТЕЛЬНА (Р-93): такой заказ
+                      оплачен ЗАРАНЕЕ, покупателем сертификата, и денег
+                      за ним не числится вовсе. Без пометки оператор
+                      читает нулевую сумму как поломку. */}
+                  {r.bySertificate ? <span className="ad__tag ad__tag--gift">gift</span> : null}
                 </td>
                 <td>{r.people}</td>
                 <td>{r.period}</td>

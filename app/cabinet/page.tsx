@@ -164,13 +164,18 @@ export default async function Cabinet({
       {!sert.length ? (
         <p className="empty">Сертификатов нет.</p>
       ) : (
+        /* ⚠️ ТАРИФ И СРОК ВИДНЫ РЯДОМ С КОДОМ (Р-93): сертификатов
+           у человека может быть несколько и на разные тарифы,
+           а по одному коду их не различить. */
         sert.map((s) => (
           <div key={s.id} className={s.ispolzovan ? 'cert cert--used' : 'cert'}>
             <span className="cert__code">{s.kod ?? `…${s.tail}`}</span>
             <span className="cert__meta">
+              {s.chto}
+              {' · '}
               {s.ispolzovan
-                ? 'Активирован'
-                : `Действует до ${s.srokDo.toLocaleDateString('ru-RU')} · активировать: spotik.shop/certificate/`}
+                ? 'активирован'
+                : `действует до ${s.srokDo.toLocaleDateString('ru-RU')} · активировать: spotik.shop/certificate/`}
             </span>
           </div>
         ))

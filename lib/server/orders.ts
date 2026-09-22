@@ -43,10 +43,16 @@ export type ItogSozdaniya =
   | { ok: true; zakaz: number; sBalansa: number; kDoplate: number }
   | { ok: false; pochemu: string };
 
-/** Название заказа одной строкой: для чека, письма и админки. */
+/**
+ * Название заказа одной строкой: для чека, письма и админки.
+ *
+ * ⚠️ У СЕРТИФИКАТА ТЕПЕРЬ ЕСТЬ ТАРИФ, и он обязан быть в названии:
+ * «Сертификат Spotik Shop» без тарифа не говорит ни покупателю,
+ * ни кассе, за что взяты деньги (Р-93).
+ */
 export function nazvanieZakaza(tarif: string, period: number, kind: 'plan' | 'certificate'): string {
   return kind === 'certificate'
-    ? `Сертификат Spotik Shop на ${srokKratko(period)}`
+    ? `Сертификат Spotik Shop: ${tarif}, ${srokKratko(period)}`
     : `Spotify Premium, ${tarif}, ${srokKratko(period)}`;
 }
 
@@ -75,9 +81,17 @@ export async function sozdatZakaz(opts: {
   const cena = cenaTarifa(tarif, opts.period);
   if (cena === null) return { ok: false, pochemu: 'На этот срок тариф пока не оформляется.' };
 
+  // ⚠️ У СЕРТИФИКАТА УЧАСТНИКОВ НЕТ ВОВСЕ: их выбирает не покупатель,
+  // а получатель, при активации. Тариф при этом настоящий — от него
+  // идёт и цена, и число мест в будущем заказе (Р-93).
   const nuzhno = opts.kind === 'certificate' ? 0 : tarif.people;
-  if (opts.kind !== 'certificate' && opts.uchastniki.length !== nuzhno) {
-    return { ok: false, pochemu: `Для этого тарифа нужно заполнить ${nuzhno} участника.` };
+  if (opts.uchastniki.length !== nuzhno) {
+    return {
+      ok: false,
+      pochemu: nuzhno
+        ? `Для этого тарифа нужно заполнить ${nuzhno} участника.`
+        : 'У сертификата участников не бывает: их выбирает получатель.',
+    };
   }
   for (const u of opts.uchastniki) {
     if (u.mode === 'renew') {
@@ -207,7 +221,13 @@ async function posleOplaty(zakaz: number): Promise<void> {
   const nazvanie = nazvanieZakaza(tarif?.name ?? z.plan_id, z.period, z.kind);
 
   if (z.kind === 'certificate') {
-    await vydatSertifikat({ userId: Number(z.user_id), email: z.email, period: z.period, zakaz });
+    await vydatSertifikat({
+      userId: Number(z.user_id),
+      email: z.email,
+      planId: z.plan_id,
+      period: z.period,
+      zakaz,
+    });
     // Сертификат сам по себе работы оператору не даёт: заказ закрыт.
     await zapros(`update shop_order set status = 'done', closed_at = now() where id = $1`, [zakaz]);
     return;
@@ -220,16 +240,32 @@ async function posleOplaty(zakaz: number): Promise<void> {
 /**
  * Заказ по сертификату: денег не берём вовсе, сразу в очередь
  * оператору.
+ *
+ * ⚠️ УЧАСТНИКОВ СТОЛЬКО, СКОЛЬКО МЕСТ В ПОДАРЕННОМ ТАРИФЕ, и число
+ * это приходит НЕ ИЗ ФОРМЫ, а из кода сертификата (Р-93). Иначе
+ * сертификат «на одного» оформлялся бы на троих одной правкой
+ * разметки в браузере.
+ *
+ * ⚠️ ПОМЕТКА «ИСПОЛЬЗОВАН» СТОИТ В ТОЙ ЖЕ ТРАНЗАКЦИИ, что и создание
+ * заказа, и ставится ТОЛЬКО на неиспользованный: два одновременных
+ * нажатия не должны дать два заказа по одному коду. Не сошлось —
+ * транзакция откатывается целиком.
  */
 export async function zakazPoSertifikatu(opts: {
   userId: number;
   planId: string;
   period: number;
   certificateId: number;
-  uchastnik: VvodUchastnika;
+  uchastniki: VvodUchastnika[];
 }): Promise<number> {
-  if (opts.uchastnik.mode === 'renew' && !shifrGotov()) throw new Error('нет ключа шифрования');
+  if (opts.uchastniki.some((u) => u.mode === 'renew') && !shifrGotov()) throw new Error('нет ключа шифрования');
   return vTranzakcii(async (c) => {
+    const pometka = await c.query(
+      'update certificate set used_at = now() where id = $1 and used_at is null returning id',
+      [opts.certificateId],
+    );
+    if (!pometka.rows.length) throw new Error('сертификат уже активирован');
+
     const z = await c.query<{ id: string }>(
       `insert into shop_order (user_id, kind, plan_id, period, status, total_kop, source, certificate_id, consent_at, paid_at)
        values ($1, 'plan', $2, $3, 'paid', 0, 'certificate', $4, now(), now())
@@ -237,16 +273,21 @@ export async function zakazPoSertifikatu(opts: {
       [opts.userId, opts.planId, opts.period, opts.certificateId],
     );
     const zakaz = Number(z.rows[0]!.id);
-    await c.query(
-      `insert into order_slot (order_id, idx, mode, in_login_enc, in_password_enc) values ($1, 0, $2, $3, $4)`,
-      [
-        zakaz,
-        opts.uchastnik.mode,
-        opts.uchastnik.mode === 'renew' ? zashifrovat(opts.uchastnik.login!.trim()) : null,
-        opts.uchastnik.mode === 'renew' ? zashifrovat(opts.uchastnik.password!) : null,
-      ],
-    );
-    await c.query('update certificate set used_at = now(), used_order_id = $2 where id = $1', [opts.certificateId, zakaz]);
+    for (let i = 0; i < opts.uchastniki.length; i++) {
+      const u = opts.uchastniki[i]!;
+      await c.query(
+        `insert into order_slot (order_id, idx, mode, in_login_enc, in_password_enc) values ($1, $2, $3, $4, $5)`,
+        [
+          zakaz,
+          i,
+          u.mode,
+          u.mode === 'renew' ? zashifrovat(u.login!.trim()) : null,
+          u.mode === 'renew' ? zashifrovat(u.password!) : null,
+        ],
+      );
+    }
+    await c.query('update certificate set used_order_id = $2 where id = $1', [opts.certificateId, zakaz]);
+    log.info('заказ по сертификату', { order: zakaz, plan: opts.planId, period: opts.period, mest: opts.uchastniki.length });
     return zakaz;
   });
 }

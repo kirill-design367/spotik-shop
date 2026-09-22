@@ -4,7 +4,7 @@ import { ktoSotrudnik } from '@/lib/server/auth';
 import { bazaEst, zapros } from '@/lib/server/db';
 import { katalogPoUmolchaniyu, SROKI } from '@/lib/server/catalog';
 import { srokSertifikataDney } from '@/lib/server/settings';
-import { PLANS } from '@/lib/plans';
+import { DARIMYE } from '@/lib/plans';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,8 +23,11 @@ export default async function AdminSettings() {
   const umolchaniya = new Map<string, number>();
   for (const t of katalogPoUmolchaniyu()) for (const c of t.ceny) umolchaniya.set(`${t.id}-${c.period}`, c.kop);
 
+  /* ⚠️ КАРТОЧКИ СЕРТИФИКАТА ЗДЕСЬ НЕТ ВОВСЕ (Р-93): своей цены
+     у сертификата больше не бывает, он стоит ровно столько, сколько
+     подаренный тариф. Осталась только настройка срока жизни кода. */
   const rows: Stroka[] = [];
-  for (const p of PLANS) {
+  for (const p of DARIMYE) {
     for (const s2 of SROKI) {
       const k = `${p.id}-${s2.key}`;
       const baz = izBazy.get(k);

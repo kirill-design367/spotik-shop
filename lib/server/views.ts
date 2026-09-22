@@ -11,7 +11,7 @@
 import { odna, zapros } from './db';
 import { poprobovatRasshifrovat } from './crypto';
 import { STATUS_SLOVAMI, type Rezhim, type Status } from './orders';
-import { katalog, naytiTarif, srokKratko } from './catalog';
+import { katalog, naytiTarif, podarokSlovami, srokKratko } from './catalog';
 
 export type SlotKlientu = {
   idx: number;
@@ -86,7 +86,12 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
     return {
       id: Number(r.id),
       kind: r.kind,
-      nazvanie: r.kind === 'certificate' ? 'Сертификат в подарок' : (tarif?.name ?? r.plan_id),
+      /* ⚠️ У СЕРТИФИКАТА ТЕПЕРЬ ЕСТЬ ТАРИФ, и без него строка в кабинете
+         не говорит, что именно куплено (Р-93). */
+      nazvanie:
+        r.kind === 'certificate'
+          ? `Сертификат в подарок: ${tarif?.name ?? r.plan_id}`
+          : (tarif?.name ?? r.plan_id),
       srok: srokKratko(r.period),
       status: r.status,
       statusSlovami: STATUS_SLOVAMI[r.status],
@@ -274,6 +279,75 @@ export async function zakazDlyaAdminki(id: number, staffId: number, admin: boole
       outPassword: moy ? poprobovatRasshifrovat(s.out_password_enc) : null,
     })),
   };
+}
+
+export type VypushchennySertifikat = {
+  id: number;
+  tail: string;
+  plan: string;
+  period: string;
+  chto: string;
+  status: 'valid' | 'used' | 'expired';
+  buyer: string | null;
+  activatedBy: string | null;
+  orderId: number | null;
+  boughtAt: string;
+  expiresAt: string;
+  usedAt: string | null;
+};
+
+/**
+ * Выпущенные сертификаты — для администратора.
+ *
+ * Постановка: «тариф, срок, статус, кто купил, кто активировал».
+ * Кода здесь нет и быть не может: в базе лежит шифротекст, а читать
+ * его вправе только владелец в своём кабинете (Р-87). Оператору
+ * и администратору видно четыре последних знака — этого довольно,
+ * чтобы сверить сертификат с тем, что показывает человек.
+ */
+export async function vypushchennyeSertifikaty(limit = 200): Promise<VypushchennySertifikat[]> {
+  const rows = await zapros<{
+    id: string;
+    tail: string;
+    plan_id: string;
+    period: number;
+    created_at: Date;
+    expires_at: Date;
+    used_at: Date | null;
+    used_order_id: string | null;
+    buyer: string | null;
+    activator: string | null;
+  }>(
+    `select c.id, c.tail, c.plan_id, c.period, c.created_at, c.expires_at, c.used_at, c.used_order_id,
+            b.email as buyer, a.email as activator
+       from certificate c
+       left join app_user b on b.id = c.buyer_id
+       left join shop_order o on o.id = c.used_order_id
+       left join app_user a on a.id = o.user_id
+      order by c.created_at desc
+      limit $1`,
+    [limit],
+  );
+  if (!rows.length) return [];
+  const spisok = await katalog();
+  const teper = Date.now();
+  return rows.map((r) => {
+    const name = naytiTarif(spisok, r.plan_id)?.name ?? r.plan_id;
+    return {
+      id: Number(r.id),
+      tail: r.tail,
+      plan: name,
+      period: srokKratko(r.period),
+      chto: podarokSlovami(name, r.period),
+      status: r.used_at ? 'used' : new Date(r.expires_at).getTime() < teper ? 'expired' : 'valid',
+      buyer: r.buyer,
+      activatedBy: r.activator,
+      orderId: r.used_order_id ? Number(r.used_order_id) : null,
+      boughtAt: new Date(r.created_at).toISOString(),
+      expiresAt: new Date(r.expires_at).toISOString(),
+      usedAt: r.used_at ? new Date(r.used_at).toISOString() : null,
+    };
+  });
 }
 
 export type ZakrytyyZakaz = { id: number; status: Status; closedAt: string; plan: string; client: string };

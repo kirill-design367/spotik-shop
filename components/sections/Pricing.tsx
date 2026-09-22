@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import SectionHead from './SectionHead';
 import { attachCards } from '@/lib/cards';
-import { PERIODS, PLANS, formatPrice, savings, type Plan, type PeriodKey } from '@/lib/plans';
+import { DARIMYE, PERIODS, PLANS, formatPrice, savings, type Plan, type PeriodKey } from '@/lib/plans';
 
 /**
  * ⚠️ СОСТАВ ТАРИФОВ ПО-ПРЕЖНЕМУ В `lib/plans.ts`, А ЦЕНЫ ПРИХОДЯТ
@@ -53,12 +53,22 @@ export type CenyTarifov = Record<string, Partial<Record<PeriodKey, number>>>;
  * набора радиокнопок и четыре кнопки «Оформить» — это четыре призыва
  * к действию в одном кадре. Приём карточек держится на том, что они
  * лаконичные, и первое же управление внутри это ломает.
+ *
+ * ── СЕРТИФИКАТ НА ЛЮБОЙ ТАРИФ (Р-93) ─────────────────────────────────────
+ * ⚠️ У КАРТОЧКИ СЕРТИФИКАТА СВОЕЙ ЦЕНЫ НЕТ ВОВСЕ. Она показывает цену
+ * ТОГО тарифа, который выбран в подарок, и меняется вместе с ним —
+ * ровно как остальные карточки меняются вместе со сроком. Под сеткой
+ * на её месте встаёт выбор «на одного / на двоих / на троих»;
+ * ограничения те же, что у тарифов, потому что это те же тарифы
+ * («на троих» — только месяц).
  */
 export default function Pricing({ ceny }: { ceny?: CenyTarifov }) {
-  const plans: Plan[] = ceny ? PLANS.map((p) => (ceny[p.id] ? { ...p, prices: ceny[p.id]!, pending: Object.keys(ceny[p.id]!).length ? undefined : p.pending } : p)) : PLANS;
+  const plans: Plan[] = ceny ? PLANS.map((p) => (ceny[p.id] ? { ...p, prices: ceny[p.id]! } : p)) : PLANS;
   const [period, setPeriod] = useState<PeriodKey>(12);
   const [planId, setPlanId] = useState<string>(PLANS[0].id);
   const [account, setAccount] = useState<Record<string, 'new' | 'renew'>>({});
+  /** Какой тариф дарим. Собственной цены у сертификата нет (Р-93). */
+  const [giftId, setGiftId] = useState<string>(DARIMYE[0].id);
   /** Какая плашка сейчас переворачивается. Снимается по концу хода. */
   const [flip, setFlip] = useState<PeriodKey | null>(null);
   const statusId = useId();
@@ -71,9 +81,14 @@ export default function Pricing({ ceny }: { ceny?: CenyTarifov }) {
     return root ? attachCards(root) : undefined;
   }, []);
 
-  const plan = plans.find((p) => p.id === planId) ?? plans[0];
+  const darimye = plans.filter((p) => !p.gift);
+  const vybran = plans.find((p) => p.id === planId) ?? plans[0];
+  /* У сертификата цена и экономия берутся у ПОДАРЕННОГО тарифа:
+     карточка сертификата своих цен не несёт вовсе. */
+  const dar = darimye.find((p) => p.id === giftId) ?? darimye[0];
+  const plan = vybran.gift ? dar : vybran;
   const total = plan.prices[period];
-  const monthOnly = !plan.pending && !total ? plan.prices[1] : undefined;
+  const monthOnly = !total ? plan.prices[1] : undefined;
   const acc = account[plan.id] ?? 'new';
   const save = total ? savings(plan, period) : 0;
 
@@ -99,14 +114,13 @@ export default function Pricing({ ceny }: { ceny?: CenyTarifov }) {
 
   const announce = (() => {
     const p = PERIODS.find((x) => x.key === period)!;
-    const price = plan.pending
-      ? plan.pending
-      : total
-        ? `${formatPrice(total)} рублей`
-        : monthOnly
-          ? `${formatPrice(monthOnly)} рублей за месяц, другие сроки по запросу`
-          : 'на этот срок не оформляется';
-    return `${p.label}, тариф «${plan.name}»: ${price}`;
+    const price = total
+      ? `${formatPrice(total)} рублей`
+      : monthOnly
+        ? `${formatPrice(monthOnly)} рублей за месяц, другие сроки по запросу`
+        : 'на этот срок не оформляется';
+    const chto = vybran.gift ? `сертификат на тариф «${plan.name}»` : `тариф «${plan.name}»`;
+    return `${p.label}, ${chto}: ${price}`;
   })();
 
   return (
@@ -187,8 +201,11 @@ export default function Pricing({ ceny }: { ceny?: CenyTarifov }) {
           ))}
 
           {plans.map((p, i) => {
-            const t = p.prices[period];
-            const m = !p.pending && !t ? p.prices[1] : undefined;
+            /* ⚠️ КАРТОЧКА СЕРТИФИКАТА ПОКАЗЫВАЕТ ЦЕНУ ПОДАРЕННОГО
+               ТАРИФА: своей у неё нет вовсе (Р-93). */
+            const ist = p.gift ? dar : p;
+            const t = ist.prices[period];
+            const m = !t ? ist.prices[1] : undefined;
             return (
               <button
                 key={p.id}
@@ -204,9 +221,7 @@ export default function Pricing({ ceny }: { ceny?: CenyTarifov }) {
                 <span className="card__face">
                   <span className="card__name">{p.short ?? p.name}</span>
                   <span className="card__price tnum">
-                    {p.pending ? (
-                      <em className="card__soon">Цена уточняется</em>
-                    ) : t ? (
+                    {t ? (
                       <>
                         <b>{formatPrice(t)} ₽</b>
                         <span className="card__per">за {period} мес</span>
@@ -228,14 +243,46 @@ export default function Pricing({ ceny }: { ceny?: CenyTarifov }) {
         <div className="order rv">
           <p className="order__plan">
             <span className="order__label">Выбрано</span>
-            <b>{plan.name}</b>
+            <b>{vybran.gift ? `${vybran.name} · ${plan.name}` : plan.name}</b>
             {save > 0 ? <span className="order__save tnum">экономия {formatPrice(save)} ₽</span> : null}
           </p>
 
-          {plan.gift ? (
-            /* У сертификата выбора аккаунта нет: его делает не тот,
-               кто платит, а тот, кому дарят. */
-            <p className="order__gift">{plan.gift}</p>
+          {vybran.gift ? (
+            /* ⚠️ У СЕРТИФИКАТА ЗДЕСЬ ВЫБОР ТАРИФА, А НЕ АККАУНТА (Р-93).
+               Аккаунт выбирает не тот, кто платит, а тот, кому дарят, —
+               при активации кода. А вот НА ЧТО дарят, решает покупатель,
+               и решает он это тем же способом, что и всё остальное
+               в этом блоке: карточка сроков сверху, тариф здесь. */
+            <>
+              <div
+                role="radiogroup"
+                aria-label="Тариф в подарок"
+                className="order__opts"
+                onKeyDown={(e) =>
+                  rove(
+                    e,
+                    darimye.length,
+                    darimye.findIndex((p) => p.id === dar.id),
+                    (i) => setGiftId(darimye[i].id),
+                  )
+                }
+              >
+                {darimye.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={dar.id === p.id}
+                    tabIndex={dar.id === p.id ? 0 : -1}
+                    className="row__opt"
+                    onClick={() => setGiftId(p.id)}
+                  >
+                    {p.short ?? p.name}
+                  </button>
+                ))}
+              </div>
+              <p className="order__gift">{vybran.gift}</p>
+            </>
           ) : (
             <div
               role="radiogroup"
@@ -280,17 +327,24 @@ export default function Pricing({ ceny }: { ceny?: CenyTarifov }) {
             поэтому разметка меняется, а кадр — нет.
           */}
           {total || monthOnly ? (
+            /* ⚠️ В АДРЕС УЕЗЖАЕТ НАСТОЯЩИЙ ТАРИФ, а сертификат — отдельным
+               признаком `gift=1`. Отдельного тарифа `gift` больше нет
+               ни в каталоге, ни в заказе (Р-93). */
             <a
               className="btn btn--wide"
-              href={`/checkout/?plan=${plan.id}&period=${total ? period : 1}${plan.gift ? '' : `&mode=${acc}`}`}
+              href={`/checkout/?plan=${plan.id}&period=${total ? period : 1}${vybran.gift ? '&gift=1' : `&mode=${acc}`}`}
             >
-              {total
-                ? `Оформить за ${formatPrice(total)} ₽`
-                : `Оформить на месяц за ${formatPrice(monthOnly!)} ₽`}
+              {vybran.gift
+                ? total
+                  ? `Подарить за ${formatPrice(total)} ₽`
+                  : `Подарить на месяц за ${formatPrice(monthOnly!)} ₽`
+                : total
+                  ? `Оформить за ${formatPrice(total)} ₽`
+                  : `Оформить на месяц за ${formatPrice(monthOnly!)} ₽`}
             </a>
           ) : (
             <button type="button" className="btn btn--wide" disabled>
-              {plan.pending ? 'Оформить · цена уточняется' : 'Оформить · на этот срок не оформляется'}
+              Оформить · на этот срок не оформляется
             </button>
           )}
         </div>

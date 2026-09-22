@@ -28,6 +28,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             <nav className="ad__nav">
               <a href="/admin/">Queue</a>
               {s.role === 'admin' ? <a href="/admin/settings/">Prices</a> : null}
+              {s.role === 'admin' ? <a href="/admin/certificates/">Certificates</a> : null}
               {s.role === 'admin' ? <a href="/admin/staff/">Staff</a> : null}
               <a href="/">Site</a>
             </nav>

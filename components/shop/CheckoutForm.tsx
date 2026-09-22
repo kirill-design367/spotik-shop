@@ -47,6 +47,11 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
     <form action={oformit}>
       <input type="hidden" name="plan" value={vvod.planId} />
       <input type="hidden" name="period" value={period} />
+      {/* ⚠️ СЕРТИФИКАТ — ПРИЗНАК, А НЕ ТАРИФ (Р-93). Тариф и срок
+          у него настоящие, и цена берётся у них; на сервере признак
+          означает ровно одно: участников не спрашиваем, а после
+          оплаты выдаём код. */}
+      {vvod.sertifikat ? <input type="hidden" name="gift" value="1" /> : null}
 
       {otvet.oshibka ? <p className="err">{otvet.oshibka}</p> : null}
 
@@ -127,9 +132,12 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
         <div className="panel">
           <h2 className="panel__h">Сертификат</h2>
           <p className="panel__note" style={{ marginTop: 0 }}>
-            После оплаты код придёт вам на почту и появится в личном кабинете. Тот, кому вы
-            его подарите, введёт код на сайте и сам выберет: завести новый аккаунт или
-            продлить свой.
+            После оплаты код придёт вам на почту и появится в личном кабинете. Тариф и срок
+            зашиты в коде: тот, кому вы его подарите, введёт код на сайте, увидит, что
+            подарено, и сам выберет — завести новый аккаунт или продлить свой.
+            {vvod.people > 1
+              ? ` Аккаунтов в этом тарифе ${vvod.people}, и все ${vvod.people} он оформит сам.`
+              : ''}
           </p>
         </div>
       )}
