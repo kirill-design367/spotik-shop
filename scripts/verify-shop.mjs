@@ -241,6 +241,9 @@ const telo3 = await klient.textContent('body');
 const kodSert = (telo3 ?? '').match(/SPOTIK-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/)?.[0] ?? '';
 chk('сертификат выдан и код виден в кабинете', Boolean(kodSert), kodSert);
 chk('в кабинете виден подаренный тариф', /На двоих, полгода/.test(telo3 ?? ''));
+// ⚠️ ПИСЬМО ОБЯЗАНО НАЗЫВАТЬ ТАРИФ, А НЕ ОДИН СРОК: до этой итерации
+// сертификат был всегда на одного, и срока хватало (Р-93).
+chk('письмо о сертификате называет тариф и срок', server.zhurnal().includes('Сертификат оформлен: На двоих, полгода'));
 
 const p3 = await p2.query('select code_hash, code_enc, plan_id, period from certificate');
 chk('кода сертификата нет в базе открытым текстом', p3.rows.length === 1 && !p3.rows[0].code_enc.includes(kodSert) && p3.rows[0].code_enc.startsWith('v1.'));

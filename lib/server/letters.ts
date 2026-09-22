@@ -40,12 +40,17 @@ export async function pismoZakazGotov(komu: string, zakaz: number): Promise<void
   });
 }
 
-export async function pismoSertifikatKuplen(komu: string, kod: string, srokDo: Date, srok: string): Promise<void> {
+/**
+ * ⚠️ `chto` — ЭТО ПОДАРОК ЦЕЛИКОМ, а не один только срок: «На двоих,
+ * полгода». С двадцать восьмой итерации сертификат несёт тариф
+ * вместе со сроком, и письмо обязано называть оба (Р-93).
+ */
+export async function pismoSertifikatKuplen(komu: string, kod: string, srokDo: Date, chto: string): Promise<void> {
   await otpravit({
     komu,
     tema: 'Сертификат Spotik Shop',
     telo:
-      `Сертификат на ${srok} оформлен.\n\n` +
+      `Сертификат оформлен: ${chto}.\n\n` +
       `Код: ${kod}\n` +
       `Действует до ${srokDo.toLocaleDateString('ru-RU')}.\n\n` +
       `Активировать его можно здесь: ${env.siteUrl}/certificate/\n` +
