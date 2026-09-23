@@ -47,6 +47,15 @@ on:
           - 'не менять'
           - 'тест'
           - 'бой'
+      # ⚠️ ТЕСТОВОЕ СООБЩЕНИЕ — ВХОДОМ, А НЕ КАЖДЫЙ ПРОГОН. Настройку
+      # гоняют и ради сертификата, и ради nginx; сообщение на каждом
+      # прогоне превратило бы служебный чат в свалку, и настоящее
+      # уведомление об оплате потерялось бы среди проверок. Умолчание
+      # поэтому «нет» — ровно как у режима Робокассы.
+      telegram_proverka:
+        description: 'Отправить в служебный чат тестовое уведомление'
+        type: boolean
+        default: false
 
 concurrency:
   # Настройка и выкладка делят один сервер: одновременно им там делать
@@ -893,6 +902,93 @@ jobs:
           bash -n /tmp/remote/check.sh
           ssh spotik 'cat > /tmp/spotik-check.sh' < /tmp/remote/check.sh
           ssh spotik 'bash /tmp/spotik-check.sh; r=$?; rm -f /tmp/spotik-check.sh; exit $r' | sed 's/^/  /'
+
+      # ⚠️ ТЕСТОВОЕ УВЕДОМЛЕНИЕ ИДЁТ ЧЕРЕЗ ОЧЕРЕДЬ ПРИЛОЖЕНИЯ,
+      # А НЕ ЧЕРЕЗ `curl`. Curl доказал бы ровно одно: что с сервера
+      # до Telegram достучаться можно. А знать надо другое — что
+      # уведомление уходит ТЕМ САМЫМ кодом, который зовут оплата
+      # и закрытие заказа, с его `family: 6`, его таймаутом и его
+      # разбором ответа. Поэтому строка кладётся в `notify_outbox`,
+      # разгребает её минутный будильник самой службы, а адрес,
+      # по которому ушло, служба пишет в журнал сама. Тот же принцип,
+      # что у имитатора оплаты: стучимся В ТУ ЖЕ ДВЕРЬ, иначе
+      # проверяется не отправка, а обходной путь (Р-88).
+      - name: Отправить тестовое уведомление в служебный чат
+        if: ${{ inputs.telegram_proverka }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/remote/tg.sh <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          pid=$(systemctl show -p MainPID --value spotik 2>/dev/null || echo 0)
+          if [ "${pid:-0}" = 0 ]; then
+            echo "служба spotik не запущена — отправлять нечем"
+            exit 1
+          fi
+          okr() { tr '\0' '\n' < "/proc/$pid/environ"; }
+          for n in TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID; do
+            okr | grep -q "^$n=." || { echo "$n у ЖИВОЙ службы не задан — окружение не доехало"; exit 1; }
+          done
+
+          # ⚠️ ТЕКСТ УЕЗЖАЕТ SQL-ПЕРЕМЕННОЙ psql, А НЕ СКЛЕЙКОЙ:
+          # `:'imya'` psql закавычивает сам, и апостроф в тексте
+          # не превращается в синтаксическую ошибку.
+          #
+          # ⚠️ И ЗАПРОС ИДЁТ ВВОДОМ, А НЕ ЧЕРЕЗ `-c`. Подстановку
+          # переменных psql делает своим лексером, а строку из `-c`
+          # он отдаёт серверу как есть: `:'t'` уезжает в Postgres
+          # буквально и роняет запрос «syntax error at or near ":"».
+          # Поймано прогоном на своей машине — на сервере это
+          # выглядело бы как «проверка сломана», а сломан был бы вызов.
+          metka="$(date -u '+%Y-%m-%d %H:%M:%S') UTC"
+          tekst="Spotik Shop: проверка связи, $metka.
+          Это тестовое уведомление прогона настройки сервера — заказа за ним нет."
+          nomer=$(sudo -u postgres psql -tAq -v t="$tekst" spotik <<'SQL'
+          insert into notify_outbox (vid, tekst, popytok, sleduyushchaya_v)
+          values ('proverka', :'t', 0, now()) returning id;
+          SQL
+          ) || exit 1
+          [ -n "$nomer" ] || { echo "строка в очередь не встала"; exit 1; }
+          echo "строка очереди № $nomer поставлена"
+
+          # ⚠️ ЖДЁМ СОБЫТИЯ, А НЕ СЕКУНД. Будильник очереди ходит раз
+          # в минуту ОТ СТАРТА ПРОЦЕССА, а службу мы только что
+          # перезапустили: до первого тика может быть почти минута.
+          # Фиксированная выдержка тут была бы гонкой — ровно той,
+          # на которой мы уже горели дважды (Р-94, Р-97).
+          srok=$(( $(date +%s) + 300 ))
+          itog=1
+          while :; do
+            sost=$(sudo -u postgres psql -tAqF '|' \
+              -c "select coalesce(to_char(sent_at,'HH24:MI:SS'),''), popytok,
+                         coalesce(poslednyaya_oshibka,'')
+                    from notify_outbox where id = $nomer" spotik)
+            ushlo=${sost%%|*}
+            hvost=${sost#*|}
+            popytok=${hvost%%|*}
+            oshibka=${hvost#*|}
+            if [ -n "$ushlo" ]; then
+              echo "УВЕДОМЛЕНИЕ УШЛО в $ushlo UTC, попыток: $popytok"
+              itog=0
+              break
+            fi
+            if [ "$(date +%s)" -ge "$srok" ]; then
+              echo "УВЕДОМЛЕНИЕ НЕ УШЛО за пять минут: попыток $popytok, последняя ошибка: ${oshibka:-нет}"
+              break
+            fi
+            sleep 5
+          done
+
+          # Адрес, по которому ушло, пишет САМА служба — это
+          # наблюдение, а не наше предположение (закон 39).
+          echo "── что записала служба ──"
+          journalctl -u spotik --since '-15 min' --no-pager -o cat 2>/dev/null \
+            | grep -E 'уведомлени|Telegram' | tail -8 || echo "(строк про уведомления в журнале нет)"
+          exit $itog
+          SCRIPT
+          bash -n /tmp/remote/tg.sh
+          ssh spotik 'cat > /tmp/spotik-tg.sh' < /tmp/remote/tg.sh
+          ssh spotik 'bash /tmp/spotik-tg.sh; r=$?; rm -f /tmp/spotik-tg.sh; exit $r' | sed 's/^/  /'
 
       - name: Проверить снаружи
         run: |
