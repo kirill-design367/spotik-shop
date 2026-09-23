@@ -260,7 +260,10 @@ chk('заказ в кабинете «Готов»', /Готов/.test(telo2 ?? 
 
 console.log('── TELEGRAM НЕ ОТВЕТИЛ: ОПЛАТА ЦЕЛА, УВЕДОМЛЕНИЕ В ОЧЕРЕДИ ──');
 const ochered2 = await p2.query(
-  'select vid, tekst, popytok, sent_at, sleduyushchaya_v > now() as pozzhe from notify_outbox order by id',
+  `select vid, tekst, popytok, sent_at,
+          sleduyushchaya_v > created_at as otlozheno,
+          popytok < 10 as est_popytki
+     from notify_outbox order by id`,
 );
 const oplachen = ochered2.rows.find((r) => r.vid === 'zakaz_oplachen');
 const zakryt = ochered2.rows.find((r) => r.vid === 'zakaz_zakryt');
@@ -279,11 +282,23 @@ chk(
 );
 chk('уведомление о выполнении называет исполнителя', /Исполнитель: admin@spotik\.test/.test(zakryt?.tekst ?? ''));
 /* ⚠️ ПОПЫТОК МОЖЕТ БЫТЬ УЖЕ НЕ ОДНА, И ЭТО НОРМА: минутный будильник
-   очереди успевает сработать за время прогона. Проверяется не число,
-   а состояние — не отправлено и назначено на ПОЗЖЕ. */
+   очереди успевает сработать за время прогона.
+
+   ⚠️ И СРОК СРАВНИВАЕТСЯ С `created_at`, А НЕ С `now()`. Сравнение
+   с текущим временем — ГОНКА, и она уронила выкладку № 84: строка
+   становится «созревшей» ровно через минуту после вставки, а будильник
+   ходит по своим шестидесяти секундам от старта процесса, и между
+   этими моментами есть окно почти в минуту, где срок уже позади,
+   а повтор ещё не случился. Состояние в этом окне совершенно
+   исправное. Настоящий же инвариант в другом: КАЖДЫЙ путь кода
+   назначает срок как `now() + интервал`, то есть строго позже
+   рождения строки, и это не зависит от того, когда мы посмотрели. */
 chk(
   'не отправлено и назначен повтор',
-  Number(oplachen?.popytok) >= 1 && oplachen?.sent_at === null && oplachen?.pozzhe === true,
+  Number(oplachen?.popytok) >= 1 &&
+    oplachen?.sent_at === null &&
+    oplachen?.otlozheno === true &&
+    oplachen?.est_popytki === true,
   `попыток ${oplachen?.popytok}`,
 );
 chk('адрес сотрудника в журнал целиком не попал', !server.zhurnal().includes('kto="admin@spotik.test"'));

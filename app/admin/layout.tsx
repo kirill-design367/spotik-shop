@@ -6,7 +6,15 @@ import { yazykSotrudnika } from '@/lib/server/yazyk';
 import { slovar } from '@/lib/admin/slova';
 import VyborYazyka from '@/components/admin/VyborYazyka';
 
-export const metadata: Metadata = { title: 'Админка — Spotik Shop', robots: { index: false, follow: false } };
+/**
+ * ⚠️ ЗАГОЛОВОК ВКЛАДКИ ТОЖЕ НАДПИСЬ, И ОН ТОЖЕ ПЕРЕВОДИТСЯ. Статичный
+ * `metadata` был бы единственным местом раздела, где язык не менялся
+ * бы вовсе, — а постановка требует «все надписи интерфейса».
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const t = slovar(await yazykSotrudnika(await ktoSotrudnik()));
+  return { title: t('nav.title'), robots: { index: false, follow: false } };
+}
 export const dynamic = 'force-dynamic';
 
 /**

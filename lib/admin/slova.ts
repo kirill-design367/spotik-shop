@@ -34,6 +34,7 @@ export function ponyatYazyk(v: string | undefined | null): Yazyk {
 /* Порядок в паре один и тот же везде: [русский, английский]. */
 const S = {
   /* ── Шапка ───────────────────────────────────────────────────── */
+  'nav.title': ['Админка — Spotik Shop', 'Admin — Spotik Shop'],
   'nav.queue': ['Очередь', 'Queue'],
   'nav.prices': ['Цены', 'Prices'],
   'nav.certs': ['Сертификаты', 'Certificates'],

@@ -18,6 +18,7 @@
  * куки у них разные, и сессия клиента в админку не пускает.
  */
 
+import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { ponyatYazyk, type Yazyk } from '@/lib/admin/slova';
 import { zapros, odna, tikho } from './db';
@@ -227,7 +228,16 @@ export async function ktoKlient(): Promise<Klient | null> {
   return r ? { userId: Number(r.user_id), email: r.email } : null;
 }
 
-export async function ktoSotrudnik(): Promise<Sotrudnik | null> {
+/**
+ * Кто сейчас за админкой.
+ *
+ * ⚠️ ОБЁРНУТО В `cache`, И ЭТО НЕ УКРАШЕНИЕ. За один запрос строку
+ * сотрудника спрашивают дважды: `generateMetadata` (заголовок вкладки
+ * тоже переводится) и сам макет. Без дедупликации это два одинаковых
+ * похода в базу на каждую страницу админки; `cache` из React живёт
+ * ровно один запрос и сводит их к одному.
+ */
+export const ktoSotrudnik = cache(async function ktoSotrudnik(): Promise<Sotrudnik | null> {
   const jar = await cookies();
   const t = jar.get(KUKA.staff)?.value;
   if (!t) return null;
@@ -243,4 +253,4 @@ export async function ktoSotrudnik(): Promise<Sotrudnik | null> {
   );
   if (!r || r.disabled) return null;
   return { id: Number(r.id), email: r.email, role: r.role, disabled: r.disabled, lang: ponyatYazyk(r.lang) };
-}
+});
