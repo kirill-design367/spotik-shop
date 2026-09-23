@@ -160,6 +160,12 @@ page.on('request', (r) => {
 
 async function novyZakaz(plan, period, port = PORT) {
   posledniyaSsylka = '';
+  /* Запоминаем, где кончалась таблица ДО нажатия: иначе «последняя
+     строка» вернула бы платёж ПРОШЛОГО заказа, и все дальнейшие
+     проверки прошли бы по чужому объекту — то есть сторож доложил бы
+     успех, ничего не проверив (Р-47). */
+  const bylo = Number((await pool.query('select coalesce(max(id), 0) as m from payment')).rows[0].m);
+
   await page.goto(`http://localhost:${port}/checkout/?plan=${plan}&period=${period}`, { waitUntil: 'networkidle' });
   if (await page.$('input[name="email"]')) {
     await page.fill('input[name="email"]', KLIENT);
@@ -173,11 +179,37 @@ async function novyZakaz(plan, period, port = PORT) {
   }
   await page.check('input[name="consent"]');
   await page.click('button[type="submit"]');
-  // Робокасса настроена, значит уходим на её адрес — сети до неё нет,
-  // и переход оборвётся. Это нормально: счёт уже выставлен.
-  await page.waitForTimeout(2500);
-  const r = await pool.query('select id, order_id, amount_kop from payment order by id desc limit 1');
-  return r.rows[0];
+
+  /* ⚠️ ЖДЁМ СОБЫТИЯ, А НЕ СЕКУНД, И ЭТО НЕ ПРИДИРКА. Здесь стояла
+     выдержка в 2500 мс, и на раннере она не выдержала: ПЕРВЫЙ заказ
+     на только что поднятом втором сервере идёт заметно дольше
+     остальных, и ссылка на оплату сниматься не успевала. Провал
+     при этом вылезал не там, где сломано, — пустая ссылка читалась
+     как «в ссылке не тот логин магазина». Тот же класс, что гонка
+     со сроком повтора в очереди уведомлений (Р-97): фиксированное
+     время вместо условия.
+
+     Робокасса настроена, значит браузер уходит на её адрес. Сети
+     до неё нет, и переход оборвётся — но запрос к тому моменту уже
+     случился, и в нём ровно то, что увидела бы Робокасса. */
+  const srok = Date.now() + 30_000;
+  let stroka = null;
+  for (;;) {
+    stroka =
+      (await pool.query('select id, order_id, amount_kop from payment where id > $1 order by id desc limit 1', [bylo]))
+        .rows[0] ?? null;
+    if (stroka && posledniyaSsylka) return stroka;
+    if (Date.now() > srok) break;
+    await new Promise((gotovo) => setTimeout(gotovo, 100));
+  }
+
+  /* Не «не прошло», а чего именно не хватило: без этого пустая
+     ссылка снова притворится чужой ошибкой. */
+  const vidno = await page.evaluate(() => document.body.innerText.slice(0, 300)).catch(() => '');
+  console.log(`  ДИАГНОЗ порт ${port}: платёж ${stroka ? stroka.id : 'НЕ СОЗДАН'}, ссылка ${posledniyaSsylka || 'НЕ СНЯТА'}`);
+  console.log(`  ДИАГНОЗ страница ${page.url()}`);
+  console.log(`  ДИАГНОЗ текст: ${vidno.replace(/\s+/g, ' ')}`);
+  throw new Error(`заказ ${plan}/${period} на порту ${port} не дошёл до оплаты за 30 с`);
 }
 
 console.log('── ССЫЛКА НА ОПЛАТУ ──');
@@ -284,6 +316,11 @@ chk('счёт выставлен на боевых ключах', Boolean(pb), p
 {
   const q = razobratSsylku(posledniyaSsylka);
   const chekJson = decodeURIComponent(q.Receipt ?? '');
+  /* ⚠️ СНАЧАЛА — ЧТО ССЫЛКА ВООБЩЕ СНЯТА. Без этой строки пустая
+     ссылка проходит проверку «IsTest нет вовсе» по построению
+     (в пустоте нет ничего) и валит следующую — «не тот логин».
+     Ровно так выкладка № 85 и соврала о причине. */
+  chk('браузер ушёл на Робокассу и в боевом режиме', posledniyaSsylka.startsWith('https://auth.robokassa.ru/'), posledniyaSsylka.slice(0, 60));
   chk('в боевом режиме IsTest в ссылке нет вовсе', q.IsTest === undefined, q.IsTest ?? 'нет');
   chk('в ссылке боевой логин магазина', q.MerchantLogin === 'spotikshop', q.MerchantLogin);
   chk(
