@@ -1,5 +1,7 @@
 /*
-  ADMIN. Interface language is English — that is the brief.
+  АДМИНКА. Интерфейс двуязычный: русский и английский, по умолчанию
+  русский, переключатель в шапке. Все надписи живут в одном месте —
+  lib/admin/slova.ts, — и ни одна не пишется в разметке.
 
   Plain and legible on purpose: beauty is secondary here, and an
   operator reading credentials from the screen needs contrast and
@@ -32,6 +34,23 @@
 .ad__nav a { color: var(--dim); }
 .ad__nav a:hover, .ad__nav a[aria-current] { color: #fff; }
 .ad__who { margin-left: auto; color: var(--dim-2); font-size: 13px; }
+
+/* Переключатель языка: две кнопки, а не список — языков ровно два,
+   и лишний щелчок здесь не нужен. Виден всегда, включая вход. */
+.ad__lang { display: flex; gap: 2px; }
+.ad__lang-btn {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--dim-2);
+  cursor: pointer;
+}
+.ad__lang-btn:hover { color: #fff; }
+.ad__lang-btn[aria-current] { color: var(--ink); background: var(--green); }
 
 .ad h1 { font-size: clamp(1.5rem, 3.2vw, 2rem); margin: 0 0 6px; font-variation-settings: 'wght' 720; letter-spacing: -0.02em; }
 .ad h2 { font-size: 1.0625rem; margin: 28px 0 12px; font-variation-settings: 'wght' 680; }

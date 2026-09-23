@@ -33,6 +33,20 @@ on:
         description: 'Первые администраторы: адреса через запятую (пусто — не менять)'
         type: string
         default: ''
+      # ⚠️ БОЕВОЙ РЕЖИМ ПЕРЕКЛЮЧАЕТСЯ ОТСЮДА, А НЕ РУКОЙ НА СЕРВЕРЕ.
+      # Одна эта величина меняет и флажок `IsTest`, и ПАРУ ПАРОЛЕЙ:
+      # боевые пароли в тестовом режиме дают ошибку 29 («неверная
+      # подпись»), неотличимую на глаз от ошибки в формуле. Умолчание —
+      # «не менять»: прогон настройки, сделанный ради сертификата
+      # или nginx, режим оплаты не трогает.
+      robokassa_rezhim:
+        description: 'Режим Робокассы'
+        type: choice
+        default: 'не менять'
+        options:
+          - 'не менять'
+          - 'тест'
+          - 'бой'
 
 concurrency:
   # Настройка и выкладка делят один сервер: одновременно им там делать
@@ -246,6 +260,8 @@ jobs:
           zadat SMTP_USER ""
           zadat SMTP_PASS ""
           zadat SMTP_FROM "Spotik Shop <no-reply@spotik.shop>"
+          zadat TELEGRAM_BOT_TOKEN ""
+          zadat TELEGRAM_CHAT_ID ""
           # ⚠️ ИМИТАТОРА ОПЛАТЫ НА БОЕВОМ СЕРВЕРЕ НЕТ НИ ПРИ КАКОМ
           # РАСКЛАДЕ. Он живёт только в проверках — в CI и на своей
           # машине, — и секрет ему задаёт сам сторож. Прежние прогоны
@@ -684,19 +700,32 @@ jobs:
       # ⚠️ ПУСТОЙ СЕКРЕТ ЗНАЧИТ «НЕ ТРОГАТЬ», А НЕ «ОЧИСТИТЬ». Пока
       # ящика нет, письма идут в журнал сервера — это прямая
       # постановка; случайно затереть настроенную почту прогоном
-      # настройки нельзя (Р-92).
-      - name: Отвезти почту и список администраторов
+      # настройки нельзя (Р-92). То же и с ключами Робокассы: пустой
+      # секрет не стирает уже настроенный магазин.
+      - name: Отвезти почту, администраторов, Робокассу и Телеграм
         env:
           ADMINS: ${{ inputs.admins }}
+          RK_REZHIM: ${{ inputs.robokassa_rezhim }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
           SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
+          ROBOKASSA_LOGIN: ${{ secrets.ROBOKASSA_LOGIN }}
+          ROBOKASSA_PASS1: ${{ secrets.ROBOKASSA_PASS1 }}
+          ROBOKASSA_PASS2: ${{ secrets.ROBOKASSA_PASS2 }}
+          ROBOKASSA_TEST_PASS1: ${{ secrets.ROBOKASSA_TEST_PASS1 }}
+          ROBOKASSA_TEST_PASS2: ${{ secrets.ROBOKASSA_TEST_PASS2 }}
+          ROBOKASSA_ALGO: ${{ secrets.ROBOKASSA_ALGO }}
+          ROBOKASSA_ALGO_RESULT: ${{ secrets.ROBOKASSA_ALGO_RESULT }}
+          ROBOKASSA_ALGO_SUCCESS: ${{ secrets.ROBOKASSA_ALGO_SUCCESS }}
+          ROBOKASSA_SNO: ${{ secrets.ROBOKASSA_SNO }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python3 - > /tmp/remote/extra.env <<'PY'
-          import os
+          import os, sys
 
           # SMTP_SECURE обычно забывают, а у Яндекс 360 порт 465 —
           # это неявный TLS, и без признака отправка молча не идёт.
@@ -706,6 +735,23 @@ jobs:
           if not secure and port:
               secure = '1' if port == '465' else '0'
 
+          # ⚠️ АЛГОРИТМ ХЕША ПРОВЕРЯЕМ ЗДЕСЬ, А НЕ НА СЕРВЕРЕ.
+          # Приложение неизвестное значение молча заменяет на md5
+          # (иначе оплата упала бы на опечатке), и опечатка вылезла бы
+          # ошибкой 29 — «неверная подпись», неотличимой от ошибки
+          # в формуле. Пусть лучше прогон настройки честно упадёт.
+          MOZHNO = ('md5', 'ripemd160', 'sha1', 'sha256', 'sha384', 'sha512')
+          def algoritm(imya):
+              v = os.environ.get(imya, '').strip().lower()
+              if v and v not in MOZHNO:
+                  sys.exit(f'{imya}={v}: такого алгоритма у Робокассы нет, годятся {", ".join(MOZHNO)}')
+              return v
+
+          # Режим: «не менять» не кладёт ничего, и прогон настройки,
+          # сделанный ради сертификата, оплату не переключает.
+          rezhim = os.environ.get('RK_REZHIM', '').strip()
+          test = {'тест': '1', 'бой': '0'}.get(rezhim, '')
+
           pary = [
               ('SPOTIK_ADMINS', os.environ.get('ADMINS', '').strip()),
               ('SMTP_HOST', os.environ.get('SMTP_HOST', '').strip()),
@@ -714,6 +760,18 @@ jobs:
               ('SMTP_PASS', os.environ.get('SMTP_PASS', '')),
               ('SMTP_FROM', os.environ.get('SMTP_FROM', '').strip()),
               ('SMTP_SECURE', secure),
+              ('ROBOKASSA_LOGIN', os.environ.get('ROBOKASSA_LOGIN', '').strip()),
+              ('ROBOKASSA_PASS1', os.environ.get('ROBOKASSA_PASS1', '')),
+              ('ROBOKASSA_PASS2', os.environ.get('ROBOKASSA_PASS2', '')),
+              ('ROBOKASSA_TEST_PASS1', os.environ.get('ROBOKASSA_TEST_PASS1', '')),
+              ('ROBOKASSA_TEST_PASS2', os.environ.get('ROBOKASSA_TEST_PASS2', '')),
+              ('ROBOKASSA_ALGO', algoritm('ROBOKASSA_ALGO')),
+              ('ROBOKASSA_ALGO_RESULT', algoritm('ROBOKASSA_ALGO_RESULT')),
+              ('ROBOKASSA_ALGO_SUCCESS', algoritm('ROBOKASSA_ALGO_SUCCESS')),
+              ('ROBOKASSA_SNO', os.environ.get('ROBOKASSA_SNO', '').strip()),
+              ('ROBOKASSA_TEST', test),
+              ('TELEGRAM_BOT_TOKEN', os.environ.get('TELEGRAM_BOT_TOKEN', '').strip()),
+              ('TELEGRAM_CHAT_ID', os.environ.get('TELEGRAM_CHAT_ID', '').strip()),
           ]
           for imya, znachenie in pary:
               if znachenie:
@@ -768,6 +826,73 @@ jobs:
           # Ни одного АКТИВНОГО администратора — в админку не войдёт никто.
           echo "$spisok" | grep -q 'admin disabled=f' \
             || echo "::warning::активных администраторов нет: задайте вход admins при запуске настройки"
+
+      # ⚠️ СПРАШИВАЕМ ОКРУЖЕНИЕ ЖИВОЙ СЛУЖБЫ, А НЕ `/srv/spotik/env`.
+      # Файл правим мы сами, и наша же ошибка в нём спряталась бы
+      # от нашей же проверки (Р-47). В `/proc/<pid>/environ` лежит
+      # то, что ДЕЙСТВИТЕЛЬНО прочитал systemd и с чем работает
+      # процесс: строка там доказывает всю цепочку — секрет доехал,
+      # файл прочитан, служба перезапущена.
+      #
+      # ⚠️ В ЖУРНАЛ УХОДЯТ ТОЛЬКО ИМЕНА И ФАКТ НАЛИЧИЯ. Значения —
+      # пароли магазина и токен бота; печатать их нельзя ни при каком
+      # раскладе. Исключение одно: `ROBOKASSA_TEST` — это режим,
+      # а не секрет, и видеть его надо.
+      - name: Проверить Робокассу и Телеграм
+        run: |
+          set -euo pipefail
+          # ⚠️ СКРИПТ КЛАДЁТСЯ ФАЙЛОМ, А НЕ УХОДИТ В `bash -s`: иначе
+          # скрипт и стандартный ввод — одно и то же, и первая же
+          # команда, читающая ввод, съедает остаток (Р-77).
+          cat > /tmp/remote/check.sh <<'SCRIPT'
+          #!/usr/bin/env bash
+          pid=$(systemctl show -p MainPID --value spotik 2>/dev/null || echo 0)
+          if [ "${pid:-0}" = 0 ]; then echo "служба spotik не запущена"; exit 0; fi
+          okr() { tr '\0' '\n' < "/proc/$pid/environ"; }
+          est()   { okr | grep -q "^$1=." && echo "задан" || echo "НЕ задан"; }
+          znach() { okr | sed -n "s/^$1=//p" | head -1; }
+          for n in ROBOKASSA_LOGIN ROBOKASSA_PASS1 ROBOKASSA_PASS2 ROBOKASSA_TEST_PASS1 ROBOKASSA_TEST_PASS2; do
+            echo "$n: $(est "$n")"
+          done
+          echo "ROBOKASSA_TEST: $(znach ROBOKASSA_TEST) (1 — тестовый режим, 0 — боевой)"
+          algo=$(znach ROBOKASSA_ALGO)
+          echo "ROBOKASSA_ALGO: ${algo:-не задан, значит md5}"
+          for n in TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID; do
+            echo "$n: $(est "$n")"
+          done
+
+          # ⚠️ TELEGRAM ТОЛЬКО ПО IPv6. У российских серверов
+          # api.telegram.org по IPv4 недоступен вовсе, и «счастливые
+          # глаза» дали бы таймаут на каждой отправке. Здесь это
+          # ПРОВЕРЯЕТСЯ С САМОГО СЕРВЕРА, а не предполагается.
+          echo "AAAA api.telegram.org: $(getent ahostsv6 api.telegram.org | awk '{print $1}' | sort -u | paste -sd, - || echo 'НЕ РЕЗОЛВИТСЯ')"
+          curl -6 -sS -o /dev/null --max-time 15 \
+            -w 'telegram по IPv6: HTTP %{http_code} через %{remote_ip}\n' https://api.telegram.org/ \
+            || echo "telegram по IPv6: НЕ ОТВЕТИЛ — уведомления работать не будут"
+          curl -4 -sS -o /dev/null --max-time 8 \
+            -w 'telegram по IPv4: HTTP %{http_code} через %{remote_ip}\n' https://api.telegram.org/ \
+            || echo "telegram по IPv4: не отвечает — так и ожидается"
+
+          # ⚠️ ТОКЕН НЕ УХОДИТ В КОМАНДНУЮ СТРОКУ: он лежит в адресе,
+          # а командная строка видна в `ps` всё время работы запроса.
+          # Поэтому адрес едет файлом с правами 600 и стирается сразу.
+          tok=$(znach TELEGRAM_BOT_TOKEN)
+          if [ -n "$tok" ]; then
+            umask 077
+            printf 'url = "https://api.telegram.org/bot%s/getMe"\n' "$tok" > /tmp/tg.conf
+            otvet=$(curl -6 -sS --max-time 15 -w ' | HTTP %{http_code} через %{remote_ip}' -K /tmp/tg.conf 2>&1 || echo 'не ответил')
+            rm -f /tmp/tg.conf
+            case "$otvet" in
+              *'"ok":true'*) echo "бот отвечает:${otvet##*|}" ;;
+              *) echo "бот НЕ подтвердился:${otvet##*|}" ;;
+            esac
+          else
+            echo "бот: токена нет — уведомления идут в журнал сервера"
+          fi
+          SCRIPT
+          bash -n /tmp/remote/check.sh
+          ssh spotik 'cat > /tmp/spotik-check.sh' < /tmp/remote/check.sh
+          ssh spotik 'bash /tmp/spotik-check.sh; r=$?; rm -f /tmp/spotik-check.sh; exit $r' | sed 's/^/  /'
 
       - name: Проверить снаружи
         run: |

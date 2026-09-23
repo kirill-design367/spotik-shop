@@ -5,14 +5,18 @@ import { bazaEst, zapros } from '@/lib/server/db';
 import { katalogPoUmolchaniyu, SROKI } from '@/lib/server/catalog';
 import { srokSertifikataDney } from '@/lib/server/settings';
 import { DARIMYE } from '@/lib/plans';
+import { yazykSotrudnika } from '@/lib/server/yazyk';
+import { slovar } from '@/lib/admin/slova';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AdminSettings() {
-  if (!bazaEst()) return <p className="err">No database configured on this server.</p>;
   const s = await ktoSotrudnik();
+  const y = await yazykSotrudnika(s);
+  const t = slovar(y);
+  if (!bazaEst()) return <p className="err">{t('o.no_db')}</p>;
   if (!s) redirect('/admin/login/');
-  if (s.role !== 'admin') return <p className="err">Administrators only.</p>;
+  if (s.role !== 'admin') return <p className="err">{t('o.only_admin')}</p>;
 
   const izBazy = new Map<string, number>();
   for (const r of await zapros<{ plan_id: string; period: number; price_kop: string }>(
@@ -21,7 +25,7 @@ export default async function AdminSettings() {
     izBazy.set(`${r.plan_id}-${r.period}`, Number(r.price_kop));
   }
   const umolchaniya = new Map<string, number>();
-  for (const t of katalogPoUmolchaniyu()) for (const c of t.ceny) umolchaniya.set(`${t.id}-${c.period}`, c.kop);
+  for (const p of katalogPoUmolchaniyu()) for (const c of p.ceny) umolchaniya.set(`${p.id}-${c.period}`, c.kop);
 
   /* ⚠️ КАРТОЧКИ СЕРТИФИКАТА ЗДЕСЬ НЕТ ВОВСЕ (Р-93): своей цены
      у сертификата больше не бывает, он стоит ровно столько, сколько
@@ -39,10 +43,12 @@ export default async function AdminSettings() {
         period: s2.key,
         label: s2.label,
         rub: kop === undefined ? '' : String(kop / 100),
-        iz: baz !== undefined ? 'база' : um !== undefined ? 'умолчание' : '—',
+        /* ⚠️ ОТКУДА ВЗЯЛАСЬ ЦЕНА — ЭТО НАДПИСЬ, А НЕ ДАННЫЕ: она
+           переводится, поэтому сюда едет признак, а не слово. */
+        iz: baz !== undefined ? 'baza' : um !== undefined ? 'umolchanie' : 'net',
       });
     }
   }
 
-  return <Prices rows={rows} days={await srokSertifikataDney()} />;
+  return <Prices rows={rows} days={await srokSertifikataDney()} y={y} />;
 }

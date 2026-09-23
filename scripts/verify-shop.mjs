@@ -65,6 +65,15 @@ const server = await serveOut(PORT, {
     SPOTIK_SITE_URL: `http://localhost:${PORT}`,
     SPOTIK_FAKE_PAY_SECRET: 'proverka',
     ROBOKASSA_TEST: '1',
+    /* ⚠️ TELEGRAM НАСТРОЕН, НО НЕДОСТУПЕН — И ЭТО ПРОВЕРЯЕМЫЙ СЛУЧАЙ.
+       Постановка: «если Telegram не ответил, заказ всё равно
+       создаётся, уведомление в журнал и повтор позже». Адрес уведён
+       на закрытый порт: отказ приходит мгновенно, ждать настоящего
+       таймаута в пятнадцать секунд на каждое событие незачем. */
+    TELEGRAM_BOT_TOKEN: 'proverochnyy-token',
+    TELEGRAM_CHAT_ID: '-1001',
+    TELEGRAM_API_BASE: 'https://127.0.0.1:9',
+    TELEGRAM_IP_FAMILY: '0',
   },
 });
 
@@ -196,9 +205,39 @@ admin.on('pageerror', (e) => oshibkiJS.push(String(e.message)));
 await voyti(admin, ADMIN, '/admin/login/');
 chk('администратор вошёл', admin.url().includes('/admin'), admin.url().replace(`http://localhost:${PORT}`, ''));
 const ochered = await admin.textContent('body');
-chk('заказ виден в очереди', /Order queue/.test(ochered ?? '') && /На двоих/.test(ochered ?? ''));
+chk('заказ виден в очереди', /Очередь заказов/.test(ochered ?? '') && /На двоих/.test(ochered ?? ''));
 
-await nazhat(admin, 'button:has-text("Take")');
+/*
+ * ── АДМИНКА НА ДВУХ ЯЗЫКАХ ────────────────────────────────────────
+ *
+ * ⚠️ «ЗА ПОЛЬЗОВАТЕЛЕМ» ПРОВЕРЯЕТСЯ ПО БАЗЕ, А НЕ ПО ПЕРЕЗАГРУЗКЕ.
+ * Постановка требует, чтобы выбор помнился за ЧЕЛОВЕКОМ, а не
+ * за браузером, — а перезагрузка страницы прошла бы одинаково
+ * и с кукой, и без неё. Отличает их только то, где значение лежит:
+ * в строке сотрудника оно переедет с ним на другую машину, в куке —
+ * нет. Поэтому смотрим саму строку.
+ *
+ * ⚠️ ВТОРЫМ ВХОДОМ ИЗ ЧИСТОГО КОНТЕКСТА ЭТО НЕ ПРОВЕРИТЬ: код входа
+ * выдаётся не чаще одного в минуту (Р-86), и повторный вход тем же
+ * адресом честно упирается в это ограничение.
+ */
+console.log('── АДМИНКА НА ДВУХ ЯЗЫКАХ ──');
+chk('по умолчанию русский', /Очередь заказов/.test(ochered ?? ''));
+await nazhat(admin, '.ad__lang-btn[value="en"]');
+const poAngl = await admin.textContent('body');
+chk('переключился на английский', /Order queue/.test(poAngl ?? '') && !/Очередь заказов/.test(poAngl ?? ''));
+chk('атрибут языка сменился', (await admin.getAttribute('main.ad', 'lang')) === 'en');
+const vBaze = await p2.query('select lang from staff where email = $1', [ADMIN]);
+chk('выбор лёг В СТРОКУ СОТРУДНИКА, а не только в куку', vBaze.rows[0]?.lang === 'en', String(vBaze.rows[0]?.lang));
+await admin.goto(`http://localhost:${PORT}/admin/settings/`, { waitUntil: 'networkidle' });
+chk('язык держится на другой странице раздела', /Prices/.test((await admin.textContent('body')) ?? ''));
+await admin.goto(`http://localhost:${PORT}/admin/`, { waitUntil: 'networkidle' });
+
+await nazhat(admin, '.ad__lang-btn[value="ru"]');
+const nazad = await admin.textContent('body');
+chk('вернулся на русский', /Очередь заказов/.test(nazad ?? ''));
+
+await nazhat(admin, 'button:has-text("Взять")');
 chk('заказ взят и открылся', /\/admin\/orders\//.test(admin.url()), admin.url().replace(`http://localhost:${PORT}`, ''));
 const karta = await admin.textContent('body');
 chk('оператору виден пароль клиента', /ochen-tayny-parol/.test(karta ?? ''));
@@ -206,24 +245,59 @@ chk('оператору виден пароль клиента', /ochen-tayny-pa
 await admin.fill('input[name="login"]', 'novyy@pochta.test');
 await admin.fill('input[name="mailPass"]', 'pochta-123');
 await admin.fill('input[name="spotifyPass"]', 'spotify-456');
-await nazhat(admin, 'button:has-text("Save credentials")');
-await nazhat(admin, 'button:has-text("Premium is on")');
-await nazhat(admin, 'button:has-text("Mark the whole order done")');
+await nazhat(admin, 'button:has-text("Сохранить доступы")');
+await nazhat(admin, 'button:has-text("Premium включён")');
+await nazhat(admin, 'button:has-text("Отметить весь заказ")');
 const posle = await admin.textContent('body');
-chk('заказ закрыт', /Order is closed/.test(posle ?? '') && /State\s*done/.test((posle ?? '').replace(/\s+/g, ' ')));
+/* ⚠️ `\s*`, А НЕ ПРОБЕЛ: подпись и значение стоят соседними `dt`
+   и `dd`, и между ними в `textContent` нет ни одного знака. */
+chk('заказ закрыт', /Заказ закрыт/.test(posle ?? '') && /Состояние\s*выполнен/.test((posle ?? '').replace(/\s+/g, ' ')));
 
 await klient.reload({ waitUntil: 'networkidle' });
 const telo2 = await klient.textContent('body');
 chk('кабинет показывает выданные доступы', /novyy@pochta\.test/.test(telo2 ?? '') && /spotify-456/.test(telo2 ?? ''));
 chk('заказ в кабинете «Готов»', /Готов/.test(telo2 ?? ''));
 
+console.log('── TELEGRAM НЕ ОТВЕТИЛ: ОПЛАТА ЦЕЛА, УВЕДОМЛЕНИЕ В ОЧЕРЕДИ ──');
+const ochered2 = await p2.query(
+  'select vid, tekst, popytok, sent_at, sleduyushchaya_v > now() as pozzhe from notify_outbox order by id',
+);
+const oplachen = ochered2.rows.find((r) => r.vid === 'zakaz_oplachen');
+const zakryt = ochered2.rows.find((r) => r.vid === 'zakaz_zakryt');
+chk('оплата прошла, хотя Telegram недоступен', ochered2.rows.length > 0 && bad === 0);
+chk(
+  'уведомление об оплате легло в очередь',
+  Boolean(oplachen) && /Новый оплаченный заказ № 1/.test(oplachen?.tekst ?? ''),
+);
+chk(
+  'в уведомлении тариф, срок, число участников и ссылка в админку',
+  /На двоих/.test(oplachen?.tekst ?? '') &&
+    /год/.test(oplachen?.tekst ?? '') &&
+    /Участников: 2/.test(oplachen?.tekst ?? '') &&
+    /\/admin\/orders\/1\//.test(oplachen?.tekst ?? ''),
+  (oplachen?.tekst ?? '').replace(/\n/g, ' · '),
+);
+chk('уведомление о выполнении называет исполнителя', /Исполнитель: admin@spotik\.test/.test(zakryt?.tekst ?? ''));
+/* ⚠️ ПОПЫТОК МОЖЕТ БЫТЬ УЖЕ НЕ ОДНА, И ЭТО НОРМА: минутный будильник
+   очереди успевает сработать за время прогона. Проверяется не число,
+   а состояние — не отправлено и назначено на ПОЗЖЕ. */
+chk(
+  'не отправлено и назначен повтор',
+  Number(oplachen?.popytok) >= 1 && oplachen?.sent_at === null && oplachen?.pozzhe === true,
+  `попыток ${oplachen?.popytok}`,
+);
+chk('адрес сотрудника в журнал целиком не попал', !server.zhurnal().includes('kto="admin@spotik.test"'));
+
 console.log('── СЕРТИФИКАТ НА ЛЮБОЙ ТАРИФ: покупка «на двоих» ──');
 /* ⚠️ ОТДЕЛЬНОЙ ЦЕНЫ У СЕРТИФИКАТА БОЛЬШЕ НЕТ (Р-93): он стоит ровно
    столько, сколько подаренный тариф на выбранный срок. Значит и строки
    в админских ценах у него быть не должно — проверяем это прямо. */
 await admin.goto(`http://localhost:${PORT}/admin/settings/`, { waitUntil: 'networkidle' });
-const ceny = await admin.textContent('body');
-chk('цены сертификата в админке нет', !/Сертификат/.test(ceny ?? ''));
+/* ⚠️ СМОТРИМ ТАБЛИЦУ, А НЕ ВСЮ СТРАНИЦУ. В шапке раздела стоит пункт
+   «Сертификаты», и проверка по телу страницы падала бы на нём —
+   то есть на собственном меню, а не на цене. */
+const ceny = await admin.textContent('table');
+chk('цены сертификата в админке нет', !/Сертификат/i.test(ceny ?? ''));
 
 const CENA_DUO_6 = 289000; // копейки, умолчание duo на полгода
 await klient.goto(`http://localhost:${PORT}/checkout/?plan=duo&period=6&gift=1`, { waitUntil: 'networkidle' });
@@ -303,7 +377,7 @@ chk('код одноразовый', /уже активирован/.test(povtor
 console.log('── АДМИНИСТРАТОР ВИДИТ ВЫПУЩЕННЫЕ СЕРТИФИКАТЫ ──');
 await admin.goto(`http://localhost:${PORT}/admin/certificates/`, { waitUntil: 'networkidle' });
 const spisokSert = ((await admin.textContent('body')) ?? '').replace(/\s+/g, ' ');
-chk('в списке есть тариф, срок и статус', /На двоих/.test(spisokSert) && /6 мес/.test(spisokSert) && /used/.test(spisokSert));
+chk('в списке есть тариф, срок и статус', /На двоих/.test(spisokSert) && /6 мес/.test(spisokSert) && /использован/.test(spisokSert));
 chk('видно, кто купил и кто активировал', spisokSert.includes(KLIENT) && spisokSert.includes(DARENYY));
 chk('кода сертификата в админке нет', !spisokSert.includes(kodSert) && spisokSert.includes(`…${kodSert.slice(-4)}`));
 
@@ -320,24 +394,27 @@ console.log('── ОТМЕНА: СНАЧАЛА ПИСЬМО, ПОТОМ ДЕН
    пароле (закон 37) и то, что сертификат от отмены оживает. */
 await admin.goto(`http://localhost:${PORT}/admin/`, { waitUntil: 'networkidle' });
 const ocheredDara = await admin.textContent('body');
-chk('подарочный заказ помечен в очереди', /gift/.test(ocheredDara ?? ''));
-await nazhat(admin, 'button:has-text("Take")');
+chk('подарочный заказ помечен в очереди', /подарок/.test(ocheredDara ?? ''));
+await nazhat(admin, 'button:has-text("Взять")');
 const kartaDara = await admin.textContent('body');
-chk('оператор видит, что заказ подарочный', /gift/.test(kartaDara ?? '') && /gift certificate was redeemed/.test(kartaDara ?? ''));
+chk(
+  'оператор видит, что заказ подарочный',
+  /подарок/.test(kartaDara ?? '') && /денег нет/.test(kartaDara ?? ''),
+);
 
 await admin.fill('input[name="reason"]', 'Проверка отмены');
-await nazhat(admin, 'button:has-text("Cancel order")');
+await nazhat(admin, 'button:has-text("Отменить заказ")');
 const rano = await admin.textContent('body');
-chk('до письма отмена не проходит', /Send the password-recovery email first/.test(rano ?? ''));
+chk('до письма отмена не проходит', /Сначала отправьте письмо/.test(rano ?? ''));
 
-await nazhat(admin, 'button:has-text("Password does not work")');
+await nazhat(admin, 'button:has-text("Пароль не подошёл")');
 const posleP = await admin.textContent('body');
-chk('письмо о восстановлении отправлено', /Recovery instructions sent/.test(posleP ?? ''));
+chk('письмо о восстановлении отправлено', /Инструкция по восстановлению отправлена/.test(posleP ?? ''));
 
 await admin.fill('input[name="reason"]', 'Проверка отмены');
-await nazhat(admin, 'button:has-text("Cancel order")');
+await nazhat(admin, 'button:has-text("Отменить заказ")');
 const otmena = await admin.textContent('body');
-chk('заказ отменён', /Order is cancelled/.test(otmena ?? ''));
+chk('заказ отменён', /Заказ отменён/.test(otmena ?? ''));
 const sert2 = await p2.query('select used_at, used_order_id from certificate');
 chk('сертификат снова годен', sert2.rows[0].used_at === null && sert2.rows[0].used_order_id === null);
 

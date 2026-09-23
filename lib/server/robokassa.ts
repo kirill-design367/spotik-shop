@@ -26,15 +26,36 @@
 
 import { createHash } from 'node:crypto';
 import { env } from './env';
+import { log } from './log';
 import { rubliStrokoy } from './money';
 
 export const ADRES_OPLATY = 'https://auth.robokassa.ru/Merchant/Index.aspx';
 
 export type Algoritm = 'md5' | 'ripemd160' | 'sha1' | 'sha256' | 'sha384' | 'sha512';
 
+const ALGORITMY: Algoritm[] = ['md5', 'ripemd160', 'sha1', 'sha256', 'sha384', 'sha512'];
+
+/**
+ * ⚠️ АЛГОРИТМ ЗАДАЁТСЯ НАСТРОЙКОЙ, А НЕ ЗАШИТ. У каждого адреса
+ * в кабинете Робокассы он свой, и умолчание кабинета — md5; наше
+ * умолчание такое же, поэтому НЕ ЗАДАННАЯ настройка работает.
+ *
+ * Неизвестное значение НЕ роняет оплату: сорванная подпись — это
+ * ошибка 29, неотличимая на глаз от ошибки в формуле, и час
+ * недоумения. Вместо этого берём md5 и говорим об этом в журнал
+ * ОДИН раз — `nastroyki()` зовут на каждый платёж, и warn оттуда
+ * забил бы журнал. Настройку сервера при таком значении роняет
+ * сам прогон: он проверяет имя алгоритма до того, как его везти.
+ */
+const skazali = new Set<string>();
+
 function algo(v: string): Algoritm {
-  const spisok: Algoritm[] = ['md5', 'ripemd160', 'sha1', 'sha256', 'sha384', 'sha512'];
-  return (spisok as string[]).includes(v) ? (v as Algoritm) : 'md5';
+  if ((ALGORITMY as string[]).includes(v)) return v as Algoritm;
+  if (v && !skazali.has(v)) {
+    skazali.add(v);
+    log.warn('алгоритм хеша Робокассы не опознан, работаем по md5', { zadan: v });
+  }
+  return 'md5';
 }
 
 export type Nastroyki = {

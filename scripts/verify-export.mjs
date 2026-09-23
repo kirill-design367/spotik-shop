@@ -49,7 +49,7 @@ const PAGES = [
   ['оформление', `${PREFIX}/checkout/`, false],
   ['кабинет', `${PREFIX}/cabinet/`, false],
   ['сертификат', `${PREFIX}/certificate/`, false],
-  ['политика', `${PREFIX}/privacy/`, false],
+  ['оферта', `${PREFIX}/oferta/`, false],
   ['админка', `${PREFIX}/admin/login/`, false],
 ];
 

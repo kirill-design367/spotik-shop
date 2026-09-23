@@ -92,6 +92,11 @@ jobs:
           # ТА ЖЕ версия, которая сейчас встанет.
           mkdir -p release/scripts
           cp -r db release/db
+          # ⚠️ ТЕКСТ ОФЕРТЫ ЕДЕТ РЯДОМ. Страница статическая и читает
+          # файл на сборке, но `standalone` трассирует только импорты,
+          # а не `readFileSync` по вычисляемому пути: без этой строки
+          # оферта на сервере была бы без текста.
+          cp -r content release/content
           cp scripts/migrate.mjs release/scripts/migrate.mjs
 
           test -f release/server.js
@@ -402,10 +407,19 @@ jobs:
           # лежит каталог с самими файлами шрифтов. Префиксная
           # локация nginx однажды забрала страницу себе и ответила
           # отказом вместо неё.
-          for p in /cabinet/ /checkout/ /certificate/ /privacy/ /admin/login/ /fonts/; do
+          for p in /cabinet/ /checkout/ /certificate/ /oferta/ /admin/login/ /fonts/; do
             code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE$p" || echo 000)
             chk "страница $p" 200 "$code"
           done
+
+          # ⚠️ СТАРЫЙ АДРЕС ПОЛИТИКИ ОБЯЗАН ВЕСТИ НА ОФЕРТУ. Ссылки
+          # на него уже могли уехать наружу, а страницы по нему
+          # больше нет: без перенаправления это был бы 404 у людей,
+          # которые открывают документ по старой ссылке.
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/privacy/" || echo 000)
+          chk "старый адрес политики перенаправляет" 308 "$code"
+          kuda=$(curl -sSI --max-time 20 "$BASE/privacy/" | tr -d '\r' | sed -n 's/^[Ll]ocation: //p')
+          case "$kuda" in *"/oferta"*) echo "  ✓ ведёт на $kuda" ;; *) echo "  ✗ ведёт на ${kuda:-никуда}"; fail=1 ;; esac
 
           # ResultURL обязан СУЩЕСТВОВАТЬ и обязан ОТКАЗЫВАТЬ без
           # подписи. Двести здесь было бы хуже пятисотого: значит

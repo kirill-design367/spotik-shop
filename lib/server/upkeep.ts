@@ -43,6 +43,9 @@ export async function ubrat(): Promise<void> {
     }
     await zapros(`delete from login_code where created_at < now() - interval '2 days'`);
     await zapros('delete from session where expires_at < now()');
+    // Ушедшие уведомления держать незачем: разбор беды идёт
+    // по журналу, а неушедшие остаются в очереди до последней попытки.
+    await zapros(`delete from notify_outbox where sent_at is not null and sent_at < now() - interval '14 days'`);
   } catch (e) {
     log.error('уборка не прошла', { text: String((e as Error).message) });
   }

@@ -157,3 +157,14 @@
 .legal h2 { font-size: clamp(1.125rem, 2.4vw, 1.5rem); margin: 32px 0 10px; font-variation-settings: 'wght' 680; }
 .legal p, .legal li { color: var(--dim); max-width: 68ch; }
 .legal ul { padding-left: 20px; }
+.legal section { margin: 0 0 4px; }
+/* Реквизиты исполнителя в конце оферты: пара «что — значение».
+   На узком экране колонки складываются в строки, иначе значение
+   вроде ОГРНИП не помещается рядом с подписью. */
+.legal__req { margin: 12px 0 0; display: grid; gap: 8px; }
+.legal__req > div { display: grid; gap: 2px; }
+@media (min-width: 560px) {
+  .legal__req > div { grid-template-columns: 200px minmax(0, 1fr); gap: 0 20px; align-items: baseline; }
+}
+.legal__req dt { color: var(--dim-2); font-size: 13px; }
+.legal__req dd { margin: 0; color: #fff; overflow-wrap: anywhere; }

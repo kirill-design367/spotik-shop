@@ -123,8 +123,9 @@ export default function CertificateForm({ voshyol }: { voshyol: boolean }) {
           <label className="check">
             <input type="checkbox" name="consent" required />
             <span>
-              Согласен на обработку персональных данных согласно{' '}
-              <a href="/privacy/" target="_blank" rel="noreferrer">политике конфиденциальности</a>.
+              Принимаю условия{' '}
+              <a href="/oferta/" target="_blank" rel="noreferrer">публичной оферты</a>{' '}
+              и согласен на обработку персональных данных.
             </span>
           </label>
           <button type="submit" className="btn btn--wide" disabled={idyot2}>

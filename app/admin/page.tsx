@@ -6,57 +6,66 @@ import { bazaEst } from '@/lib/server/db';
 import { pochtaNastroena } from '@/lib/server/mail';
 import { shifrGotov } from '@/lib/server/crypto';
 import { robokassaRabotaet } from '@/lib/server/robokassa';
+import { telegramNastroen } from '@/lib/server/telegram';
 import { env } from '@/lib/server/env';
+import { yazykSotrudnika } from '@/lib/server/yazyk';
+import { slovar, sostoyanie } from '@/lib/admin/slova';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * Очередь оператора плюс короткая сводка «что на сервере настроено».
  *
- * Сводка не украшение: без неё «письма не приходят» и «пароль
- * не сохраняется» выглядят как поломка кода, а на деле это
- * незаполненное окружение.
+ * Сводка не украшение: без неё «письма не приходят» и «уведомления
+ * не идут» выглядят как поломка кода, а на деле это незаполненное
+ * окружение.
  */
 export default async function AdminHome() {
-  if (!bazaEst()) return <p className="err">No database configured on this server.</p>;
   const s = await ktoSotrudnik();
+  const y = await yazykSotrudnika(s);
+  const t = slovar(y);
+  if (!bazaEst()) return <p className="err">{t('o.no_db')}</p>;
   if (!s) redirect('/admin/login/');
 
   const [rows, closed] = await Promise.all([ochered(), zakrytye(20)]);
+  const kogda = y === 'en' ? 'en-GB' : 'ru-RU';
 
   return (
     <>
-      <h1>Order queue</h1>
-      <p className="hint">Take an order to see the client data and start working on it.</p>
+      <h1>{t('q.h')}</h1>
+      <p className="hint">{t('q.hint')}</p>
 
       <div className="ad__card">
-        <h3>Server setup</h3>
+        <h3>{t('q.setup')}</h3>
         <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--dim)' }}>
-          <li>Email: {pochtaNastroena() ? 'SMTP configured' : 'NOT configured — codes and letters go to the server log'}</li>
-          <li>Credential encryption: {shifrGotov() ? 'key present' : 'NO KEY — passwords cannot be stored'}</li>
           <li>
-            Payments:{' '}
-            {robokassaRabotaet()
-              ? env.rkTest
-                ? 'Robokassa in TEST mode'
-                : 'Robokassa live'
-              : 'Robokassa not configured'}
+            {t('q.mail')}: {pochtaNastroena() ? t('q.mail_on') : t('q.mail_off')}
+          </li>
+          <li>
+            {t('q.crypto')}: {shifrGotov() ? t('q.crypto_on') : t('q.crypto_off')}
+          </li>
+          <li>
+            {t('q.pay')}:{' '}
+            {robokassaRabotaet() ? (env.rkTest ? t('q.pay_test') : t('q.pay_live')) : t('q.pay_off')}
+          </li>
+          <li>
+            {t('q.tg')}: {telegramNastroen() ? t('q.tg_on') : t('q.tg_off')}
           </li>
         </ul>
       </div>
 
-      <Queue rows={rows} me={s.email} />
+      <Queue rows={rows} me={s.email} y={y} />
 
-      <h2>Recently closed</h2>
+      <h2>{t('q.closed')}</h2>
       <div className="ad__scroll">
         <table>
           <thead>
             <tr>
-              <th>#</th>
-              <th>Plan</th>
-              <th>Client</th>
-              <th>State</th>
-              <th>Closed</th>
+              <th>{t('t.num')}</th>
+              <th>{t('t.plan')}</th>
+              <th>{t('t.client')}</th>
+              <th>{t('t.state')}</th>
+              <th>{t('t.closed')}</th>
             </tr>
           </thead>
           <tbody>
@@ -67,8 +76,8 @@ export default async function AdminHome() {
                 </td>
                 <td>{r.plan}</td>
                 <td>{r.client}</td>
-                <td>{r.status}</td>
-                <td>{new Date(r.closedAt).toLocaleString('en-GB')}</td>
+                <td>{sostoyanie(t, r.status)}</td>
+                <td>{new Date(r.closedAt).toLocaleString(kogda)}</td>
               </tr>
             ))}
           </tbody>

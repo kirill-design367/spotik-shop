@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import type { StrokaOcheredi } from '@/lib/server/views';
 import { adminTake } from '@/lib/server/actions-admin';
+import { slovar, type Yazyk } from '@/lib/admin/slova';
 
 /**
  * Очередь заказов, которая обновляется сама.
@@ -15,7 +16,8 @@ import { adminTake } from '@/lib/server/actions-admin';
  * ⚠️ ОБНОВЛЯЕТСЯ ТОЛЬКО ВИДИМАЯ ВКЛАДКА. Оператор держит админку
  * открытой весь день; фоновая вкладка опрашивала бы сервер зря.
  */
-export default function Queue({ rows, me }: { rows: StrokaOcheredi[]; me: string }) {
+export default function Queue({ rows, me, y }: { rows: StrokaOcheredi[]; me: string; y: Yazyk }) {
+  const t = slovar(y);
   const [spisok, setSpisok] = useState(rows);
   const [live, setLive] = useState(true);
 
@@ -44,21 +46,21 @@ export default function Queue({ rows, me }: { rows: StrokaOcheredi[]; me: string
     };
   }, []);
 
-  if (!spisok.length) return <p className="hint">Nothing to do right now. New paid orders appear here by themselves.</p>;
+  if (!spisok.length) return <p className="hint">{t('q.empty')}</p>;
 
   return (
     <>
-      <p className="ad__live">{live ? 'Live — refreshes every 15 s' : 'Connection lost, retrying…'}</p>
+      <p className="ad__live">{live ? t('q.live') : t('q.lost')}</p>
       <div className="ad__scroll">
         <table>
           <thead>
             <tr>
-              <th>#</th>
-              <th>Plan</th>
-              <th>Accounts</th>
-              <th>Term</th>
-              <th>Paid</th>
-              <th>State</th>
+              <th>{t('t.num')}</th>
+              <th>{t('t.plan')}</th>
+              <th>{t('t.accounts')}</th>
+              <th>{t('t.term')}</th>
+              <th>{t('t.paid')}</th>
+              <th>{t('t.state')}</th>
               <th />
             </tr>
           </thead>
@@ -74,17 +76,17 @@ export default function Queue({ rows, me }: { rows: StrokaOcheredi[]; me: string
                       оплачен ЗАРАНЕЕ, покупателем сертификата, и денег
                       за ним не числится вовсе. Без пометки оператор
                       читает нулевую сумму как поломку. */}
-                  {r.bySertificate ? <span className="ad__tag ad__tag--gift">gift</span> : null}
+                  {r.bySertificate ? <span className="ad__tag ad__tag--gift">{t('q.gift')}</span> : null}
                 </td>
                 <td>{r.people}</td>
                 <td>{r.period}</td>
-                <td>{r.paidAt ? new Date(r.paidAt).toLocaleString('en-GB') : '—'}</td>
+                <td>{r.paidAt ? new Date(r.paidAt).toLocaleString(y === 'en' ? 'en-GB' : 'ru-RU') : '—'}</td>
                 <td>
                   {r.status === 'paid' ? (
-                    <span className="ad__tag ad__tag--paid">new</span>
+                    <span className="ad__tag ad__tag--paid">{t('q.new')}</span>
                   ) : (
                     <span className="ad__tag ad__tag--work">
-                      {r.operator === me ? 'yours' : `taken: ${r.operator ?? '—'}`}
+                      {r.operator === me ? t('q.yours') : t('q.taken', { kto: r.operator ?? '—' })}
                     </span>
                   )}
                 </td>
@@ -92,10 +94,10 @@ export default function Queue({ rows, me }: { rows: StrokaOcheredi[]; me: string
                   {r.status === 'paid' ? (
                     <form action={adminTake}>
                       <input type="hidden" name="order" value={r.id} />
-                      <button type="submit" className="btn btn--sm">Take</button>
+                      <button type="submit" className="btn btn--sm">{t('q.take')}</button>
                     </form>
                   ) : (
-                    <a className="btn btn--ghost btn--sm" href={`/admin/orders/${r.id}/`}>Open</a>
+                    <a className="btn btn--ghost btn--sm" href={`/admin/orders/${r.id}/`}>{t('q.open')}</a>
                   )}
                 </td>
               </tr>

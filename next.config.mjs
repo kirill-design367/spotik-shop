@@ -40,6 +40,14 @@ const nextConfig = {
   assetPrefix: BASE,
   env: { NEXT_PUBLIC_BASE_PATH: BASE },
   trailingSlash: true,
+  // ⚠️ СТАРЫЙ АДРЕС ОСТАЁТСЯ ЖИВЫМ. `/privacy/` был заглушкой
+  // политики конфиденциальности; её место занял текст оферты,
+  // и живёт он теперь по своему имени — `/oferta/`. Ссылки
+  // на прежний адрес уже могли уехать наружу, поэтому он
+  // не исчезает, а ведёт туда же.
+  async redirects() {
+    return [{ source: '/privacy', destination: '/oferta/', permanent: true }];
+  },
   reactStrictMode: true,
   productionBrowserSourceMaps: false,
   // ⚠️ ТОЛЬКО КЛИЕНТ. `removeConsole` вырезает вызовы и в серверных

@@ -2,16 +2,21 @@ import './admin.css';
 import type { Metadata } from 'next';
 import { ktoSotrudnik } from '@/lib/server/auth';
 import { adminLogout } from '@/lib/server/actions-admin';
+import { yazykSotrudnika } from '@/lib/server/yazyk';
+import { slovar } from '@/lib/admin/slova';
+import VyborYazyka from '@/components/admin/VyborYazyka';
 
-export const metadata: Metadata = { title: 'Admin — Spotik Shop', robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: 'Админка — Spotik Shop', robots: { index: false, follow: false } };
 export const dynamic = 'force-dynamic';
 
 /**
  * Каркас админки.
  *
- * ⚠️ РАЗДЕЛ ПОМЕЧЕН `lang="en"`: интерфейс там английский
- * по постановке, а документ у сайта русский. Без этого экранный
- * диктор читал бы английские слова по-русски.
+ * ⚠️ `lang` У РАЗДЕЛА ТЕПЕРЬ ПОДВИЖНЫЙ. До этой итерации интерфейс
+ * был только английским, и атрибут стоял `en` намертво. Теперь
+ * языков два, и атрибут обязан идти за выбором: иначе экранный
+ * диктор читал бы русские надписи по-английски — ровно та же беда,
+ * от которой этот атрибут и заводился.
  *
  * Своего `<html>` здесь нет намеренно: второй корневой макет — это
  * два места, где может разъехаться `<head>`, ради одного раздела.
@@ -19,27 +24,35 @@ export const dynamic = 'force-dynamic';
  */
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const s = await ktoSotrudnik();
+  const y = await yazykSotrudnika(s);
+  const t = slovar(y);
   return (
-    <main id="main" className="ad" lang="en" tabIndex={-1}>
+    <main id="main" className="ad" lang={y} tabIndex={-1}>
       <div className="ad__bar">
         <span className="ad__brand">SPOTIK · admin</span>
         {s ? (
           <>
             <nav className="ad__nav">
-              <a href="/admin/">Queue</a>
-              {s.role === 'admin' ? <a href="/admin/settings/">Prices</a> : null}
-              {s.role === 'admin' ? <a href="/admin/certificates/">Certificates</a> : null}
-              {s.role === 'admin' ? <a href="/admin/staff/">Staff</a> : null}
-              <a href="/">Site</a>
+              <a href="/admin/">{t('nav.queue')}</a>
+              {s.role === 'admin' ? <a href="/admin/settings/">{t('nav.prices')}</a> : null}
+              {s.role === 'admin' ? <a href="/admin/certificates/">{t('nav.certs')}</a> : null}
+              {s.role === 'admin' ? <a href="/admin/staff/">{t('nav.staff')}</a> : null}
+              <a href="/">{t('nav.site')}</a>
             </nav>
             <span className="ad__who">
-              {s.email} · {s.role}
+              {s.email} · {s.role === 'admin' ? t('f.role_admin') : t('f.role_op')}
             </span>
+            {/* ⚠️ ПЕРЕКЛЮЧАТЕЛЬ ВИДЕН ВСЕГДА — постановка, — поэтому
+                он стоит и до входа, ниже по разметке: там сотрудника
+                ещё нет, и язык помнит кука. */}
+            <VyborYazyka y={y} />
             <form action={adminLogout}>
-              <button type="submit" className="btn btn--ghost btn--sm">Log out</button>
+              <button type="submit" className="btn btn--ghost btn--sm">{t('nav.logout')}</button>
             </form>
           </>
-        ) : null}
+        ) : (
+          <VyborYazyka y={y} />
+        )}
       </div>
       {children}
     </main>

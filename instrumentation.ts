@@ -9,6 +9,7 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
   const { zavestiUborku } = await import('./lib/server/upkeep');
+  const { zavestiOchered } = await import('./lib/server/notify');
   const { bazaEst } = await import('./lib/server/db');
   const { zavestiPervyhAdminov } = await import('./lib/server/auth');
   const { log } = await import('./lib/server/log');
@@ -23,4 +24,6 @@ export async function register() {
     log.error('первых администраторов завести не вышло', { text: String((e as Error).message) });
   }
   zavestiUborku();
+  // Очередь уведомлений: минутный будильник, повтор неотправленного.
+  zavestiOchered();
 }

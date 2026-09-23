@@ -19,6 +19,7 @@
  */
 
 import { cookies } from 'next/headers';
+import { ponyatYazyk, type Yazyk } from '@/lib/admin/slova';
 import { zapros, odna, tikho } from './db';
 import { novyKodVhoda, novyToken, otpechatok } from './crypto';
 import { env } from './env';
@@ -46,7 +47,20 @@ export function pochtaPohozha(email: string): boolean {
 
 /* ── Сотрудники ────────────────────────────────────────────────── */
 
-export type Sotrudnik = { id: number; email: string; role: 'admin' | 'operator'; disabled: boolean };
+/**
+ * ⚠️ ЯЗЫК ИНТЕРФЕЙСА ЕДЕТ ВМЕСТЕ С СОТРУДНИКОМ, а не спрашивается
+ * отдельным запросом: страница админки и так берёт эту строку
+ * на каждый заход, и второй поход в базу за одним полем был бы
+ * лишним. Выбор хранится ЗА ЧЕЛОВЕКОМ — постановка, — поэтому
+ * он в его строке, а не в куке: кука помнила бы его за устройством.
+ */
+export type Sotrudnik = {
+  id: number;
+  email: string;
+  role: 'admin' | 'operator';
+  disabled: boolean;
+  lang: Yazyk;
+};
 
 /**
  * Первые администраторы заводятся из окружения.
@@ -64,11 +78,13 @@ export async function zavestiPervyhAdminov(): Promise<void> {
 }
 
 export async function sotrudnikPoPochte(email: string): Promise<Sotrudnik | null> {
-  const r = await odna<{ id: string; email: string; role: 'admin' | 'operator'; disabled: boolean }>(
-    'select id, email, role, disabled from staff where email = $1',
+  const r = await odna<{ id: string; email: string; role: 'admin' | 'operator'; disabled: boolean; lang: string }>(
+    'select id, email, role, disabled, lang from staff where email = $1',
     [normPochta(email)],
   );
-  return r ? { id: Number(r.id), email: r.email, role: r.role, disabled: r.disabled } : null;
+  return r
+    ? { id: Number(r.id), email: r.email, role: r.role, disabled: r.disabled, lang: ponyatYazyk(r.lang) }
+    : null;
 }
 
 /* ── Коды ──────────────────────────────────────────────────────── */
@@ -217,8 +233,8 @@ export async function ktoSotrudnik(): Promise<Sotrudnik | null> {
   if (!t) return null;
   const r = await tikho(
     () =>
-      odna<{ id: string; email: string; role: 'admin' | 'operator'; disabled: boolean }>(
-        `select f.id, f.email, f.role, f.disabled
+      odna<{ id: string; email: string; role: 'admin' | 'operator'; disabled: boolean; lang: string }>(
+        `select f.id, f.email, f.role, f.disabled, f.lang
            from session s join staff f on f.id = s.staff_id
           where s.token_hash = $1 and s.scope = 'staff' and s.expires_at > now()`,
         [otpechatok(t)],
@@ -226,5 +242,5 @@ export async function ktoSotrudnik(): Promise<Sotrudnik | null> {
     null,
   );
   if (!r || r.disabled) return null;
-  return { id: Number(r.id), email: r.email, role: r.role, disabled: r.disabled };
+  return { id: Number(r.id), email: r.email, role: r.role, disabled: r.disabled, lang: ponyatYazyk(r.lang) };
 }

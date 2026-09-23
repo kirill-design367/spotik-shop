@@ -19,7 +19,7 @@ import { log } from './log';
 import { soobshchitKomande } from './notify';
 import { pismoZakazGotov, pismoZakazOplachen, pismoZakazOtmenyon } from './letters';
 import { vydatSertifikat } from './certificates';
-import { cenaTarifa, katalog, naytiTarif, srokKratko } from './catalog';
+import { cenaTarifa, katalog, naytiTarif, srokKratko, srokPolno } from './catalog';
 
 export type Status = 'new' | 'paid' | 'in_work' | 'done' | 'cancelled';
 export type Rezhim = 'new' | 'renew';
@@ -234,7 +234,14 @@ async function posleOplaty(zakaz: number): Promise<void> {
   }
 
   await pismoZakazOplachen(z.email, zakaz, nazvanie);
-  await soobshchitKomande({ vid: 'zakaz_oplachen', zakaz, tarif: tarif?.name ?? z.plan_id, mest: tarif?.people ?? 1 });
+  await soobshchitKomande({
+    vid: 'zakaz_oplachen',
+    zakaz,
+    tarif: tarif?.name ?? z.plan_id,
+    srok: srokPolno(z.period).toLowerCase(),
+    mest: tarif?.people ?? 1,
+    podarok: false,
+  });
 }
 
 /**
@@ -259,7 +266,7 @@ export async function zakazPoSertifikatu(opts: {
   uchastniki: VvodUchastnika[];
 }): Promise<number> {
   if (opts.uchastniki.some((u) => u.mode === 'renew') && !shifrGotov()) throw new Error('нет ключа шифрования');
-  return vTranzakcii(async (c) => {
+  const zakaz = await vTranzakcii(async (c) => {
     const pometka = await c.query(
       'update certificate set used_at = now() where id = $1 and used_at is null returning id',
       [opts.certificateId],
@@ -290,6 +297,25 @@ export async function zakazPoSertifikatu(opts: {
     log.info('заказ по сертификату', { order: zakaz, plan: opts.planId, period: opts.period, mest: opts.uchastniki.length });
     return zakaz;
   });
+
+  /* ⚠️ УВЕДОМЛЕНИЕ — ПОСЛЕ ТРАНЗАКЦИИ, А НЕ ВНУТРИ НЕЁ. Внутри оно
+     держало бы соединение с базой на всё время похода в сеть, а при
+     откате команда узнала бы о заказе, которого нет.
+
+     И такой заказ уходит оператору ТАК ЖЕ, как обычный оплаченный:
+     работа по нему та же, разница только в том, что денег за ним нет
+     вовсе — их взяли при покупке сертификата (Р-93). */
+  const spisok = await katalog();
+  const tarif = naytiTarif(spisok, opts.planId);
+  await soobshchitKomande({
+    vid: 'zakaz_oplachen',
+    zakaz,
+    tarif: tarif?.name ?? opts.planId,
+    srok: srokPolno(opts.period).toLowerCase(),
+    mest: opts.uchastniki.length,
+    podarok: true,
+  });
+  return zakaz;
 }
 
 /* ── Работа оператора ──────────────────────────────────────────── */
@@ -366,7 +392,12 @@ export async function zavershitZakaz(zakaz: number, staffId: number): Promise<{ 
     [zakaz],
   );
   if (u) await pismoZakazGotov(u.email, zakaz);
-  await soobshchitKomande({ vid: 'zakaz_zakryt', zakaz });
+  /* ⚠️ «КТО ВЫПОЛНИЛ» БЕРЁТСЯ ИЗ БАЗЫ, А НЕ ИЗ ВЫЗЫВАЮЩЕГО. Заказ
+     закрывает тот, у кого он в работе, и проверено это тем же
+     `update … where operator_id = $2`: адрес, пришедший сбоку,
+     мог бы разойтись с тем, кто на самом деле закрыл. */
+  const f = await odna<{ email: string }>('select email from staff where id = $1', [staffId]);
+  await soobshchitKomande({ vid: 'zakaz_zakryt', zakaz, kto: f?.email ?? `сотрудник ${staffId}` });
   return { ok: true };
 }
 

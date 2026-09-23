@@ -2,6 +2,8 @@ import { redirect } from 'next/navigation';
 import { ktoSotrudnik } from '@/lib/server/auth';
 import { bazaEst } from '@/lib/server/db';
 import { vypushchennyeSertifikaty } from '@/lib/server/views';
+import { yazykSotrudnika } from '@/lib/server/yazyk';
+import { slovar, type Klyuch } from '@/lib/admin/slova';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,38 +20,38 @@ export const dynamic = 'force-dynamic';
  * человек, и недостаточно, чтобы им воспользоваться.
  */
 export default async function AdminCertificates() {
-  if (!bazaEst()) return <p className="err">No database configured on this server.</p>;
   const s = await ktoSotrudnik();
+  const y = await yazykSotrudnika(s);
+  const t = slovar(y);
+  if (!bazaEst()) return <p className="err">{t('o.no_db')}</p>;
   if (!s) redirect('/admin/login/');
-  if (s.role !== 'admin') return <p className="err">Administrators only.</p>;
+  if (s.role !== 'admin') return <p className="err">{t('o.only_admin')}</p>;
 
   const rows = await vypushchennyeSertifikaty();
-  const den = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-GB') : '—');
+  const kogda = y === 'en' ? 'en-GB' : 'ru-RU';
+  const den = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(kogda) : '—');
+  const sostoyanie: Record<string, Klyuch> = { used: 's.used', expired: 's.expired' };
 
   return (
     <>
-      <h1>Gift certificates</h1>
-      <p className="hint">
-        A certificate carries a plan and a term and costs exactly what that plan costs. The code
-        itself is stored encrypted and is visible only to the buyer, in their own cabinet — here
-        you see its last four characters.
-      </p>
+      <h1>{t('s.h')}</h1>
+      <p className="hint">{t('s.hint')}</p>
 
       {!rows.length ? (
-        <p className="hint">No certificates have been issued yet.</p>
+        <p className="hint">{t('s.empty')}</p>
       ) : (
         <div className="ad__scroll">
           <table>
             <thead>
               <tr>
-                <th>Code</th>
-                <th>Gift</th>
-                <th>State</th>
-                <th>Bought by</th>
-                <th>Bought</th>
-                <th>Valid until</th>
-                <th>Activated by</th>
-                <th>Order</th>
+                <th>{t('t.code')}</th>
+                <th>{t('t.gift')}</th>
+                <th>{t('t.state')}</th>
+                <th>{t('t.bought_by')}</th>
+                <th>{t('t.bought')}</th>
+                <th>{t('t.until')}</th>
+                <th>{t('t.activated_by')}</th>
+                <th>{t('t.order')}</th>
               </tr>
             </thead>
             <tbody>
@@ -69,7 +71,7 @@ export default async function AdminCertificates() {
                             : 'ad__tag ad__tag--paid'
                       }
                     >
-                      {r.status}
+                      {t(sostoyanie[r.status] ?? 's.valid')}
                     </span>
                   </td>
                   <td>{r.buyer ?? '—'}</td>
