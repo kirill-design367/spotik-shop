@@ -76,8 +76,13 @@ const KLIENT = 'payer@spotik.test';
 execFileSync(process.execPath, ['scripts/migrate.mjs'], { stdio: 'inherit', env: process.env });
 
 const pool = new pg.Pool({ connectionString: URL_BAZY, max: 1 });
+/* ⚠️ `notify_outbox` ЧИСТИТСЯ ВМЕСТЕ СО ВСЕМ ОСТАЛЬНЫМ. Иначе строка
+   от прошлого прогона совпала бы по номеру заказа с нынешним — номера
+   после `restart identity` начинаются заново, — и проверка уведомления
+   прошла бы по чужому следу (тот же класс, что «последняя строка
+   таблицы» в Р-94). */
 await pool.query(`truncate balance_move, payment, order_slot, certificate, shop_order,
-  session, login_code, app_user, staff, plan_price, setting restart identity cascade`);
+  session, login_code, app_user, staff, plan_price, setting, notify_outbox restart identity cascade`);
 
 const server = await serveOut(PORT, {
   env: {
@@ -85,6 +90,18 @@ const server = await serveOut(PORT, {
     SPOTIK_CRYPTO_KEY: Buffer.from('spotik-proverka-klyuch-32-bayta!').toString('base64'),
     SPOTIK_SITE_URL: `http://localhost:${PORT}`,
     ROBOKASSA_TEST: '1',
+    /* ⚠️ TELEGRAM НАСТРОЕН, НО НЕДОСТУПЕН, И ЭТО НУЖНО ПО СУЩЕСТВУ.
+       Требование заказчика: уведомление о новом оплаченном заказе
+       приходит И В ТЕСТОВОМ РЕЖИМЕ, И В БОЕВОМ — тестовый режим это
+       способ оплаты, а не повод не звать исполнителя. Без токена
+       `soobshchitKomande` выходит молча и в очередь не кладёт ничего,
+       то есть проверять было бы нечего. С токеном и мёртвым адресом
+       отправка честно не удаётся, и текст ложится в очередь — его
+       и видно. */
+    TELEGRAM_BOT_TOKEN: 'proverochnyy-token',
+    TELEGRAM_CHAT_ID: '-1001',
+    TELEGRAM_API_BASE: 'https://127.0.0.1:9',
+    TELEGRAM_IP_FAMILY: '0',
     ROBOKASSA_LOGIN: LOGIN,
     ROBOKASSA_TEST_PASS1: P1,
     ROBOKASSA_TEST_PASS2: P2,
@@ -132,6 +149,23 @@ function razobratSsylku(url) {
   }
   return pary;
 }
+/**
+ * Легло ли уведомление «новый оплаченный заказ» в очередь.
+ *
+ * ⚠️ СУДИМ ПО ТЕКСТУ В ОЧЕРЕДИ, А НЕ ПО ВЫЗОВУ. Строка попадает туда
+ * тем же кодом, который на бою зовёт Telegram, и содержит ровно то,
+ * что увидит исполнитель. Проверять «функцию позвали» значило бы
+ * пользоваться моделью предмета (Р-47).
+ */
+const uvedomlenieOZakaze = async (zakaz) => {
+  const { rows } = await pool.query(
+    `select count(*)::int as n from notify_outbox
+      where vid = 'zakaz_oplachen' and tekst like $1`,
+    [`Новый оплаченный заказ № ${zakaz}%`],
+  );
+  return Number(rows[0]?.n ?? 0) > 0;
+};
+
 const statusZakaza = async (id) =>
   (await pool.query('select status from shop_order where id = $1', [id])).rows[0]?.status;
 
@@ -246,6 +280,7 @@ chk('недоплата принята протоколом, но заказ н�
 r = await poslat({ OutSum: sum, InvId: String(p1.id), SignatureValue: md5(`${sum}:${p1.id}:${P2}`) });
 chk('верная подпись принята', r.status === 200 && r.telo === `OK${p1.id}`, r.telo);
 chk('заказ стал оплаченным', (await statusZakaza(p1.order_id)) === 'paid');
+chk('В ТЕСТОВОМ РЕЖИМЕ уведомление команде легло в очередь', await uvedomlenieOZakaze(p1.order_id), `заказ № ${p1.order_id}`);
 
 r = await poslat({ OutSum: sum, InvId: String(p1.id), SignatureValue: md5(`${sum}:${p1.id}:${P2}`) });
 chk('повтор уведомления не ломает ничего', r.status === 200 && (await statusZakaza(p1.order_id)) === 'paid');
@@ -300,6 +335,18 @@ const boy = await serveOut(PORT_BOY, {
     SPOTIK_CRYPTO_KEY: Buffer.from('spotik-proverka-klyuch-32-bayta!').toString('base64'),
     SPOTIK_SITE_URL: `http://localhost:${PORT_BOY}`,
     ROBOKASSA_TEST: '0',
+    /* ⚠️ TELEGRAM НАСТРОЕН, НО НЕДОСТУПЕН, И ЭТО НУЖНО ПО СУЩЕСТВУ.
+       Требование заказчика: уведомление о новом оплаченном заказе
+       приходит И В ТЕСТОВОМ РЕЖИМЕ, И В БОЕВОМ — тестовый режим это
+       способ оплаты, а не повод не звать исполнителя. Без токена
+       `soobshchitKomande` выходит молча и в очередь не кладёт ничего,
+       то есть проверять было бы нечего. С токеном и мёртвым адресом
+       отправка честно не удаётся, и текст ложится в очередь — его
+       и видно. */
+    TELEGRAM_BOT_TOKEN: 'proverochnyy-token',
+    TELEGRAM_CHAT_ID: '-1001',
+    TELEGRAM_API_BASE: 'https://127.0.0.1:9',
+    TELEGRAM_IP_FAMILY: '0',
     ROBOKASSA_LOGIN: 'spotikshop',
     ROBOKASSA_PASS1: B1,
     ROBOKASSA_PASS2: B2,
@@ -344,6 +391,7 @@ chk('заказ остался неоплаченным', (await statusZakaza(pb
 r = await poslatNa(PORT_BOY, { OutSum: sumB, InvId: String(pb.id), SignatureValue: hesh('sha256', `${sumB}:${pb.id}:${B2}`) });
 chk('БОЕВАЯ подпись по sha256 принята', r.status === 200 && r.telo === `OK${pb.id}`, `${r.status} ${r.telo}`);
 chk('заказ стал оплаченным', (await statusZakaza(pb.order_id)) === 'paid');
+chk('В БОЕВОМ РЕЖИМЕ уведомление команде легло в очередь', await uvedomlenieOZakaze(pb.order_id), `заказ № ${pb.order_id}`);
 
 const imB = await fetch(`http://localhost:${PORT_BOY}/api/pay/fake/?secret=proverka&payment=${pb.id}`, { method: 'POST' });
 chk('имитатора нет и на боевых ключах', imB.status === 404, `статус ${imB.status}`);

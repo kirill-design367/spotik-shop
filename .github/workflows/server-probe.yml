@@ -95,6 +95,45 @@ jobs:
           REMOTE
           echo "::notice::SSH работает"
 
+      # ⚠️ ДВЕРЬ RESULTURL ПРОБУЕТСЯ ЖИВЬЁМ, С НАСТОЯЩЕЙ ПОДПИСЬЮ.
+      # Робокасса повторяет уведомление, пока не получит ровно
+      # `OK<номер счёта>`; если формат ответа другой, она считает
+      # оплату неподтверждённой. Прочитать это в коде мало — надо
+      # увидеть ответ БОЕВОГО сервера.
+      #
+      # ⚠️ СЧЁТ БЕРЁТСЯ ЗАВЕДОМО НЕСУЩЕСТВУЮЩИЙ, и это главное
+      # в пробе. Подпись сходится, обработчик отрабатывает целиком
+      # и отвечает как Робокассе, а менять ему нечего: платежа
+      # с таким номером нет. Ни один настоящий заказ проба
+      # не трогает.
+      - name: Дверь ResultURL живьём
+        env:
+          P2: ${{ secrets.ROBOKASSA_TEST_PASS2 }}
+        run: |
+          set -uo pipefail
+          BASE=https://spotik.shop
+
+          echo "-- адрес БЕЗ слеша: ровно это увидит Робокасса, если в кабинете нет слеша --"
+          curl -sS -o /dev/null -D - --max-time 20 -X POST "$BASE/api/pay/result" \
+            | sed -n '1p;/^[Ll]ocation:/Ip' | sed 's/\r$//;s/^/  /'
+
+          if [ -z "${P2:-}" ]; then
+            echo "ROBOKASSA_TEST_PASS2 не задан — подписанную пробу пропускаем"
+            exit 0
+          fi
+          SUM=1.00; INV=999999
+          # Подпись ResultURL: OutSum:InvId:Пароль№2, алгоритм md5
+          # (умолчание кабинета и наше, см. Р-94). Пароль уходит
+          # во ВВОД md5sum, а не в командную строку: она видна в ps.
+          SIGN=$(printf '%s:%s:%s' "$SUM" "$INV" "$P2" | md5sum | cut -d' ' -f1)
+          echo "-- адрес СО слешем, подпись настоящая, счёт заведомо несуществующий --"
+          curl -sS -i --max-time 20 -X POST "$BASE/api/pay/result/" \
+            --data-urlencode "OutSum=$SUM" \
+            --data-urlencode "InvId=$INV" \
+            --data-urlencode "SignatureValue=$SIGN" \
+            | sed 's/\r$//' | sed -n '1p;$p' | sed 's/^/  /'
+          echo "  (ждём: HTTP 200 и тело ровно OK$INV)"
+
       # Разбор одной беды: «оплата прошла, а уведомление не пришло».
       # Шаг НИЧЕГО не меняет — только читает базу и журнал службы.
       #
@@ -179,6 +218,11 @@ jobs:
           # репозитория виден всем, а в записи стоит IP плательщика.
           sudo grep -h -E '/(api/)?pay/' /var/log/nginx/access.log 2>/dev/null \
             | sed -E 's/^[0-9a-fA-F.:]+/…/' | tail -40 || echo "(ни одной записи)"
+          echo "  счётчик по клиентам (наша проверка выкладки ходит curl'ом):"
+          sudo cat /var/log/nginx/access.log 2>/dev/null \
+            | grep -E '/api/pay/result' \
+            | sed -E 's/.*" ([0-9]{3}) .*"([^"]*)"$/  ответ \1  клиент \2/' \
+            | sort | uniq -c | sort -rn || echo "  (ни одной записи)"
           echo "  …и в прошлых файлах:"
           sudo zgrep -h -E '/(api/)?pay/' /var/log/nginx/access.log.*.gz /var/log/nginx/access.log.1 2>/dev/null \
             | sed -E 's/^[0-9a-fA-F.:]+/…/' | tail -20 || echo "  (ни одной записи)"
