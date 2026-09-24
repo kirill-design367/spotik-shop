@@ -166,30 +166,50 @@ jobs:
         continue-on-error: true
         env:
           P2: ${{ secrets.ROBOKASSA_TEST_PASS2 }}
+          B2: ${{ secrets.ROBOKASSA_PASS2 }}
         run: |
           set -uo pipefail
           BASE=https://spotik.shop
+          SUM=1.00; INV=999999
 
           echo "-- адрес БЕЗ слеша: ровно это увидит Робокасса, если в кабинете нет слеша --"
           curl -sS -o /dev/null -D - --max-time 20 -X POST "$BASE/api/pay/result" \
             | sed -n '1p;/^[Ll]ocation:/Ip' | sed 's/\r$//;s/^/  /'
 
-          if [ -z "${P2:-}" ]; then
-            echo "ROBOKASSA_TEST_PASS2 не задан — подписанную пробу пропускаем"
-            exit 0
-          fi
-          SUM=1.00; INV=999999
-          # Подпись ResultURL: OutSum:InvId:Пароль№2, алгоритм md5
-          # (умолчание кабинета и наше, см. Р-94). Пароль уходит
-          # во ВВОД md5sum, а не в командную строку: она видна в ps.
-          SIGN=$(printf '%s:%s:%s' "$SUM" "$INV" "$P2" | md5sum | cut -d' ' -f1)
-          echo "-- адрес СО слешем, подпись настоящая, счёт заведомо несуществующий --"
-          curl -sS -i --max-time 20 -X POST "$BASE/api/pay/result/" \
-            --data-urlencode "OutSum=$SUM" \
-            --data-urlencode "InvId=$INV" \
-            --data-urlencode "SignatureValue=$SIGN" \
-            | sed 's/\r$//' | sed -n '1p;$p' | sed 's/^/  /'
-          echo "  (ждём: HTTP 200 и тело ровно OK$INV)"
+          # ⚠️ СЧЁТ ЗАВЕДОМО НЕСУЩЕСТВУЮЩИЙ, и это главное в пробе.
+          # Подпись сходится, обработчик отрабатывает целиком и отвечает
+          # как Робокассе, а менять ему нечего: платежа с таким номером
+          # нет. Ни один настоящий заказ проба не трогает.
+          #
+          # ⚠️ ПАРОЛЬ УХОДИТ ВО ВВОД md5sum, А НЕ В КОМАНДНУЮ СТРОКУ:
+          # она видна в `ps` всё время работы.
+          # ⚠️ ЧЕЛОВЕЧЬЯ СТРОКА ИДЁТ В stderr, А КОД ВОЗВРАТА — В stdout.
+          # Иначе `$( … )` съедает обе, и в журнале не остаётся ничего:
+          # приговор есть, а чем он получен — не видно.
+          poprobovat() { # poprobovat «чем подписали» «пароль»
+            if [ -z "${2:-}" ]; then echo "  $1: секрет не задан — пропускаем" >&2; echo 000; return 0; fi
+            sign=$(printf '%s:%s:%s' "$SUM" "$INV" "$2" | md5sum | cut -d' ' -f1)
+            otvet=$(curl -sS -o /tmp/telo.txt -w '%{http_code}' --max-time 20 -X POST "$BASE/api/pay/result/" \
+              --data-urlencode "OutSum=$SUM" --data-urlencode "InvId=$INV" \
+              --data-urlencode "SignatureValue=$sign" || echo 000)
+            echo "  $1: HTTP $otvet, тело «$(tr -d '\r\n' < /tmp/telo.txt | head -c 40)»" >&2
+            echo "$otvet"
+          }
+
+          echo "-- какая пара паролей сейчас в силе --"
+          # ⚠️ СУДИМ ПО ОТВЕТУ ЖИВОГО СЕРВЕРА, А НЕ ПО ТОМУ, ЧТО МЫ
+          # ДУМАЕМ ПРО `/srv/spotik/env` (Р-47). В тестовом режиме
+          # проходит тестовый пароль №2, в боевом — боевой, и ровно
+          # это здесь и видно.
+          kt=$(poprobovat "подпись ТЕСТОВЫМ паролём №2" "${P2:-}")
+          kb=$(poprobovat "подпись БОЕВЫМ  паролём №2" "${B2:-}")
+          rm -f /tmp/telo.txt
+          case "$kt:$kb" in
+            200:400) echo "::notice::сервер в ТЕСТОВОМ режиме: принят тестовый пароль, боевой отвергнут";;
+            400:200) echo "::notice::сервер в БОЕВОМ режиме: принят боевой пароль, тестовый отвергнут";;
+            200:200) echo "::error::приняты ОБА пароля — так быть не должно ни в одном режиме";;
+            *)       echo "::warning::не приняты ни тот, ни другой ($kt и $kb) — смотрите журнал службы";;
+          esac
 
       # ── ПРОВЕРКА БЕЗОПАСНОСТИ ──────────────────────────────────
       #

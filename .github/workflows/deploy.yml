@@ -443,12 +443,16 @@ jobs:
 
           if [ "$TLS" = 1 ]; then
             # ⚠️ HSTS ПРОВЕРЯЕТСЯ И НА ЗНАЧЕНИЕ, А НЕ ТОЛЬКО НА НАЛИЧИЕ.
-            # Срок сейчас суточный намеренно; includeSubDomains
-            # и preload не ставим — и то, и другое необратимо надолго.
+            # Срок с тридцать первой итерации ГОДОВОЙ, и сторож требует
+            # именно его: суточный заголовок здесь значил бы, что
+            # на сервере лежит конфиг прошлой настройки, а не нынешней.
+            # includeSubDomains и preload по-прежнему не ставим — и то,
+            # и другое необратимо надолго.
             hs=$(curl -sSI --max-time 20 "$BASE/" | tr -d '\r' | awk -F': ' 'tolower($1)=="strict-transport-security"{print $2}')
             case "$hs" in
               *includeSubDomains*|*preload*) echo "  ✗ в HSTS есть includeSubDomains или preload: «$hs»"; fail=1;;
-              max-age=*) echo "  ✓ HSTS: $hs";;
+              max-age=31536000) echo "  ✓ HSTS на год: $hs";;
+              max-age=*) echo "  ✗ HSTS есть, но срок не годовой: «$hs» — прогоните «Первичную настройку сервера»"; fail=1;;
               *) echo "  ✗ HSTS не пришёл: «$hs»"; fail=1;;
             esac
           fi

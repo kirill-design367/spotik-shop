@@ -378,6 +378,28 @@ chk('счёт выставлен на боевых ключах', Boolean(pb), p
     'тем же местом ТЕСТОВЫЙ пароль №1 уже не подходит',
     q.SignatureValue !== md5(`spotikshop:${q.OutSum}:${q.InvId}:${chekJson}:${P1}`),
   );
+
+  /* ⚠️ ЧЕК 54-ФЗ ПРОВЕРЯЕТСЯ ИМЕННО В БОЕВОМ РЕЖИМЕ, и это прямая
+     постановка: в тестовом чек никуда не уходит, а в боевом по нему
+     бьётся касса. Смотрим не «чек есть», а ЧТО В НЁМ: название
+     позиции с тарифом и сроком, сумма позиции, равная сумме платежа,
+     и ставка НДС — без неё чек касса не примет. */
+  let chek = null;
+  try { chek = JSON.parse(chekJson); } catch { /* останется null */ }
+  const poz = chek?.items?.[0];
+  chk('чек в подписи РАСКОДИРОВАННЫЙ', chekJson.startsWith('{"items"'), chekJson.slice(0, 40));
+  chk('в чеке ровно одна позиция', Array.isArray(chek?.items) && chek.items.length === 1, String(chek?.items?.length));
+  chk(
+    'позиция чека называет тариф и срок',
+    typeof poz?.name === 'string' && /Spotify Premium/.test(poz.name) && /год|мес/.test(poz.name),
+    poz?.name ?? '—',
+  );
+  chk(
+    'сумма позиции равна сумме платежа',
+    Number(poz?.sum).toFixed(2) === Number(q.OutSum).toFixed(2),
+    `${poz?.sum} против ${q.OutSum}`,
+  );
+  chk('в позиции есть ставка НДС', typeof poz?.tax === 'string' && poz.tax.length > 0, poz?.tax ?? '—');
 }
 
 const sumB = (Number(pb.amount_kop) / 100).toFixed(2);
