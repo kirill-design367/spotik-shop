@@ -56,6 +56,16 @@ on:
         description: 'Отправить в служебный чат тестовое уведомление'
         type: boolean
         default: false
+      # ⚠️ АДРЕС ИДЁТ ВХОДОМ, А НЕ КОНСТАНТОЙ В ФАЙЛЕ — по той же
+      # причине, что и список администраторов: репозиторий ПУБЛИЧНЫЙ,
+      # и почта живого человека, положенная в git, достаётся сборщикам
+      # спама навсегда (Р-92). И сам адрес здесь ВЫКЛЮЧАТЕЛЬ: пусто —
+      # письма не шлём. Отдельный флажок был бы вторым источником
+      # одного решения.
+      pochta_komu:
+        description: 'Послать на этот адрес код входа в админку (пусто — не слать)'
+        type: string
+        default: ''
 
 concurrency:
   # Настройка и выкладка делят один сервер: одновременно им там делать
@@ -847,7 +857,7 @@ jobs:
       # пароли магазина и токен бота; печатать их нельзя ни при каком
       # раскладе. Исключение одно: `ROBOKASSA_TEST` — это режим,
       # а не секрет, и видеть его надо.
-      - name: Проверить Робокассу и Телеграм
+      - name: Проверить Робокассу, Телеграм и почту
         run: |
           set -euo pipefail
           # ⚠️ СКРИПТ КЛАДЁТСЯ ФАЙЛОМ, А НЕ УХОДИТ В `bash -s`: иначе
@@ -869,6 +879,46 @@ jobs:
           for n in TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID; do
             echo "$n: $(est "$n")"
           done
+
+          # ⚠️ ПЕЧАТАЕМ НЕ ЗНАЧЕНИЯ, А ВЫВОД. Значения SMTP_* — секреты
+          # репозитория, и GitHub маскирует их в журнале раннера
+          # звёздочками: диагностика, построенная на печати значений,
+          # исчезла бы вместе с ними. Поэтому сравнение делается ЗДЕСЬ,
+          # на сервере, а наружу идёт готовый приговор.
+          for n in SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS SMTP_FROM SMTP_SECURE; do
+            echo "$n: $(est "$n")"
+          done
+          shost=$(znach SMTP_HOST); sport=$(znach SMTP_PORT)
+          spolz=$(znach SMTP_USER); sot=$(znach SMTP_FROM); ssec=$(znach SMTP_SECURE)
+          if [ -z "$shost" ]; then
+            echo "почта: SMTP_HOST не задан — письма и коды входа идут в журнал сервера"
+          else
+            # Адрес из `Имя <адрес>`; если угловых скобок нет — строка целиком.
+            sadres=$(printf '%s' "$sot" | sed -n 's/.*<\(.*\)>.*/\1/p')
+            [ -n "$sadres" ] || sadres="$sot"
+            niz() { printf '%s' "$1" | tr 'A-Z' 'a-z'; }
+            if [ "$(niz "$sadres")" = "$(niz "$spolz")" ]; then
+              echo "адрес в SMTP_FROM и SMTP_USER: совпадают"
+            else
+              echo "адрес в SMTP_FROM и SMTP_USER: РАСХОДЯТСЯ — Яндекс отвергнет письмо на шаге MAIL FROM"
+            fi
+            # ⚠️ ПОРТ 465 У ЯНДЕКС 360 — ЭТО НЕЯВНЫЙ TLS. Без признака
+            # `secure` nodemailer пойдёт открытым соединением, и разговор
+            # оборвётся на приветствии (Р-92).
+            case "$sport:$ssec" in
+              465:1|465:true) echo "порт и TLS: 465 с неявным TLS — как надо у Яндекс 360" ;;
+              465:*)          echo "порт и TLS: порт 465, а SMTP_SECURE=${ssec:-не задан} — БЕЗ неявного TLS отправка не пойдёт" ;;
+              *)              echo "порт и TLS: порт ${sport:-не задан}, SMTP_SECURE=${ssec:-не задан}" ;;
+            esac
+            # Достижимость узла — ДИАГНОСТИКА, а не доказательство
+            # отправки: доказывает её только настоящее письмо (Р-98).
+            echo "адреса $shost: $(getent ahosts "$shost" | awk '{print $1}' | sort -u | paste -sd, - || echo 'НЕ РЕЗОЛВИТСЯ')"
+            if timeout 10 bash -c "cat < /dev/null > /dev/tcp/$shost/${sport:-465}" 2>/dev/null; then
+              echo "порт $shost:${sport:-465} с сервера открыт"
+            else
+              echo "порт $shost:${sport:-465} с сервера НЕ ОТКРЫТ — письма не уйдут"
+            fi
+          fi
 
           # ⚠️ TELEGRAM ТОЛЬКО ПО IPv6. У российских серверов
           # api.telegram.org по IPv4 недоступен вовсе, и «счастливые
@@ -989,6 +1039,253 @@ jobs:
           bash -n /tmp/remote/tg.sh
           ssh spotik 'cat > /tmp/spotik-tg.sh' < /tmp/remote/tg.sh
           ssh spotik 'bash /tmp/spotik-tg.sh; r=$?; rm -f /tmp/spotik-tg.sh; exit $r' | sed 's/^/  /'
+
+      # ⚠️ КОД ВХОДА ШЛЁТСЯ НАСТОЯЩИМ ПУТЁМ, А НЕ ОТДЕЛЬНЫМ СКРИПТОМ.
+      # `swaks` или python-smtplib доказали бы ровно одно: что с сервера
+      # до Яндекса достучаться можно. А знать надо другое — что письмо
+      # уходит ТЕМ САМЫМ кодом, который зовут вход в кабинет, выдача
+      # доступов и сертификат: с его транспортом, его `secure`, его
+      # `SMTP_FROM` и его разбором ответа. Поэтому мы С РАННЕРА нажимаем
+      # «Выслать код» на ЖИВОЙ странице входа в админку — ровно то же,
+      # что делает человек в браузере, — а дословный ответ почтового
+      # сервера пишет в журнал САМА СЛУЖБА. Тот же принцип, что
+      # у тестового уведомления в Telegram (Р-98) и у имитатора
+      # оплаты (Р-88): стучимся В ТУ ЖЕ ДВЕРЬ, иначе проверяется
+      # не отправка, а обходной путь.
+      #
+      # ⚠️ ФОРМА ОТПРАВЛЯЕТСЯ БЕЗ БРАУЗЕРА, И ЭТО НЕ ОБХОД. Серверное
+      # действие Next работает и без JavaScript: в разметке формы лежат
+      # скрытые поля `$ACTION_REF_N`, `$ACTION_N:0`, `$ACTION_N:1`
+      # и `$ACTION_KEY`, и обычный multipart-POST с ними заводит ровно
+      # то же действие, что и нажатие кнопки. Идентификаторы меняются
+      # от сборки к сборке, поэтому они СНИМАЮТСЯ СО СТРАНИЦЫ каждый
+      # прогон, а не зашиты числом; форма опознаётся ПО ПОЛЮ `email`,
+      # а не по классу — класс могут переименовать.
+      - name: Послать код входа настоящим путём
+        if: ${{ inputs.pochta_komu != '' }}
+        env:
+          KOMU: ${{ inputs.pochta_komu }}
+        run: |
+          set -euo pipefail
+
+          # В журнал раннера адрес идёт огрызком — ровно так же, как
+          # его пишет сама служба (Р-87): проверяется не адрес,
+          # а то, ушло ли по нему письмо.
+          kratko=$(printf '%s' "$KOMU" | sed 's/^\(.\)[^@]*/\1…/')
+          echo "кому: $kratko"
+
+          # ⚠️ АДРЕС ЕДЕТ НА СЕРВЕР ПОТОКОМ, А НЕ АРГУМЕНТОМ: командная
+          # строка видна в `ps` всё время работы скрипта — то же
+          # правило, что у пароля ящика (Р-92). Файл ложится
+          # с umask 077 и стирается сразу после проверки.
+          printf '%s' "$KOMU" | ssh spotik 'umask 077; cat > /tmp/spotik-komu.txt'
+
+          # ── ДО нажатия: метка журнала и предел таблицы ────────────
+          #
+          # ⚠️ МЕТКА БЕРЁТСЯ ЗАРАНЕЕ, И ЭТО НЕ ПЕДАНТИЗМ. Иначе пришлось
+          # бы читать «последние строки журнала» и «последнюю строку
+          # таблицы» — а они принадлежали бы прошлому входу, и проверка
+          # доложила бы успех, ничего не проверив (Р-94). Курсор журнала
+          # точнее часов: он не зависит от того, сходятся ли часы
+          # раннера и сервера.
+          cat > /tmp/remote/pochta-do.sh <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          komu=$(cat /tmp/spotik-komu.txt)
+          pid=$(systemctl show -p MainPID --value spotik 2>/dev/null || echo 0)
+          if [ "${pid:-0}" = 0 ]; then echo "СЛУЖБА НЕ ЗАПУЩЕНА — слать нечем"; exit 1; fi
+          if ! tr '\0' '\n' < "/proc/$pid/environ" | grep -q '^SMTP_HOST=.'; then
+            echo "SMTP_HOST у ЖИВОЙ службы не задан: письмо уйдёт в журнал, а не почтой"
+          fi
+          echo "METKA=$(date '+%F %T')"
+          echo "KURSOR=$(journalctl -u spotik -n 0 --show-cursor --no-pager 2>/dev/null | sed -n 's/^-- cursor: //p')"
+          sudo -u postgres psql -tAq -v e="$komu" spotik <<'SQL'
+          select 'BYLO=' || coalesce(max(id), 0) from login_code where email = :'e' and scope = 'staff';
+          select 'PROSHLO=' || coalesce(ceil(extract(epoch from (now() - max(created_at)))), 99999)::bigint
+            from login_code where email = :'e' and scope = 'staff';
+          select 'ZA_CHAS=' || count(*) from login_code
+           where email = :'e' and scope = 'staff' and created_at > now() - interval '1 hour';
+          SQL
+          SCRIPT
+          bash -n /tmp/remote/pochta-do.sh
+          ssh spotik 'cat > /tmp/spotik-pochta-do.sh' < /tmp/remote/pochta-do.sh
+          do_=$(ssh spotik 'bash /tmp/spotik-pochta-do.sh; r=$?; rm -f /tmp/spotik-pochta-do.sh; exit $r')
+          printf '%s\n' "$do_" | grep -vE '^(METKA|KURSOR|BYLO|PROSHLO|ZA_CHAS)=' | sed 's/^/  /' || true
+          METKA=$(printf '%s\n' "$do_"  | sed -n 's/^METKA=//p')
+          KURSOR=$(printf '%s\n' "$do_" | sed -n 's/^KURSOR=//p')
+          BYLO=$(printf '%s\n' "$do_"   | sed -n 's/^BYLO=//p')
+          PROSHLO=$(printf '%s\n' "$do_" | sed -n 's/^PROSHLO=//p')
+          ZA_CHAS=$(printf '%s\n' "$do_" | sed -n 's/^ZA_CHAS=//p')
+          echo "  строк входа по этому адресу за час: ${ZA_CHAS:-?}, предел таблицы: ${BYLO:-?}"
+
+          # ⚠️ ОГРАНИЧЕНИЕ ЧАСТОТЫ — ЭТО ПРАВИЛО ПРИЛОЖЕНИЯ, А НЕ ПОМЕХА.
+          # Код выдаётся не чаще раза в минуту и не больше пяти за час;
+          # второй прогон настройки подряд получил бы отказ, и проверка
+          # выглядела бы как «почта сломана». Минуту просто ждём.
+          if [ "${PROSHLO:-99999}" -lt 62 ]; then
+            zhdat=$(( 63 - PROSHLO ))
+            echo "  прошлый код просили ${PROSHLO} с назад — жду ${zhdat} с, чаще раза в минуту приложение не даёт"
+            sleep "$zhdat"
+          fi
+          if [ "${ZA_CHAS:-0}" -ge 5 ]; then
+            echo "::error::по этому адресу за час уже просили 5 кодов — приложение больше не выдаст. Подождите час или возьмите другой адрес"
+            exit 1
+          fi
+
+          # ── Нажатие «Выслать код» на живой странице ───────────────
+          cat > /tmp/remote/poslat.py <<'PY'
+          # Снимаем форму с ЖИВОЙ страницы и отправляем её так, как это
+          # сделал бы браузер с выключенным JavaScript.
+          import html, os, re, sys, urllib.error, urllib.request, uuid
+
+          # ⚠️ АДРЕС САЙТА — ПЕРЕМЕННАЯ РОВНО РАДИ РЕПЕТИЦИИ. На раннере
+          # он всегда боевой; на своей машине тот же шаг гоняется
+          # по локально поднятому серверу, иначе проверка проверялась
+          # бы чтением кода, а не прогоном. Та же щель, что
+          # `TELEGRAM_API_BASE` у отправки в чат (Р-97).
+          BAZA = os.environ.get('SPOTIK_SAYT', 'https://spotik.shop')
+          komu = os.environ['KOMU']
+
+          def vzyat(url, telo=None, zagolovki=None):
+              zapros = urllib.request.Request(url, data=telo, headers=zagolovki or {})
+              try:
+                  with urllib.request.urlopen(zapros, timeout=90) as o:
+                      return o.status, o.read().decode('utf-8', 'replace')
+              except urllib.error.HTTPError as e:
+                  return e.code, e.read().decode('utf-8', 'replace')
+
+          kod, stranitsa = vzyat(f'{BAZA}/admin/login/')
+          if kod != 200:
+              sys.exit(f'страница входа в админку ответила {kod}')
+
+          # Форму опознаём ПО ПОЛЮ email, а не по классу: на странице
+          # есть и переключатель языка, и он тоже форма серверного
+          # действия. Класс могут переименовать, поле — это смысл формы.
+          formy = [f for f in re.findall(r'<form\b.*?</form>', stranitsa, re.S) if 'name="email"' in f]
+          if len(formy) != 1:
+              sys.exit(f'на странице входа {len(formy)} форм с полем email — разметка изменилась, проверку надо чинить')
+
+          polya = []
+          for m in re.finditer(r'<input[^>]*type="hidden"[^>]*>', formy[0]):
+              tag = m.group(0)
+              imya = re.search(r'name="([^"]*)"', tag)
+              znach = re.search(r'value="([^"]*)"', tag)
+              if imya:
+                  polya.append((html.unescape(imya.group(1)), html.unescape(znach.group(1)) if znach else ''))
+          if not any(n.startswith('$ACTION') for n, _ in polya):
+              sys.exit('в форме нет полей $ACTION… — серверное действие без JavaScript не завести')
+          polya.append(('email', komu))
+
+          granitsa = '----spotik' + uuid.uuid4().hex
+          kuski = []
+          for imya, znach in polya:
+              kuski.append(f'--{granitsa}\r\nContent-Disposition: form-data; name="{imya}"\r\n\r\n{znach}\r\n')
+          telo = (''.join(kuski) + f'--{granitsa}--\r\n').encode('utf-8')
+
+          # ⚠️ ORIGIN ОБЯЗАН СОВПАСТЬ С HOST. Next сверяет их у каждого
+          # серверного действия и отбивает запрос при расхождении;
+          # nginx передаёт приложению `Host $host`, то есть spotik.shop.
+          kod, otvet = vzyat(f'{BAZA}/admin/login/', telo, {
+              'Content-Type': f'multipart/form-data; boundary={granitsa}',
+              'Origin': BAZA,
+              'Accept': 'text/html,application/xhtml+xml',
+              'User-Agent': 'spotik-setup/1.0',
+          })
+          print(f'страница входа ответила {kod} на отправку формы')
+          oshibki = re.findall(r'<p class="err">(.*?)</p>', otvet, re.S)
+          for o in oshibki:
+              print('страница показала ошибку: ' + re.sub(r'<[^>]+>', '', o).strip())
+          sys.exit(0 if kod == 200 else 1)
+          PY
+          python3 /tmp/remote/poslat.py | sed 's/^/  /'
+
+          # ── ПОСЛЕ нажатия: новая строка и ответ почтового сервера ──
+          #
+          # ⚠️ ЖДЁМ СОБЫТИЯ, А НЕ СЕКУНД (Р-94, Р-97, Р-98). Событий два,
+          # и оба однозначные: НОВАЯ строка в `login_code` (её пишет
+          # `poprositKod` и только он) и строка журнала про письмо.
+          # Строка «код входа выдан» ложится ПОСЛЕ отправки при любом
+          # её исходе — она и есть признак того, что разговор с SMTP
+          # закончен и ждать больше нечего.
+          cat > /tmp/remote/pochta-posle.sh <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          bylo="${1:-0}"; kursor="${2:-}"; metka="${3:-}"
+          komu=$(cat /tmp/spotik-komu.txt)
+          rm -f /tmp/spotik-komu.txt
+
+          zhurnal() {
+            if [ -n "$kursor" ]; then
+              journalctl -u spotik --after-cursor "$kursor" --no-pager -o cat 2>/dev/null
+            else
+              journalctl -u spotik --since "$metka" --no-pager -o cat 2>/dev/null
+            fi
+          }
+
+          srok=$(( $(date +%s) + 180 ))
+          novaya=0
+          while :; do
+            novaya=$(sudo -u postgres psql -tAq -v e="$komu" -v b="$bylo" spotik <<'SQL'
+          select coalesce(max(id), 0) from login_code
+           where email = :'e' and scope = 'staff' and id > (:'b')::bigint;
+          SQL
+          )
+            [ "${novaya:-0}" != 0 ] && break
+            [ "$(date +%s)" -ge "$srok" ] && break
+            sleep 2
+          done
+          if [ "${novaya:-0}" = 0 ]; then
+            echo "КОД НЕ ВЫДАН: новой строки в login_code нет — приложение до отправки письма не дошло"
+            zhurnal | tail -5
+            exit 1
+          fi
+          echo "код входа выдан, строка login_code № $novaya"
+
+          stroki=''
+          while :; do
+            stroki=$(zhurnal | grep -E 'письмо отправлено|письмо не ушло|ПИСЬМО \(SMTP не настроен' || true)
+            [ -n "$stroki" ] && break
+            [ "$(date +%s)" -ge "$srok" ] && break
+            sleep 2
+          done
+
+          echo "── что записала служба ──"
+          if [ -z "$stroki" ]; then
+            echo "за три минуты служба ничего не записала про письмо — разговор с SMTP не закончился"
+            exit 1
+          fi
+          printf '%s\n' "$stroki"
+
+          # ⚠️ ПРИЧИНУ НАЗЫВАЕТ ШАГ РАЗГОВОРА, А НЕ ТЕКСТ ОШИБКИ.
+          # `AUTH`, `MAIL FROM` и `RCPT TO` — три разные беды, и текст
+          # у них похожий: «письмо не ушло». Шаг различает их точно.
+          case "$stroki" in
+            *'ПИСЬМО (SMTP не настроен'*)
+              echo "ИТОГ: письма НЕ УХОДЯТ — SMTP не настроен, код лёг в журнал. Секреты SMTP_* не доехали до окружения службы"
+              exit 1 ;;
+            *'письмо не ушло'*)
+              case "$stroki" in
+                *'shag="AUTH'*)
+                  echo "ИТОГ: Яндекс НЕ ПРИНЯЛ ЛОГИН И ПАРОЛЬ. У Яндекс 360 при включённой двухфакторной проверке годится ТОЛЬКО пароль приложения из id.yandex.ru — обычный пароль от аккаунта отвергается. Проверьте секреты SMTP_PASS и SMTP_USER (полный адрес ящика)" ;;
+                *'shag="MAIL FROM"'*)
+                  echo "ИТОГ: Яндекс ОТВЕРГ ОТПРАВИТЕЛЯ. Адрес в SMTP_FROM обязан совпадать с ящиком из SMTP_USER" ;;
+                *'shag="RCPT TO"'*)
+                  echo "ИТОГ: Яндекс ОТВЕРГ ПОЛУЧАТЕЛЯ — адрес не существует или почта туда не принимается" ;;
+                *'vid="ESOCKET"'*|*'vid="EDNS"'*|*'vid="ETIMEDOUT"'*|*'vid="ECONNECTION"'*)
+                  echo "ИТОГ: до почтового узла НЕ ДОСТУЧАЛИСЬ. Проверьте SMTP_HOST, SMTP_PORT и что порт открыт с сервера" ;;
+                *)
+                  echo "ИТОГ: ПИСЬМО НЕ УШЛО, дословный ответ сервера в строке выше" ;;
+              esac
+              exit 1 ;;
+            *'письмо отправлено'*)
+              echo "ИТОГ: ПИСЬМО УШЛО — ответ почтового сервера в строке выше (otvet=). Это НАБЛЮДЕНИЕ службы, а не наш вывод"
+              exit 0 ;;
+          esac
+          exit 1
+          SCRIPT
+          bash -n /tmp/remote/pochta-posle.sh
+          ssh spotik 'cat > /tmp/spotik-pochta-posle.sh' < /tmp/remote/pochta-posle.sh
+          ssh spotik "bash /tmp/spotik-pochta-posle.sh '$BYLO' '$KURSOR' '$METKA'; r=\$?; rm -f /tmp/spotik-pochta-posle.sh /tmp/spotik-komu.txt; exit \$r" | sed 's/^/  /'
 
       - name: Проверить снаружи
         run: |
