@@ -33,6 +33,11 @@
  * `MAIL FROM` — «адрес в SMTP_FROM не тот, под которым вошли»,
  * `RCPT TO` — «получателя не приняли». Без шага все три выглядят
  * одинаково: «письмо не ушло».
+ *
+ * ⚠️ И РЯДОМ С ШАГОМ ПИШЕТСЯ ЛОГИН, КОТОРЫМ ПРЕДСТАВИЛИСЬ. При отказе
+ * на `AUTH` первый вопрос всегда один: тот ли это ящик. Отвечать
+ * на него догадкой о содержимом секрета нельзя — в журнале стоит
+ * огрызок адреса, и он отвечает прямо.
  */
 
 import { env } from './env';
@@ -51,6 +56,20 @@ const g = globalThis as Global;
 /** Куда и как соединяемся. В журнал идёт как есть: секретов тут нет. */
 function uzel(): string {
   return `${env.smtpHost}:${env.smtpPort} ${env.smtpSecure ? 'tls' : 'без tls'}`;
+}
+
+/**
+ * Каким логином представляемся серверу — то есть что уходит в AUTH.
+ *
+ * ⚠️ ОГРЫЗКОМ, А НЕ ЦЕЛИКОМ, и это не перестраховка. Строку из журнала
+ * читают через прогон workflow, а его вывод у ПУБЛИЧНОГО репозитория
+ * виден всем. Огрызок `n…@домен` отвечает на вопрос «тот ли ящик»
+ * и не выдаёт адрес целиком. Заодно он не совпадает с секретом
+ * побайтно, поэтому GitHub не заменит его звёздочками — а целый адрес
+ * заменил бы, и строка стала бы бесполезной.
+ */
+function vhod(): string {
+  return env.smtpUser ? pochtaVZhurnal(env.smtpUser) : 'без AUTH: SMTP_USER пуст';
 }
 
 async function transport() {
@@ -104,6 +123,7 @@ export async function otpravit(p: Pismo): Promise<void> {
       to: pochtaVZhurnal(p.komu),
       subject: p.tema,
       ot: env.smtpFrom,
+      vhod: vhod(),
       uzel: uzel(),
       // Дословный ответ сервера на DATA: у Яндекса это
       // «250 2.0.0 Ok: queued on … as …» — то есть письмо принято
@@ -124,6 +144,7 @@ export async function otpravit(p: Pismo): Promise<void> {
       to: pochtaVZhurnal(p.komu),
       subject: p.tema,
       ot: env.smtpFrom,
+      vhod: vhod(),
       uzel: uzel(),
       vid: o.code ?? '—',
       kod: o.responseCode ?? 0,
