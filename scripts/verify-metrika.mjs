@@ -36,7 +36,12 @@ execFileSync(process.execPath, ['scripts/migrate.mjs'], {
 });
 
 const server = await serveOut(PORT, { env: { DATABASE_URL: BAZA } });
-const browser = await launch();
+/* ⚠️ ЕДИНСТВЕННЫЙ СТОРОЖ, У КОТОРОГО СЧЁТЧИК НЕ ЗАГЛУШЕН. Общий
+   `launch` отвечает на `mc.yandex.ru` пустым скриптом, чтобы висящий
+   запрос не ронял чужие проверки (browser.mjs). Здесь заглушка
+   отменила бы сам предмет: доказать, что счётчик ЗАПРАШИВАЕТСЯ
+   и запрашивается ПОСЛЕ `load`, можно только по настоящему запросу. */
+const browser = await launch({ metrikaZhivaya: true });
 let bad = 0;
 
 const chk = (chto, uslovie, chem = '') => {

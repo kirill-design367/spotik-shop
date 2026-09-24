@@ -62,21 +62,58 @@ const SCROLL_SHIM = () => {
 };
 
 /**
- * Браузер с уже вшитой подменой: любой контекст и любая страница получают
- * её автоматически, поэтому ни один скрипт про неё помнить не обязан.
+ * ⚠️ СЧЁТЧИК МЕТРИКИ ОТВЕЧАЕТСЯ ПУСТЫМ СКРИПТОМ, И ЭТО НЕ ПОБЛАЖКА.
+ *
+ * Наружу из среды разработки хода нет вовсе — прокси пускает только
+ * на github.com, — и на раннере GitHub `mc.yandex.ru` тоже недостижим.
+ * Настоящий запрос там ВИСИТ, а `waitUntil: 'networkidle'` ждёт тишины
+ * в сети: тишина не наступает, и `page.goto` падает по тайм-ауту
+ * на исправной странице. Ровно на этом легла выкладка № 100 —
+ * `verify-pay` не смог открыть `/pay/ok/`.
+ *
+ * Вопрос у сторожей один: падает ли НАША страница. «Доступен ли Яндекс
+ * с этой машины» — вопрос о среде, и смешивать их значило бы получать
+ * провалы на исправном сайте. Заодно это и есть проверка НА ЧЕЛОВЕКА
+ * С БЛОКИРОВЩИКОМ: библиотека не поднялась, `ym` остался заглушкой —
+ * и ни одна страница не обязана от этого сломаться.
+ *
+ * ⚠️ И ЗАГЛУШКА ЖИВЁТ ЗДЕСЬ, А НЕ В КАЖДОМ СТОРОЖЕ ПООТДЕЛЬНОСТИ.
+ * Первая редакция поставила её только в `verify-export`, и через
+ * полчаса ровно та же беда уронила `verify-pay`. Способ должен быть
+ * один на всех — то же правило, что вывело нас на подмену прокрутки
+ * выше и на общий `serveOut` в Р-101.
+ *
+ * ⚠️ ИСКЛЮЧЕНИЕ РОВНО ОДНО: `verify-metrika`. Он и существует затем,
+ * чтобы доказать, что счётчик ЗАПРАШИВАЕТСЯ и запрашивается ПОСЛЕ
+ * `load`; заглуши мы его там — доказывать стало бы нечего. Поэтому
+ * он поднимает браузер с `metrikaZhivaya: true`.
+ */
+const GLUSHITEL = '**/mc.yandex.ru/**';
+const zaglushit = (cel) =>
+  cel.route(GLUSHITEL, (route) =>
+    route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }),
+  );
+
+/**
+ * Браузер с уже вшитыми подменами: любой контекст и любая страница
+ * получают и подмену прокрутки, и заглушку счётчика автоматически,
+ * поэтому ни один скрипт про них помнить не обязан.
  */
 export const launch = async (extra = {}) => {
-  const browser = await chromium.launch({ ...LAUNCH, ...extra });
+  const { metrikaZhivaya = false, ...opts } = extra;
+  const browser = await chromium.launch({ ...LAUNCH, ...opts });
   const newContext = browser.newContext.bind(browser);
   browser.newContext = async (...args) => {
     const ctx = await newContext(...args);
     await ctx.addInitScript(SCROLL_SHIM);
+    if (!metrikaZhivaya) await zaglushit(ctx);
     return ctx;
   };
   const newPage = browser.newPage.bind(browser);
   browser.newPage = async (...args) => {
     const page = await newPage(...args);
     await page.addInitScript(SCROLL_SHIM);
+    if (!metrikaZhivaya) await zaglushit(page);
     return page;
   };
   return browser;

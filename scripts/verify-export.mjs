@@ -62,20 +62,7 @@ for (const [pname, path, wm] of PAGES) {
       viewport: { width: w, height: h }, isMobile: mob, hasTouch: mob, deviceScaleFactor: mob ? 2 : 1,
     });
     const bad = [];
-    /* ⚠️ СЧЁТЧИК МЕТРИКИ ОТВЕЧАЕТСЯ ПУСТЫМ СКРИПТОМ, И ЭТО НЕ ПОБЛАЖКА.
-       Наружу из среды разработки хода нет вовсе — прокси пускает только
-       на github.com, — и настоящий запрос к `mc.yandex.ru` обрывается
-       туннелем. Вопрос у этого сторожа один: падает ли НАША страница;
-       «доступен ли Яндекс с этой машины» — вопрос о среде, и смешивать
-       их значило бы получать девять провалов на исправном сайте.
-       Заодно это и есть проверка НА ПОЛЬЗОВАТЕЛЯ С БЛОКИРОВЩИКОМ:
-       библиотека не поднялась, `ym` остался заглушкой — и ни одна
-       страница не обязана от этого сломаться. А что счётчик вообще
-       запрашивается, и запрашивается ПОСЛЕ `load`, доказывает
-       `verify-metrika.mjs`. */
-    await page.route('**/mc.yandex.ru/**', (route) =>
-      route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }),
-    );
+    /* Счётчик Метрики глушит общий `launch` — см. browser.mjs. */
     page.on('response', (r) => { if (r.status() >= 400) bad.push(`${r.status()} ${r.url()}`); });
     page.on('pageerror', (e) => bad.push(`JS: ${e.message}`));
     page.on('console', (m) => { if (m.type() === 'error') bad.push(`консоль: ${m.text()}`); });
