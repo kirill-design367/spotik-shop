@@ -251,7 +251,10 @@ jobs:
           # на 127.0.0.1 — это норма и прямое требование постановки;
           # он же на 0.0.0.0 — открытая база.
           ss -lntH | awk '{print $4}' | sed 's/.*://' | sort -un | paste -sd, - | sed 's/^/  порты: /'
-          naruzhu=$(ss -lntH | awk '{print $4}' | grep -vE '^(127\.0\.0\.1|\[::1\]|localhost)' | sed 's/.*://' | sort -un | paste -sd' ' -)
+          # ⚠️ ИСКЛЮЧАЕМ ВСЮ 127.0.0.0/8, А НЕ ОДИН 127.0.0.1. Локальный
+          # резолвер systemd слушает на 127.0.0.53, и фильтр по одному
+          # адресу считал его «наружу» — ложная тревога на порт 53.
+          naruzhu=$(ss -lntH | awk '{print $4}' | grep -vE '^(127\.|\[::1\]|localhost)' | sed 's/.*://' | sort -un | paste -sd' ' -)
           echo "  наружу слушают: ${naruzhu:-(ничего)}"
           for port in $naruzhu; do
             case "$port" in
@@ -292,12 +295,31 @@ jobs:
             if gzip -dc "$svezh" | sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d postgres -c "create database $PROBA" >/dev/null 2>&1 \
                && gzip -dc "$svezh" | sudo -u postgres psql -q -v ON_ERROR_STOP=1 "$PROBA" >/tmp/vosst.log 2>&1; then
               echo "  ОК   копия развернулась без единой ошибки"
+              # ⚠️ СРАВНИВАЕМ ТОЛЬКО ТО, ЧТО БЫЛО НА МОМЕНТ КОПИИ.
+              # Первая редакция сравнивала копию с боевой БАЗОЙ ЦЕЛИКОМ
+              # и честно провалилась на исправной копии: заказы,
+              # заведённые ПОСЛЕ ночного снимка, в нём быть и не могли.
+              # Проверка при этом врала в опасную сторону — «копия
+              # пустая» там, где копия в порядке. Отсечка — время файла.
+              srez=$(date -u -r "$svezh" '+%Y-%m-%d %H:%M:%S')
+              echo "  сравниваем по срезу $srez UTC"
               for t in app_user shop_order order_slot payment certificate staff; do
-                a=$(sudo -u postgres psql -tAc "select count(*) from $t" spotik 2>/dev/null || echo '—')
+                # order_slot своей даты не имеет — считаем по заказу.
+                case "$t" in
+                  order_slot) gde="where order_id in (select id from shop_order where created_at < '$srez')";;
+                  *)          gde="where created_at < '$srez'";;
+                esac
+                a=$(sudo -u postgres psql -tAc "select count(*) from $t $gde" spotik 2>/dev/null || echo '—')
                 b=$(sudo -u postgres psql -tAc "select count(*) from $t" "$PROBA" 2>/dev/null || echo '—')
-                if [ "$a" = "$b" ]; then echo "  ОК   $t: $b строк — как в боевой"
-                else echo "  СБОЙ $t: в копии $b, в боевой $a"; pl=$((pl+1)); fi
+                if [ "$a" = "$b" ]; then echo "  ОК   $t: $b строк — как в боевой на момент копии"
+                else echo "  СБОЙ $t: в копии $b, в боевой на тот момент $a"; pl=$((pl+1)); fi
               done
+              # ⚠️ И ОТДЕЛЬНО — ЧТО СХЕМА ЦЕЛА. Дамп, снятый до миграции,
+              # развернётся без ошибок и строки сойдутся, а колонок
+              # будет меньше: числа этого не видят.
+              ta=$(sudo -u postgres psql -tAc "select count(*) from information_schema.columns where table_schema='public'" spotik)
+              tb=$(sudo -u postgres psql -tAc "select count(*) from information_schema.columns where table_schema='public'" "$PROBA")
+              [ "$ta" = "$tb" ] && echo "  ОК   схема совпала: $tb колонок" || { echo "  СБОЙ схема разошлась: в копии $tb колонок, в боевой $ta"; pl=$((pl+1)); }
               # ⚠️ ШИФРОТЕКСТЫ В КОПИИ ОБЯЗАНЫ ОСТАТЬСЯ ШИФРОТЕКСТАМИ.
               # Ключ живёт в /srv/spotik/env и в дамп не попадает —
               # именно поэтому копию и можно хранить рядом (Р-87).
