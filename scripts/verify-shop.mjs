@@ -53,8 +53,17 @@ const DARENYY = 'drug@spotik.test';
 execFileSync(process.execPath, ['scripts/migrate.mjs'], { stdio: 'inherit', env: process.env });
 
 const pool = new pg.Pool({ connectionString: URL_BAZY, max: 1 });
+/* ⚠️ `notify_outbox` ЧИСТИТСЯ ВМЕСТЕ СО ВСЕМ ОСТАЛЬНЫМ, И ЭТО НЕ
+   аккуратность. Номера заказов после `restart identity` начинаются
+   заново, а очередь уведомлений переживала чистку — и строка
+   от ПРОШЛОГО прогона (хоть этого же сторожа, хоть соседнего)
+   читалась как нынешняя. Поймано прогоном: сразу после verify-pay
+   проверка текста уведомления взяла его строку — «Тариф:
+   Индивидуальный» вместо «На двоих» — и честно провалилась,
+   хотя нынешний прогон был исправен. Тот же класс, что «последняя
+   строка таблицы» в Р-94. */
 await pool.query(`truncate balance_move, payment, order_slot, certificate, shop_order,
-  session, login_code, app_user, staff, plan_price, setting restart identity cascade`);
+  session, login_code, app_user, staff, plan_price, setting, notify_outbox restart identity cascade`);
 await pool.end();
 
 const server = await serveOut(PORT, {
