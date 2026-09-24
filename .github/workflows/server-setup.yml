@@ -448,7 +448,7 @@ jobs:
           add_header X-Content-Type-Options "nosniff" always;
           add_header Referrer-Policy "strict-origin-when-cross-origin" always;
           add_header X-Frame-Options "SAMEORIGIN" always;
-          add_header Strict-Transport-Security "max-age=86400" always;
+          add_header Strict-Transport-Security "max-age=31536000" always;
           CONF
 
           # ⚠️ САЙТ ТЕПЕРЬ ПРИЛОЖЕНИЕ, А НЕ ПАПКА С ФАЙЛАМИ.
@@ -679,12 +679,16 @@ jobs:
             ssl_certificate_key /etc/letsencrypt/live/spotik.shop/privkey.pem;
             include /etc/letsencrypt/options-ssl-nginx.conf;
 
-            # ⚠️ HSTS НА СУТКИ, БЕЗ includeSubDomains И БЕЗ preload.
-            # Срок короткий намеренно: заголовок необратим на своё
-            # время — пока он не истёк, браузер отказывается открывать
-            # сайт по http и не даёт обойти ошибку сертификата. Сутки
-            # можно переждать, год — нет. Перед запуском в работу срок
-            # поднимаем до года (открытый вопрос 64).
+            # ⚠️ HSTS НА ГОД, БЕЗ includeSubDomains И БЕЗ preload.
+            # Год поднят в тридцать первой итерации, перед запуском —
+            # ровно так, как было записано, пока срок стоял суточным.
+            # ⚠️ И ЭТО ШАГ В ОДНУ СТОРОНУ: браузер, увидевший
+            # заголовок, год не пойдёт по http вовсе, и снять
+            # заголовок уже недостаточно — надо выждать срок.
+            # Поэтому `includeSubDomains` и `preload` по-прежнему
+            # НЕ СТАВИМ: первое распространило бы то же самое
+            # на все поддомены, каких у нас ещё нет, второе —
+            # на список, из которого выписываются месяцами.
             #
             # Здесь он стоит ВТОРОЙ раз — первый в общем сниппете
             # заголовков, который подключается в каждую локацию.
@@ -693,7 +697,7 @@ jobs:
             # заголовки кэша ставят все до одной. Серверный
             # `add_header` нужен для ответов, которые ни в одну
             # локацию не попали.
-            add_header Strict-Transport-Security "max-age=86400" always;
+            add_header Strict-Transport-Security "max-age=31536000" always;
 
             include snippets/spotik-static.conf;
           }
