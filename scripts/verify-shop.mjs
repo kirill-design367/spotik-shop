@@ -63,7 +63,7 @@ const pool = new pg.Pool({ connectionString: URL_BAZY, max: 1 });
    хотя нынешний прогон был исправен. Тот же класс, что «последняя
    строка таблицы» в Р-94. */
 await pool.query(`truncate balance_move, payment, order_slot, certificate, shop_order,
-  session, login_code, app_user, staff, plan_price, setting, notify_outbox restart identity cascade`);
+  session, login_code, cert_try, app_user, staff, plan_price, setting, notify_outbox restart identity cascade`);
 await pool.end();
 
 const server = await serveOut(PORT, {
@@ -637,6 +637,153 @@ console.log('── ДЕНЬГИ ПО ЗАКАЗУ, КОТОРЫЙ ИХ УЖЕ �
   const och = await p2.query(`select tekst from notify_outbox where vid = 'dengi_bez_zakaza'`);
   chk('команда узнала о происшествии', och.rows.length === 1 && /уже не ждал/.test(och.rows[0].tekst),
     (och.rows[0]?.tekst ?? '').split('\n')[0]);
+}
+
+console.log('── ПОДСКАЗКА ПРО VPN ──');
+{
+  /* Строка одна и та же в двух местах, и это не декорация: с включённым
+     VPN страница банка обрывает соединение, человек видит
+     ERR_CONNECTION_CLOSED и решает, что сломан наш сайт (Р-108).
+     ⚠️ ТАРИФ ВЗЯТ ЗАВЕДОМО ДОРОЖЕ БАЛАНСА: при полной оплате
+     с баланса банка в деле нет вовсе, и подсказки там быть
+     не должно — это отступление названо в Р-108. */
+  const VPN = /Если у вас включён VPN, выключите его на время оплаты/;
+  await klient.goto(`http://localhost:${PORT}/checkout/?plan=duo&period=12`, { waitUntil: 'networkidle' });
+  const tk = ((await klient.textContent('body')) ?? '').replace(/\s+/g, ' ');
+  chk('подсказка про VPN стоит в оформлении', VPN.test(tk));
+  // ⚠️ СУДИМ ПО ТОМУ, ЧЕМ ОНА НАБРАНА, А НЕ ПО ОТСУТСТВИЮ КРАСНОГО:
+  // «красного нет» проходит и на странице, где нет и самой подсказки.
+  const tikhaya = await klient.locator('p.panel__note').filter({ hasText: 'VPN' }).count();
+  const krasnaya = await klient.locator('.err').filter({ hasText: 'VPN' }).count();
+  chk('подсказка спокойная, а не предупреждение', tikhaya === 1 && krasnaya === 0, `panel__note ${tikhaya}, err ${krasnaya}`);
+
+  await klient.goto(`http://localhost:${PORT}/pay/fail/`, { waitUntil: 'networkidle' });
+  const tf = ((await klient.textContent('body')) ?? '').replace(/\s+/g, ' ');
+  chk('и на странице неудачной оплаты, рядом с возвратом', VPN.test(tf) && /В личный кабинет/.test(tf));
+}
+
+console.log('── ЛИМИТ НА ВВОД КОДА СЕРТИФИКАТА ──');
+{
+  /* ⚠️ СЧЁТ ИДЁТ ПО ДВУМ ОСЯМ ПОРОЗНЬ — адрес и учётная запись, —
+     и проверить их надо ВРОЗЬ, иначе «сработало» ничего не значит:
+     заблокированный человек всегда сидит и на своём адресе, и под
+     своей записью разом. Разводит их подмена заголовка `X-Real-IP`
+     на живой странице: одна и та же учётная запись приходит с двух
+     адресов, а на один адрес приходят разные люди.
+
+     ⚠️ И ЛИМИТ НЕ ИМЕЕТ ПРАВА ГОВОРИТЬ О САМОМ КОДЕ. Поэтому
+     заблокированному скармливается НАСТОЯЩИЙ код сертификата,
+     и ответ обязан совпасть с ответом на выдуманный. */
+
+  const VYDUMKA = 'SPOTIK-ZZZZ-ZZZZ-ZZZZ';
+  const NET = /Такого сертификата нет/;
+  const MINUTA = /Слишком много попыток\. Подождите минуту/;
+  const CHAS = /Слишком много попыток\. Попробуйте через час/;
+
+  const doBloka = await p2.query('select count(*)::int as n from cert_try');
+  chk(
+    'в счёт идут ТОЛЬКО неудачные попытки',
+    doBloka.rows[0].n === 1,
+    `строк ${doBloka.rows[0].n} при одном отказе за прогон; две удачные проверки кода не записались`,
+  );
+
+  /**
+   * Ввести код на /certificate/ и вернуть текст страницы.
+   *
+   * ⚠️ ЖДЁМ ОТВЕТ СЕРВЕРНОГО ДЕЙСТВИЯ, А НЕ СЕКУНДЫ: форма не уводит
+   * никуда, `nazhat` с его ожиданием смены адреса здесь не годится
+   * вовсе. Выдержка после ответа — это отрисовка React, а не сеть.
+   */
+  const proverit = async (page, kod) => {
+    const forma = page.locator('form').filter({ has: page.locator('input[name="code"]') }).first();
+    await forma.locator('input[name="code"]').fill(kod);
+    const otvet = page.waitForResponse((r) => r.request().method() === 'POST' && r.url().includes('/certificate'));
+    await forma.locator('button[type="submit"]').first().click();
+    await otvet;
+    await page.waitForTimeout(200);
+    return ((await page.textContent('body')) ?? '').replace(/\s+/g, ' ');
+  };
+
+  const gost = async (adres) => {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, extraHTTPHeaders: { 'x-real-ip': adres } });
+    const page = await ctx.newPage();
+    await page.goto(`http://localhost:${PORT}/certificate/`, { waitUntil: 'networkidle' });
+    return { ctx, page };
+  };
+
+  // ── ОСЬ АДРЕСА, анонимно ───────────────────────────────────────
+  const a = await gost('203.0.113.10');
+  let posledny = '';
+  for (let i = 0; i < 5; i++) posledny = await proverit(a.page, VYDUMKA);
+  chk('пятая попытка подряд ещё проходит', NET.test(posledny) && !MINUTA.test(posledny), 'обычный отказ, лимит не сработал раньше времени');
+
+  const shestaya = await proverit(a.page, VYDUMKA);
+  chk('шестая попытка с того же адреса отбита', MINUTA.test(shestaya) && !NET.test(shestaya));
+
+  const nastoyashchiy = await proverit(a.page, kodSert);
+  chk(
+    'отказ НЕ РАСКРЫВАЕТ, существует ли код',
+    MINUTA.test(nastoyashchiy) && !/уже активирован/.test(nastoyashchiy) && !NET.test(nastoyashchiy),
+    'настоящий код получил тот же ответ, что и выдуманный',
+  );
+
+  const schyot10 = await p2.query(`select count(*)::int as n from cert_try where adres = '203.0.113.10'`);
+  chk(
+    'сам отказ по частоте в счёт не идёт',
+    schyot10.rows[0].n === 5,
+    `${schyot10.rows[0].n} строк при пяти записанных попытках и двух отбитых`,
+  );
+
+  // ── ДРУГОЙ АДРЕС НЕ ПОСТРАДАЛ ──────────────────────────────────
+  const b = await gost('203.0.113.11');
+  const chuzhoy = await proverit(b.page, VYDUMKA);
+  chk('соседний адрес не заперт вместе с ним', NET.test(chuzhoy) && !MINUTA.test(chuzhoy));
+
+  // ── ОСЬ УЧЁТНОЙ ЗАПИСИ ─────────────────────────────────────────
+  // Тот же вошедший человек стучится с ОДНОГО адреса, пока его
+  // не отобьют, и тут же приходит с ЧИСТОГО. Адрес там пустой,
+  // значит запереть его может только учётная запись.
+  await drug.setExtraHTTPHeaders({ 'x-real-ip': '203.0.113.20' });
+  await drug.goto(`http://localhost:${PORT}/certificate/`, { waitUntil: 'networkidle' });
+  let otbit = false;
+  for (let i = 0; i < 8 && !otbit; i++) otbit = MINUTA.test(await proverit(drug, VYDUMKA));
+  chk('вошедшего отбило на своём адресе', otbit);
+
+  await drug.setExtraHTTPHeaders({ 'x-real-ip': '203.0.113.21' });
+  await drug.goto(`http://localhost:${PORT}/certificate/`, { waitUntil: 'networkidle' });
+  const sChistogo = await proverit(drug, VYDUMKA);
+  chk('он же отбит и с ЧИСТОГО адреса — лимит идёт за учётной записью', MINUTA.test(sChistogo) && !NET.test(sChistogo));
+
+  const d = await gost('203.0.113.21');
+  const drugoyChelovek = await proverit(d.page, VYDUMKA);
+  chk(
+    'а другой человек с ТОГО ЖЕ адреса проходит',
+    NET.test(drugoyChelovek) && !MINUTA.test(drugoyChelovek),
+    'значит заперта запись, а не адрес',
+  );
+
+  // ── ЧАСОВОЕ ОКНО ───────────────────────────────────────────────
+  // Попытки состарены на пять минут: в минутное окно они не попадают
+  // вовсе, и сработать может только часовое. Двадцать — порог, девятнадцать — нет.
+  await p2.query(
+    `insert into cert_try (adres, created_at)
+     select '203.0.113.40', now() - interval '5 minutes' from generate_series(1, 20)`,
+  );
+  await p2.query(
+    `insert into cert_try (adres, created_at)
+     select '203.0.113.41', now() - interval '5 minutes' from generate_series(1, 19)`,
+  );
+  const e = await gost('203.0.113.40');
+  const zaChas = await proverit(e.page, VYDUMKA);
+  chk('двадцать попыток за час отбиты, и отказ другой', CHAS.test(zaChas) && !MINUTA.test(zaChas));
+
+  const f = await gost('203.0.113.41');
+  const podPorogom = await proverit(f.page, VYDUMKA);
+  chk('девятнадцать за час ещё проходят, минутное окно скользит', NET.test(podPorogom) && !CHAS.test(podPorogom));
+
+  chk('перебор попал в журнал сервера', /перебор кода сертификата/.test(server.zhurnal()));
+
+  for (const c of [a.ctx, b.ctx, d.ctx, e.ctx, f.ctx]) await c.close();
 }
 
 chk('ни одной ошибки JavaScript', oshibkiJS.length === 0, oshibkiJS.slice(0, 3).join(' | '));
