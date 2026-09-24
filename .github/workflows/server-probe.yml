@@ -169,6 +169,10 @@ jobs:
           B2: ${{ secrets.ROBOKASSA_PASS2 }}
         run: |
           set -uo pipefail
+          # ⚠️ ПИШЕМ И В ФАЙЛ. Журнал работы длинный, и приговор
+          # про пару паролей тонет в середине — последний шаг
+          # повторит его в конце, там же, где диагноз про домен.
+          exec > >(tee /tmp/rk.txt) 2>&1
           BASE=https://spotik.shop
           SUM=1.00; INV=999999
 
@@ -224,6 +228,7 @@ jobs:
         continue-on-error: true
         run: |
           set -uo pipefail
+          exec > >(tee /tmp/zag.txt) 2>&1
           BASE=https://spotik.shop
           pl=0
           zag=$(curl -sS -o /dev/null -D - --max-time 20 "$BASE/")
@@ -384,11 +389,17 @@ jobs:
           exit "$pl"
           REMOTE
 
-      - name: ИТОГ ПО ДОМЕНУ (повтор первого шага в конце)
+      - name: ИТОГ — домен и пара паролей (повтор в конце)
         if: always()
         run: |
           echo "════ что с доменом ════"
           cat /tmp/dns.txt 2>/dev/null || echo "(диагноз не сохранился)"
+          echo
+          echo "════ какая пара паролей Робокассы в силе ════"
+          cat /tmp/rk.txt 2>/dev/null || echo "(проба не сохранилась)"
+          echo
+          echo "════ заголовки живого адреса ════"
+          cat /tmp/zag.txt 2>/dev/null || echo "(заголовки не сохранились)"
 
       # Разбор одной беды: «оплата прошла, а уведомление не пришло».
       # Шаг НИЧЕГО не меняет — только читает базу и журнал службы.
