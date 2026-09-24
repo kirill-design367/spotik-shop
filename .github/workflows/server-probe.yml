@@ -159,6 +159,26 @@ jobs:
           echo "процессов next-server: $(pgrep -fc 'next-server' 2>/dev/null || echo 0)"
           if [ "${pid:-0}" != 0 ]; then
             okr() { tr '\0' '\n' < "/proc/$pid/environ"; }
+            # ⚠️ ЛОГИН, КОТОРЫМ ПРЕДСТАВЛЯЕМСЯ ЯНДЕКСУ, — ОГРЫЗКОМ,
+            # НО ДОСТАТОЧНЫМ. Вопрос «тот ли ящик» решают три вещи:
+            # первая буква, последняя и длина локальной части — их
+            # хватает отличить `noreply` от `no-reply` (семь знаков
+            # против восьми). Целиком печатать нельзя: GitHub заменил
+            # бы секрет звёздочками, и строка стала бы бесполезной.
+            spolz=$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^SMTP_USER=//p' | head -1)
+            case "$spolz" in
+              *@*) lok=${spolz%%@*}
+                   echo "SMTP_USER (он же логин AUTH): ${lok%"${lok#?}"}…${lok#"${lok%?}"}@${spolz#*@}, локальная часть ${#lok} знаков" ;;
+              '')  echo "SMTP_USER: не задан" ;;
+              *)   echo "SMTP_USER: без знака @ — Яндексу нужен ПОЛНЫЙ адрес ящика" ;;
+            esac
+            # Печатается ТОЛЬКО когда нашлось: «мусора нет» — это биты
+            # самого пароля, а журнал работ публичного репозитория
+            # виден всем.
+            spar=$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^SMTP_PASS=//p' | head -1)
+            if [ -n "$spar" ] && [ -n "$(printf '%s' "$spar" | tr -d 'A-Za-z0-9')" ]; then
+              echo "SMTP_PASS: есть знак, которого у пароля приложения Яндекса не бывает"
+            fi
             for n in TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID TELEGRAM_API_BASE TELEGRAM_IP_FAMILY ROBOKASSA_TEST SMTP_HOST; do
               v=$(okr | sed -n "s/^$n=//p" | head -1)
               case "$n" in
