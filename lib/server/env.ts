@@ -71,7 +71,12 @@ export const env = {
     return str('SMTP_PASS');
   },
   get smtpFrom() {
-    return str('SMTP_FROM', 'Spotik Shop <no-reply@spotik.shop>');
+    // ⚠️ АДРЕС БЕЗ ДЕФИСА — ЯЩИК НАЗЫВАЕТСЯ ИМЕННО ТАК. Адрес
+    // в SMTP_FROM обязан совпадать с ящиком из SMTP_USER: иначе
+    // Яндекс отбивает письмо на шаге MAIL FROM. Запасное значение
+    // тут почти никогда не работает (без SMTP_HOST письма идут
+    // в журнал), но держать в нём чужой адрес незачем.
+    return str('SMTP_FROM', 'Spotik Shop <noreply@spotik.shop>');
   },
   get smtpSecure() {
     return flag('SMTP_SECURE', false);
