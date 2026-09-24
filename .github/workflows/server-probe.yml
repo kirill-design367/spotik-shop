@@ -31,13 +31,51 @@ jobs:
           [ "$fail" = 0 ] || { echo "::error::не заданы секреты репозитория"; exit 1; }
 
       - name: Что видит раннер про домен
+        # ⚠️ С КОНТРОЛЕМ, А НЕ ПРОСТО «РЕЗОЛВИТСЯ ЛИ НАШ ДОМЕН».
+        # «Не резолвится» бывает по трём совсем разным причинам:
+        # сломан DNS у того, кто спрашивает; сломана зона `.shop`;
+        # домена нет в реестре. Различает их только контрольный
+        # запрос рядом, в тот же присест, — и это то же правило,
+        # которым мерялся дрейф контейнера (Р-72).
         run: |
-          # DNS смотрим ДО подключения: сертификат без него всё равно
-          # не выпустить, и знать это лучше сразу.
+          set -u
+          sudo apt-get install -y -qq dnsutils >/dev/null 2>&1 || true
+          echo "-- наши имена --"
           for h in spotik.shop www.spotik.shop; do
             a=$(getent ahostsv4 "$h" | awk '{print $1}' | sort -u | paste -sd, -)
-            echo "$h -> ${a:-НЕ РЕЗОЛВИТСЯ}"
+            echo "  $h -> ${a:-НЕ РЕЗОЛВИТСЯ}"
           done
+          echo "-- контроль: чужие имена тем же резолвером --"
+          for h in nic.shop get.shop example.com; do
+            a=$(getent ahostsv4 "$h" | awk '{print $1}' | sort -u | paste -sd, -)
+            echo "  $h -> ${a:-НЕ РЕЗОЛВИТСЯ}"
+          done
+          if command -v dig >/dev/null 2>&1; then
+            echo "-- что говорит DNS подробно --"
+            echo "  NS зоны .shop:"; dig +short NS shop | sed 's/^/    /'
+            echo "  A   spotik.shop: $(dig +short A spotik.shop | paste -sd, -)"
+            echo "  NS  spotik.shop: $(dig +short NS spotik.shop | paste -sd, -)"
+            echo "  SOA spotik.shop: $(dig +short SOA spotik.shop | paste -sd' ' -)"
+            echo "  статус ответа:   $(dig spotik.shop | sed -n 's/.*status: \([A-Z]*\).*/\1/p' | head -1)"
+            # ⚠️ СПРАШИВАЕМ САМ РЕЕСТР `.shop`. Ответ NXDOMAIN
+            # от него значит, что домена нет в зоне вовсе — то есть
+            # дело не в записях у регистратора, а в самой
+            # регистрации: срок, проверка контактов, блокировка.
+            tld=$(dig +short NS shop | head -1)
+            if [ -n "$tld" ]; then
+              echo "  --- прямой вопрос реестру $tld ---"
+              dig "@$tld" spotik.shop NS +norecurse | sed -n '/->>HEADER/p;/AUTHORITY SECTION/,/^$/p' | sed 's/^/    /'
+            fi
+          else
+            echo "  dig не установился — подробностей не будет"
+          fi
+          echo "-- отвечает ли сервер по своему адресу (домен ни при чём) --"
+          # SSH_HOST — это адрес, а не имя: если сайт отвечает по нему,
+          # значит сервер жив и сломан ровно домен.
+          curl -sS -o /dev/null -w '  http://АДРЕС/  -> %{http_code}\n' --max-time 20 \
+            "http://${{ secrets.SSH_HOST }}/" || echo "  по адресу не ответил"
+          curl -sSk -o /dev/null -w '  https://АДРЕС/ -> %{http_code}\n' --max-time 20 \
+            -H 'Host: spotik.shop' "https://${{ secrets.SSH_HOST }}/" || echo "  по адресу https не ответил"
 
       - name: Положить ключ
         env:
@@ -107,6 +145,10 @@ jobs:
       # с таким номером нет. Ни один настоящий заказ проба
       # не трогает.
       - name: Дверь ResultURL живьём
+        # Не роняет пробник: домен может не резолвиться, а всё
+        # остальное, что пробник показывает, при этом остаётся
+        # нужным — и именно оно и покажет, что сервер-то жив.
+        continue-on-error: true
         env:
           P2: ${{ secrets.ROBOKASSA_TEST_PASS2 }}
         run: |
