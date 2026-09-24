@@ -72,8 +72,28 @@ export async function deystvieVoyti(_prosh: Otvet, fd: FormData): Promise<Otvet>
     return { oshibka: slova[r.pochemu] ?? 'Код не подошёл.', shag: 'kod', email };
   }
   await zavestiSessiyu('client', r.userId, null);
-  const kuda = String(fd.get('next') ?? '/cabinet/');
-  redirect(kuda.startsWith('/') ? kuda : '/cabinet/');
+  redirect(svoyAdres(String(fd.get('next') ?? '')));
+}
+
+/**
+ * Куда вернуть человека после входа.
+ *
+ * ⚠️ ОДНОГО «НАЧИНАЕТСЯ СО СЛЕША» МАЛО. Адрес `//chuzhoy.site`
+ * начинается со слеша и при этом уводит НА ЧУЖОЙ ДОМЕН: браузер
+ * читает его как «протокол текущий, узел чужой». То же делает
+ * `/\chuzhoy.site` — обратную косую браузер нормализует в прямую.
+ * Ссылку с таким `next` можно прислать письмом: человек входит
+ * на нашем сайте и оказывается на чужом сразу после входа — на этом
+ * и строится кража следующего шага.
+ *
+ * Поэтому ведущий слеш обязан быть РОВНО ОДИН. Схемы (`http:`)
+ * при этом не проверяем: до первого слеша не осталось ни знака.
+ */
+function svoyAdres(kuda: string): string {
+  const po = '/cabinet/';
+  if (!kuda.startsWith('/')) return po;
+  if (kuda.startsWith('//') || kuda.startsWith('/\\')) return po;
+  return kuda;
 }
 
 export async function deystvieVyyti(): Promise<void> {

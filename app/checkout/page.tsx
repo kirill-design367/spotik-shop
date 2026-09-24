@@ -107,7 +107,13 @@ export default async function Checkout({
         </>
       ) : (
         <LoginBox
-          next={`/checkout/?plan=${tarif.id}&period=${period}${podarok ? '&gift=1' : odin('mode') ? `&mode=${odin('mode')}` : ''}`}
+          /* ⚠️ В АДРЕС УХОДИТ РАЗОБРАННЫЙ РЕЖИМ, А НЕ СЫРАЯ СТРОКА
+             ИЗ АДРЕСНОЙ СТРОКИ: тариф и срок здесь уже сверены
+             с каталогом, и `mode` — единственное, что шло дальше
+             как есть. Уйти на чужой домен он не мог (адрес
+             начинается с `/checkout/?`), но дописать своих
+             параметров — вполне. */
+          next={`/checkout/?plan=${tarif.id}&period=${period}${podarok ? '&gift=1' : vvod.rezhimPoUmolchaniyu === 'renew' ? '&mode=renew' : ''}`}
           zagolovok={podarok ? 'Сначала вход — на эту же почту придёт код сертификата' : 'Сначала вход — на эту же почту придёт доступ'}
         />
       )}

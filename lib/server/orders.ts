@@ -108,7 +108,7 @@ export async function sozdatZakaz(opts: {
     }
   }
 
-  return vTranzakcii(async (c) => {
+  const itog = await vTranzakcii(async (c) => {
     const u = await c.query<{ balance_kop: string }>('select balance_kop from app_user where id = $1 for update', [
       opts.userId,
     ]);
@@ -152,13 +152,22 @@ export async function sozdatZakaz(opts: {
       ]);
     }
 
-    if (kDoplate === 0) {
-      await oplatitVnutri(c, zakaz, 0);
-    }
+    const oplachen = kDoplate === 0 ? await oplatitVnutri(c, zakaz, 0) : false;
 
     log.info('заказ создан', { order: zakaz, plan: opts.planId, period: opts.period, balance_kop: sBalansa, rest_kop: kDoplate });
-    return { ok: true as const, zakaz, sBalansa, kDoplate };
+    return { ok: true as const, zakaz, sBalansa, kDoplate, oplachen };
   });
+
+  /* ⚠️ ПОЛНАЯ ОПЛАТА С БАЛАНСА — ЭТО ТОЖЕ ОПЛАТА, И ЗА НЕЙ ОБЯЗАНО
+     ИДТИ ВСЁ ТО ЖЕ САМОЕ. Без этой строки заказ, закрытый балансом
+     целиком, становился «оплачен» и на этом всё кончалось: письма
+     не было, команда не узнавала, а СЕРТИФИКАТ НЕ ВЫДАВАЛСЯ ВОВСЕ —
+     человек платил и не получал ничего. Зовётся ПОСЛЕ транзакции:
+     внутри неё поход в сеть держал бы соединение с базой, а при
+     откате письмо ушло бы о заказе, которого нет (то же правило,
+     что в `zakazPoSertifikatu`). */
+  if (itog.oplachen) await posleOplaty(itog.zakaz);
+  return { ok: true, zakaz: itog.zakaz, sBalansa: itog.sBalansa, kDoplate: itog.kDoplate };
 }
 
 /**
@@ -180,7 +189,7 @@ async function oplatitVnutri(c: PoolClient, zakaz: number, dengiKop: number): Pr
 }
 
 export async function otmetitOplachennym(platyozh: number, prishloKop: number): Promise<void> {
-  const svezh = await vTranzakcii(async (c) => {
+  const itog = await vTranzakcii(async (c) => {
     const p = await c.query<{ id: string; order_id: string; amount_kop: string; status: string }>(
       'select id, order_id, amount_kop, status from payment where id = $1 for update',
       [platyozh],
@@ -201,11 +210,51 @@ export async function otmetitOplachennym(platyozh: number, prishloKop: number): 
     }
     await c.query(`update payment set status = 'paid', paid_at = now() where id = $1`, [platyozh]);
     const zakaz = Number(row.order_id);
-    const stal = await oplatitVnutri(c, zakaz, prishloKop);
-    return stal ? zakaz : null;
+    if (await oplatitVnutri(c, zakaz, prishloKop)) return { zakaz, naBalans: 0 };
+
+    /* ⚠️ ДЕНЬГИ ПРИШЛИ, А ЗАКАЗ ИХ УЖЕ НЕ ЖДЁТ — И ДЕТЬ ИХ НЕКУДА,
+       КРОМЕ БАЛАНСА. Случай не выдуманный, и путей к нему два:
+       человек отменил неоплаченный заказ в кабинете, пока платёжная
+       форма была открыта, — и заплатил; либо на один заказ выставлено
+       ДВА счёта (кнопка «Оплатить» заводит новую строку `payment`
+       каждым нажатием), и оплачены оба. Раньше `oplatitVnutri`
+       возвращала false МОЛЧА: платёж помечался оплаченным, а деньги
+       не ложились никуда — ни в заказ, ни на баланс, ни даже строкой
+       в журнал. Теперь они ложатся на баланс тем же движением, каким
+       туда ложится возврат за отменённый заказ (Р-89), и команда
+       узнаёт об этом отдельным сообщением. */
+    const o = await c.query<{ user_id: string; status: Status }>(
+      'select user_id, status from shop_order where id = $1 for update',
+      [zakaz],
+    );
+    const vladelec = Number(o.rows[0]?.user_id ?? 0);
+    if (!vladelec) {
+      log.error('деньги пришли по заказу, которого нет', { payment: platyozh, order: zakaz, money_kop: prishloKop });
+      return null;
+    }
+    await c.query('update app_user set balance_kop = balance_kop + $1 where id = $2', [prishloKop, vladelec]);
+    await c.query(
+      `insert into balance_move (user_id, delta_kop, reason, order_id) values ($1, $2, 'оплата по заказу, который уже не ждал денег', $3)`,
+      [vladelec, prishloKop, zakaz],
+    );
+    log.error('оплата пришла по заказу вне ожидания: деньги на баланс', {
+      payment: platyozh,
+      order: zakaz,
+      status: o.rows[0]?.status ?? '—',
+      money_kop: prishloKop,
+    });
+    return { zakaz, naBalans: prishloKop };
   });
 
-  if (svezh) await posleOplaty(svezh);
+  if (!itog) return;
+  /* ⚠️ СООБЩИТЬ КОМАНДЕ ОБЯЗАТЕЛЬНО, и это не «ещё одно
+     уведомление»: деньги легли на баланс, а не в заказ, и без человека
+     дальше ничего не произойдёт. */
+  if (itog.naBalans > 0) {
+    await soobshchitKomande({ vid: 'dengi_bez_zakaza', zakaz: itog.zakaz, platyozh, summaKop: itog.naBalans });
+    return;
+  }
+  await posleOplaty(itog.zakaz);
 }
 
 /** Что происходит ПОСЛЕ оплаты: письмо, сертификат, сигнал команде. */

@@ -28,13 +28,17 @@
 import { bazaEst, zapros } from './db';
 import { env } from './env';
 import { log, pochtaVZhurnal } from './log';
+import { rubli } from './money';
 import { poslatVChat, telegramNastroen } from './telegram';
 
 export type SobytieKomande =
   | { vid: 'zakaz_oplachen'; zakaz: number; tarif: string; srok: string; mest: number; podarok: boolean }
   | { vid: 'zakaz_vzyat'; zakaz: number; kto: string }
   | { vid: 'zakaz_zakryt'; zakaz: number; kto: string }
-  | { vid: 'zakaz_otmenyon'; zakaz: number };
+  | { vid: 'zakaz_otmenyon'; zakaz: number }
+  /* Деньги пришли по заказу, который их уже не ждал, и легли
+     на баланс покупателя. Разбирается руками — потому и в чат. */
+  | { vid: 'dengi_bez_zakaza'; zakaz: number; platyozh: number; summaKop: number };
 
 /** Сколько раз пробуем, прежде чем бросить. */
 const POPYTOK = 10;
@@ -64,6 +68,19 @@ function tekstDlyaChata(s: SobytieKomande): string | null {
   }
   if (s.vid === 'zakaz_zakryt') {
     return [`Заказ № ${s.zakaz} выполнен`, `Исполнитель: ${s.kto}`, ssylka(s.zakaz)].join('\n');
+  }
+  /* ⚠️ ТРЕТЬЕ СОБЫТИЕ В ЧАТЕ, И ОНО ДРУГОГО КЛАССА. Постановка
+     называла два РЯДОВЫХ события; это не рядовое, а происшествие:
+     деньги приняты, заказ их не ждал, и без человека они так
+     и останутся на балансе. Журнала тут мало — журнал никто
+     не читает, пока не сломалось. */
+  if (s.vid === 'dengi_bez_zakaza') {
+    return [
+      `Деньги пришли по заказу № ${s.zakaz}, который их уже не ждал`,
+      `Счёт № ${s.platyozh}, ${rubli(s.summaKop)}`,
+      'Сумма положена на баланс покупателя. Нужен разбор руками.',
+      ssylka(s.zakaz),
+    ].join('\n');
   }
   return null;
 }

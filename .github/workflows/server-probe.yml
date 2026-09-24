@@ -134,6 +134,146 @@ jobs:
             | sed 's/\r$//' | sed -n '1p;$p' | sed 's/^/  /'
           echo "  (ждём: HTTP 200 и тело ровно OK$INV)"
 
+      # ── ПРОВЕРКА БЕЗОПАСНОСТИ ──────────────────────────────────
+      #
+      # ⚠️ СУДИМ ПО ЖИВОМУ АДРЕСУ, А НЕ ПО НАШЕМУ КОНФИГУ. Файл nginx
+      # пишем мы сами, и наша же ошибка в нём спряталась бы от нашей
+      # же проверки (Р-47). Поэтому заголовки и страницы ошибок
+      # снимаются curl'ом снаружи, а порты — тем, что слушает ядро.
+      - name: Заголовки и страницы ошибок на живом адресе
+        # Замечание помечается аннотацией, но прогон не роняет: это
+        # ПРОБНИК, и его дело — показать всё разом, а не остановиться
+        # на первом же пункте, оставив остальное непроверенным.
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          BASE=https://spotik.shop
+          pl=0
+          zag=$(curl -sS -o /dev/null -D - --max-time 20 "$BASE/")
+          echo "-- заголовки главной --"
+          printf '%s' "$zag" | sed 's/\r$//' | sed -n '1p;/^[A-Za-z-]*:/p' | sed 's/^/  /'
+
+          est() { printf '%s' "$zag" | grep -qiE "^$1:" && echo "  ОК   $1" || { echo "  СБОЙ $1 нет"; pl=$((pl+1)); }; }
+          est 'strict-transport-security'
+          est 'x-content-type-options'
+          est 'x-frame-options'
+          est 'referrer-policy'
+
+          # ⚠️ HSTS ПРОВЕРЯЕТСЯ НЕ ТОЛЬКО НА НАЛИЧИЕ. `includeSubDomains`
+          # и `preload` — шаги, откатить которые нельзя ничем, кроме
+          # ожидания срока: их быть не должно, пока их не попросили.
+          hsts=$(printf '%s' "$zag" | tr -d '\r' | sed -n 's/^[Ss]trict-[Tt]ransport-[Ss]ecurity: *//p' | head -1)
+          echo "  HSTS: $hsts"
+          case "$hsts" in
+            *includeSubDomains*|*preload*) echo "::error::в HSTS появились директивы, которых там быть не должно"; pl=$((pl+1));;
+          esac
+
+          # ⚠️ ВЕРСИЯ NGINX НЕ ДОЛЖНА БЫТЬ ВИДНА. Сама по себе она
+          # не дыра, но это готовый список известных уязвимостей
+          # для того, кто перебирает цели.
+          srv=$(printf '%s' "$zag" | tr -d '\r' | sed -n 's/^[Ss]erver: *//p' | head -1)
+          echo "  Server: ${srv:-(нет)}"
+          case "$srv" in
+            *[0-9].[0-9]*) echo "  СБОЙ версия сервера видна"; pl=$((pl+1));;
+            *) echo "  ОК   версии сервера не видно";;
+          esac
+          printf '%s' "$zag" | grep -qi '^x-powered-by:' && { echo "  СБОЙ X-Powered-By отдаётся"; pl=$((pl+1)); } || echo "  ОК   X-Powered-By нет"
+
+          echo "-- страницы ошибок не выдают внутренностей --"
+          for put in /net-takoy-stranicy-12345/ /api/cabinet/ /api/admin/queue/; do
+            telo=$(curl -sS --max-time 20 "$BASE$put" | tr '\n' ' ')
+            kod=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE$put")
+            echo "  $put -> $kod"
+            case "$telo" in
+              *' at '*'/srv/spotik'*|*'node_modules'*|*'Error:'*'    at'*)
+                echo "  СБОЙ в теле видно устройство сервера"; pl=$((pl+1));;
+            esac
+          done
+          [ "$pl" = 0 ] && echo "::notice::заголовки и страницы ошибок в порядке" || echo "::error::проверка заголовков: $pl замечаний"
+          exit "$pl"
+
+      - name: Порты, файрвол и восстановление копии базы
+        env:
+          HOST: ${{ secrets.SSH_HOST }}
+          USER_NAME: ${{ secrets.SSH_USER }}
+        run: |
+          ssh -i ~/.ssh/id_deploy \
+              -o StrictHostKeyChecking=accept-new \
+              -o ConnectTimeout=20 \
+              -o BatchMode=yes \
+              "$USER_NAME@$HOST" 'bash -se' <<'REMOTE'
+          set -u
+          pl=0
+          echo "-- что слушает наружу --"
+          # ⚠️ СМОТРИМ НА АДРЕС, А НЕ ТОЛЬКО НА ПОРТ. PostgreSQL
+          # на 127.0.0.1 — это норма и прямое требование постановки;
+          # он же на 0.0.0.0 — открытая база.
+          ss -lntH | awk '{print $4}' | sed 's/.*://' | sort -un | paste -sd, - | sed 's/^/  порты: /'
+          naruzhu=$(ss -lntH | awk '{print $4}' | grep -vE '^(127\.0\.0\.1|\[::1\]|localhost)' | sed 's/.*://' | sort -un | paste -sd' ' -)
+          echo "  наружу слушают: ${naruzhu:-(ничего)}"
+          for port in $naruzhu; do
+            case "$port" in
+              22|80|443) ;;
+              *) echo "  СБОЙ наружу открыт порт $port"; pl=$((pl+1));;
+            esac
+          done
+          echo "  PostgreSQL: $(ss -lntH | grep -c ':5432') слушателя, из них наружу $(ss -lntH | awk '{print $4}' | grep -cE '^(0\.0\.0\.0|\[::\]):5432')"
+          ss -lntH | awk '{print $4}' | grep -qE '^(0\.0\.0\.0|\[::\]):5432' && { echo "  СБОЙ база слушает наружу"; pl=$((pl+1)); } || echo "  ОК   база только с localhost"
+          echo
+          echo "-- файрвол --"
+          sudo ufw status verbose 2>/dev/null | sed 's/^/  /' || echo "  ufw не отвечает"
+          echo
+          echo "-- права на файл окружения --"
+          stat -c '  %n %a %U:%G' /srv/spotik/env 2>/dev/null || echo "  /srv/spotik/env нет"
+          [ "$(stat -c '%a' /srv/spotik/env 2>/dev/null)" = 600 ] || { echo "  СБОЙ права не 600"; pl=$((pl+1)); }
+          stat -c '  %n %a %U:%G' /srv/spotik/backup 2>/dev/null || true
+
+          echo
+          echo "-- РЕЗЕРВНАЯ КОПИЯ: ВОССТАНАВЛИВАЕМ, А НЕ СМОТРИМ НА ФАЙЛ --"
+          # ⚠️ «ФАЙЛ ЛЕЖИТ» НЕ ЗНАЧИТ «КОПИЯ ЕСТЬ». Обрезанный дамп,
+          # дамп с чужой схемой и дамп, снятый до миграции, выглядят
+          # на диске одинаково. Поэтому копия РАЗВОРАЧИВАЕТСЯ
+          # в отдельную базу, и числа в ней сравниваются с боевыми.
+          # Боевая база при этом не трогается вовсе: только чтение.
+          svezh=$(ls -1t /srv/spotik/backup/spotik-*.sql.gz 2>/dev/null | head -1)
+          if [ -z "$svezh" ]; then
+            echo "  СБОЙ ни одной копии нет"; pl=$((pl+1))
+          else
+            echo "  свежая копия: $svezh ($(du -h "$svezh" | cut -f1), $(date -r "$svezh" -u '+%Y-%m-%d %H:%M UTC'))"
+            echo "  всего копий: $(ls -1 /srv/spotik/backup/spotik-*.sql.gz | wc -l)"
+            vozrast=$(( ( $(date +%s) - $(stat -c %Y "$svezh") ) / 3600 ))
+            echo "  возраст свежей копии: $vozrast ч"
+            [ "$vozrast" -le 48 ] || { echo "  СБОЙ свежей копии больше двух суток"; pl=$((pl+1)); }
+
+            PROBA=spotik_proba_vosstanovleniya
+            sudo -u postgres dropdb --if-exists "$PROBA" >/dev/null 2>&1 || true
+            if gzip -dc "$svezh" | sudo -u postgres psql -q -v ON_ERROR_STOP=1 -d postgres -c "create database $PROBA" >/dev/null 2>&1 \
+               && gzip -dc "$svezh" | sudo -u postgres psql -q -v ON_ERROR_STOP=1 "$PROBA" >/tmp/vosst.log 2>&1; then
+              echo "  ОК   копия развернулась без единой ошибки"
+              for t in app_user shop_order order_slot payment certificate staff; do
+                a=$(sudo -u postgres psql -tAc "select count(*) from $t" spotik 2>/dev/null || echo '—')
+                b=$(sudo -u postgres psql -tAc "select count(*) from $t" "$PROBA" 2>/dev/null || echo '—')
+                if [ "$a" = "$b" ]; then echo "  ОК   $t: $b строк — как в боевой"
+                else echo "  СБОЙ $t: в копии $b, в боевой $a"; pl=$((pl+1)); fi
+              done
+              # ⚠️ ШИФРОТЕКСТЫ В КОПИИ ОБЯЗАНЫ ОСТАТЬСЯ ШИФРОТЕКСТАМИ.
+              # Ключ живёт в /srv/spotik/env и в дамп не попадает —
+              # именно поэтому копию и можно хранить рядом (Р-87).
+              otkr=$(sudo -u postgres psql -tAc "select count(*) from order_slot where in_password_enc is not null and in_password_enc not like 'v1.%'" "$PROBA" 2>/dev/null || echo 0)
+              [ "${otkr:-0}" = 0 ] && echo "  ОК   в копии только шифротексты" || { echo "  СБОЙ в копии $otkr открытых паролей"; pl=$((pl+1)); }
+            else
+              echo "  СБОЙ копия НЕ разворачивается"; pl=$((pl+1))
+              tail -20 /tmp/vosst.log 2>/dev/null | sed 's/^/    /'
+            fi
+            sudo -u postgres dropdb --if-exists "$PROBA" >/dev/null 2>&1 || true
+            rm -f /tmp/vosst.log
+            echo "  проверочная база удалена"
+          fi
+          echo
+          [ "$pl" = 0 ] && echo "ПРОВЕРКА СЕРВЕРА: замечаний нет" || echo "ПРОВЕРКА СЕРВЕРА: $pl замечаний"
+          exit "$pl"
+          REMOTE
+
       # Разбор одной беды: «оплата прошла, а уведомление не пришло».
       # Шаг НИЧЕГО не меняет — только читает базу и журнал службы.
       #

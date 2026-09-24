@@ -532,6 +532,113 @@ chk('заказ отменён', /Заказ отменён/.test(otmena ?? ''))
 const sert2 = await p2.query('select used_at, used_order_id from certificate');
 chk('сертификат снова годен', sert2.rows[0].used_at === null && sert2.rows[0].used_order_id === null);
 
+console.log('── СЕРТИФИКАТ, ОПЛАЧЕННЫЙ ЦЕЛИКОМ С БАЛАНСА, ВСЁ РАВНО ВЫДАЁТСЯ ──');
+/* ⚠️ ЭТО НЕ УГОЛ, А ОБЫЧНЫЙ ПУТЬ: баланс берётся из возврата
+   за отменённый заказ (Р-89), и человек тратит его в один клик.
+   Раньше на этом пути заказ становился «оплачен» и на этом всё
+   кончалось: письма не было, команда не узнавала, а сертификат
+   не выдавался ВОВСЕ — человек платил и не получал ничего.
+   Проверяется СЛЕДСТВИЕ (строка в `certificate`), а не то, что
+   мы позвали нужную функцию. */
+{
+  const bylo = await p2.query('select count(*)::int as n from certificate');
+  /* ⚠️ ПИСЬМА СЧИТАЕМ, А НЕ ИЩЕМ. Одно письмо о сертификате в журнале
+     уже лежит — от покупки «на двоих» выше, — и поиск по образцу
+     прошёл бы и на сломанном коде. Контрольный прогон это и показал:
+     проверка «письмо ушло» была зелёной ровно тогда, когда сертификат
+     не выдавался вовсе. */
+  const pisemBylo = (server.zhurnal().match(/Тема: Сертификат Spotik Shop/g) ?? []).length;
+  await p2.query(`update app_user set balance_kop = 1000000 where email = $1`, [KLIENT]);
+  await klient.goto(`http://localhost:${PORT}/checkout/?plan=solo&period=1&gift=1`, { waitUntil: 'networkidle' });
+  const galka = klient.locator('input[name="balance"]');
+  chk('в оформлении виден баланс', await galka.count() === 1);
+  await galka.check();
+  await klient.check('input[name="consent"]');
+  await nazhat(klient, 'button[type="submit"]');
+  chk(
+    'оплата целиком с баланса не идёт на платёжную форму',
+    klient.url().includes('/cabinet/'),
+    klient.url().replace(`http://localhost:${PORT}`, ''),
+  );
+
+  const z = await p2.query(
+    `select id, status, total_kop, balance_kop, money_kop from shop_order
+      where kind = 'certificate' order by id desc limit 1`,
+  );
+  const zak = z.rows[0] ?? {};
+  chk('заказ закрыт балансом целиком', Number(zak.balance_kop) === Number(zak.total_kop) && Number(zak.money_kop) === 0,
+    `${Number(zak.balance_kop) / 100} ₽ с баланса`);
+  chk('сертификатный заказ закрыт', zak.status === 'done', String(zak.status));
+
+  const stalo = await p2.query('select count(*)::int as n from certificate');
+  chk('СЕРТИФИКАТ ВЫДАН', stalo.rows[0].n === bylo.rows[0].n + 1, `было ${bylo.rows[0].n}, стало ${stalo.rows[0].n}`);
+  const noviy = await p2.query(
+    `select plan_id, period, code_enc, bought_order_id from certificate order by id desc limit 1`,
+  );
+  const nc = noviy.rows[0] ?? {};
+  chk('в коде лежит подаренный тариф и срок', nc.plan_id === 'solo' && nc.period === 1, `${nc.plan_id} / ${nc.period}`);
+  chk('код сертификата в базе шифротекстом', String(nc.code_enc ?? '').startsWith('v1.'));
+  chk('сертификат привязан к своему заказу', Number(nc.bought_order_id) === Number(zak.id));
+  /* Письмо — то же следствие и тем же способом: журнал сервера
+     в тестовом режиме почты И ЕСТЬ почта. */
+  const pisemStalo = (server.zhurnal().match(/Тема: Сертификат Spotik Shop/g) ?? []).length;
+  chk('покупателю ушло НОВОЕ письмо с кодом', pisemStalo === pisemBylo + 1, `было ${pisemBylo}, стало ${pisemStalo}`);
+}
+
+console.log('── ДЕНЬГИ ПО ЗАКАЗУ, КОТОРЫЙ ИХ УЖЕ НЕ ЖДЁТ, ЛОЖАТСЯ НА БАЛАНС ──');
+/* ⚠️ СЛУЧАЙ НЕ ВЫДУМАННЫЙ, И ПУТЕЙ К НЕМУ ДВА: человек отменил
+   неоплаченный заказ, пока платёжная форма была открыта, — и заплатил;
+   либо на один заказ выставлено ДВА счёта (кнопка «Оплатить» заводит
+   новую строку `payment` каждым нажатием) и оплачены оба. Раньше
+   платёж помечался оплаченным, а деньги не ложились НИКУДА — ни
+   в заказ, ни на баланс, ни строкой в журнал. */
+{
+  await p2.query(`update app_user set balance_kop = 0 where email = $1`, [KLIENT]);
+  await klient.goto(`http://localhost:${PORT}/checkout/?plan=solo&period=1`, { waitUntil: 'networkidle' });
+  await klient.check('input[name="consent"]');
+  await nazhat(klient, 'button[type="submit"]');
+  const schet = Number(new URL(klient.url()).searchParams.get('payment') ?? 0);
+  chk('счёт выставлен', schet > 0, `счёт № ${schet}`);
+  const par = await p2.query('select order_id, amount_kop from payment where id = $1', [schet]);
+  const nomer = Number(par.rows[0].order_id);
+  const summa = Number(par.rows[0].amount_kop);
+
+  // Человек передумал и отменил заказ, не закрыв платёжную форму.
+  await klient.goto(`http://localhost:${PORT}/cabinet/`, { waitUntil: 'networkidle' });
+  const otmenit = klient
+    .locator('form')
+    .filter({ has: klient.locator(`input[name="order"][value="${nomer}"]`) })
+    .filter({ has: klient.locator('button:has-text("Отменить")') })
+    .first();
+  await otmenit.locator('button').click();
+  await klient.waitForLoadState('networkidle');
+  await klient.waitForTimeout(300);
+  const st1 = await p2.query('select status from shop_order where id = $1', [nomer]);
+  chk('заказ отменён покупателем', st1.rows[0].status === 'cancelled', String(st1.rows[0].status));
+
+  // …а деньги всё-таки пришли. Стучимся в ТУ ЖЕ дверь, что и настоящее
+  // уведомление Робокассы, — иначе проверялась бы не оплата, а кнопка.
+  const r = await fetch(`http://localhost:${PORT}/api/pay/fake/?secret=proverka&payment=${schet}`, { method: 'POST' });
+  chk('уведомление принято', r.status === 200, `статус ${r.status}`);
+  await new Promise((t) => setTimeout(t, 500));
+
+  const pl = await p2.query('select status from payment where id = $1', [schet]);
+  chk('платёж помечен оплаченным', pl.rows[0].status === 'paid');
+  const st2 = await p2.query('select status, money_kop from shop_order where id = $1', [nomer]);
+  chk('отменённый заказ не ожил', st2.rows[0].status === 'cancelled', String(st2.rows[0].status));
+  const bal = await p2.query('select balance_kop from app_user where email = $1', [KLIENT]);
+  chk('ДЕНЬГИ НЕ ПРОПАЛИ: легли на баланс', Number(bal.rows[0].balance_kop) === summa,
+    `${Number(bal.rows[0].balance_kop) / 100} ₽ при ${summa / 100} ₽ оплаты`);
+  const dv = await p2.query(
+    `select delta_kop, reason from balance_move where order_id = $1 and delta_kop > 0 order by id desc limit 1`,
+    [nomer],
+  );
+  chk('движение по балансу названо своими словами', /не ждал денег/.test(dv.rows[0]?.reason ?? ''), dv.rows[0]?.reason ?? '—');
+  const och = await p2.query(`select tekst from notify_outbox where vid = 'dengi_bez_zakaza'`);
+  chk('команда узнала о происшествии', och.rows.length === 1 && /уже не ждал/.test(och.rows[0].tekst),
+    (och.rows[0]?.tekst ?? '').split('\n')[0]);
+}
+
 chk('ни одной ошибки JavaScript', oshibkiJS.length === 0, oshibkiJS.slice(0, 3).join(' | '));
 
 await p2.end();
