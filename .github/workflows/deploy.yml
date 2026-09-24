@@ -457,6 +457,15 @@ jobs:
             esac
           fi
 
+          # ⚠️ ИМЯ ФРЕЙМВОРКА НАРУЖУ НЕ ОТДАЁМ, и проверяется это здесь,
+          # а не только пробником: пробник гоняют руками, а вернуться
+          # заголовок может молча — сменой версии Next или правкой
+          # конфига. Версию nginx стережём с двадцать седьмой итерации,
+          # а `X-Powered-By` приходил от приложения и до тридцать первой
+          # оставался незамеченным.
+          xp=$(curl -sSI --max-time 20 "$BASE/" | tr -d '\r' | awk -F': ' 'tolower($1)=="x-powered-by"{print $2}')
+          if [ -n "$xp" ]; then echo "  ✗ отдаётся X-Powered-By: «$xp»"; fail=1; else echo "  ✓ X-Powered-By не отдаётся"; fi
+
           plain=$(curl -sS -o /dev/null -w '%{size_download}' --max-time 20 "$BASE/")
           gz=$(curl -sS -H 'Accept-Encoding: gzip' -o /dev/null -w '%{size_download}' --max-time 20 "$BASE/")
           if [ "$gz" -lt "$plain" ]; then echo "  ✓ gzip работает: $gz из $plain байт"
