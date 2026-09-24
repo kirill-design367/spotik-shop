@@ -2,6 +2,7 @@
 
 import { useActionState } from 'react';
 import { deystviePrositKod, deystvieVoyti, type Otvet } from '@/lib/server/actions-client';
+import { BEZ_ZAPISI } from '@/lib/metrika';
 
 /**
  * Вход по коду на почту. Паролей нет вовсе.
@@ -32,7 +33,7 @@ export default function LoginBox({ next, zagolovok }: { next: string; zagolovok?
         <form action={prositKod}>
           <label className="field">
             <span className="field__label">Почта</span>
-            <input type="email" name="email" required autoComplete="email" defaultValue={email} placeholder="you@example.com" />
+            <input type="email" name="email" required autoComplete="email" className={BEZ_ZAPISI} defaultValue={email} placeholder="you@example.com" />
           </label>
           <button type="submit" className="btn btn--wide" disabled={idyot1}>
             {idyot1 ? 'Отправляем…' : 'Получить код'}
@@ -53,6 +54,7 @@ export default function LoginBox({ next, zagolovok }: { next: string; zagolovok?
               required
               inputMode="numeric"
               autoComplete="one-time-code"
+              className={BEZ_ZAPISI}
               maxLength={6}
               placeholder="000000"
             />

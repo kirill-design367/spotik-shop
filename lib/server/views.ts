@@ -12,6 +12,7 @@ import { odna, zapros } from './db';
 import { poprobovatRasshifrovat } from './crypto';
 import { STATUS_SLOVAMI, type Rezhim, type Status } from './orders';
 import { katalog, naytiTarif, podarokSlovami, srokKratko } from './catalog';
+import { METKI } from './utm';
 
 export type SlotKlientu = {
   idx: number;
@@ -197,6 +198,15 @@ export type ZakazOperatoru = {
   moneyKop: number;
   cancelReason: string | null;
   secretsWiped: boolean;
+  /**
+   * Откуда пришёл заказ. Пары «имя — значение» в порядке `METKI`;
+   * пустых меток тут нет вовсе, поэтому пустой список означает
+   * «пришёл без меток».
+   *
+   * ⚠️ ЭТО ДАННЫЕ, А НЕ НАДПИСЬ, и переводу они не подлежат (закон 40):
+   * `utm_source=yandex` выглядит одинаково на любом языке админки.
+   */
+  utm: { imya: string; znachenie: string }[];
   slots: SlotOperatoru[];
 };
 
@@ -222,10 +232,16 @@ export async function zakazDlyaAdminki(id: number, staffId: number, admin: boole
     money_kop: string;
     cancel_reason: string | null;
     secrets_wiped_at: Date | null;
+    utm_source: string | null;
+    utm_medium: string | null;
+    utm_campaign: string | null;
+    utm_term: string | null;
+    utm_content: string | null;
   }>(
     `select o.id, o.plan_id, o.period, o.status, o.source, u.email,
             o.operator_id, f.email as operator_email,
-            o.total_kop, o.balance_kop, o.money_kop, o.cancel_reason, o.secrets_wiped_at
+            o.total_kop, o.balance_kop, o.money_kop, o.cancel_reason, o.secrets_wiped_at,
+            o.utm_source, o.utm_medium, o.utm_campaign, o.utm_term, o.utm_content
        from shop_order o
        join app_user u on u.id = o.user_id
        left join staff f on f.id = o.operator_id
@@ -261,6 +277,7 @@ export async function zakazDlyaAdminki(id: number, staffId: number, admin: boole
     operatorId: r.operator_id ? Number(r.operator_id) : null,
     operatorEmail: r.operator_email,
     bySertificate: r.source === 'certificate',
+    utm: METKI.flatMap((m) => (r[m] ? [{ imya: m as string, znachenie: r[m] as string }] : [])),
     totalKop: Number(r.total_kop),
     balanceKop: Number(r.balance_kop),
     moneyKop: Number(r.money_kop),

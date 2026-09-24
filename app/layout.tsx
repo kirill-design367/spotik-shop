@@ -3,6 +3,7 @@ import './globals.css';
 import './components.css';
 import ScrollProvider from '@/components/ScrollProvider';
 import SiteChrome from '@/components/chrome/SiteChrome';
+import Metrika from '@/components/chrome/Metrika';
 import { siteFontFaces, SITE, BASE_PATH as BASE } from '@/lib/fontface';
 
 export const metadata: Metadata = {
@@ -48,7 +49,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               // Позицию прокрутки восстанавливаем мы сами: браузер знает
               // только про документ, а он у нас неподвижен. Manual нужен
               // и затем, чтобы браузер не пытался дёрнуть документ сам.
-              "try{history.scrollRestoration='manual'}catch(e){}",
+              "try{history.scrollRestoration='manual'}catch(e){}" +
+              /* МЕТКИ КАМПАНИИ СНИМАЕТ БРАУЗЕР, А НЕ СЕРВЕР, и это
+                 прямое следствие закона 36: обращение к searchParams
+                 или cookies() на лендинге перевело бы первый экран
+                 на посчитанный ответ. Здесь же — четыре строки без
+                 единого запроса.
+                 ⚠️ ПОБЕЖДАЕТ ПЕРВЫЙ ЗАХОД: кука ставится, только если
+                 её ещё нет. Иначе возврат из поиска затирал бы
+                 настоящий источник. Кука сеансовая — «до конца
+                 сессии», как и просили. */
+              "try{var q=location.search;if(q&&!/(^|; )spotik_utm=/.test(document.cookie)){" +
+              "var p=new URLSearchParams(q),o=[];" +
+              "['utm_source','utm_medium','utm_campaign','utm_term','utm_content'].forEach(function(k){" +
+              "var v=p.get(k);if(v)o.push(k+'='+encodeURIComponent(v.slice(0,120)))});" +
+              "if(o.length)document.cookie='spotik_utm='+o.join('&')+';path=/;samesite=lax'+" +
+              "(location.protocol==='https:'?';secure':'')}}catch(e){}",
           }}
         />
         {/* Шрифтового файла для вордмарка больше нет: слово запечено
@@ -116,6 +132,10 @@ addEventListener('visibilitychange',function(){if(document.visibilityState==='hi
           }}
         />
         <ScrollProvider />
+        {/* Счётчик Метрики. Стоит ПОСЛЕДНИМ и грузится после события
+            `load`; в кабинете и в админке его нет вовсе — см. сам
+            компонент. */}
+        <Metrika />
       </body>
     </html>
   );

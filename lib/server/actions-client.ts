@@ -20,6 +20,7 @@ import {
 } from './auth';
 import { bazaEst } from './db';
 import { sozdatZakaz, zakazPoSertifikatu, otmenitZakaz, type VvodUchastnika } from './orders';
+import { utmIzKuki } from './utm';
 import { vystavitSchet } from './payments';
 import { nayti, POCHEMU_KOD } from './certificates';
 import { katalog, naytiTarif } from './catalog';
@@ -122,6 +123,9 @@ export async function deystvieOformit(_prosh: Otvet, fd: FormData): Promise<Otve
     uchastniki,
     soglasie: fd.get('consent') === 'on',
     tratitBalans: fd.get('balance') === 'on',
+    /* Метки читает ДЕЙСТВИЕ, а не страница: `cookies()` на лендинге
+       перевёл бы первый экран на посчитанный ответ (закон 36). */
+    utm: await utmIzKuki(),
   });
   if (!itog.ok) return { oshibka: itog.pochemu };
 
@@ -213,6 +217,7 @@ export async function deystvieAktivirovat(_prosh: Otvet, fd: FormData): Promise<
     period: r.period,
     certificateId: r.id,
     uchastniki,
+    utm: await utmIzKuki(),
   });
   redirect(`/cabinet/?order=${zakaz}`);
 }

@@ -39,6 +39,7 @@ const S = {
   'nav.prices': ['Цены', 'Prices'],
   'nav.certs': ['Сертификаты', 'Certificates'],
   'nav.staff': ['Сотрудники', 'Staff'],
+  'nav.stats': ['Статистика', 'Stats'],
   'nav.site': ['Сайт', 'Site'],
   'nav.logout': ['Выйти', 'Log out'],
   'nav.lang': ['Язык интерфейса', 'Interface language'],
@@ -142,6 +143,7 @@ const S = {
   ],
   'z.taken_by': ['взял {kto}', 'taken by {kto}'],
   'z.cancel_reason': ['Отменён потому что', 'Cancelled because'],
+  'z.utm': ['Откуда пришёл', 'Came from'],
   'z.take': ['Взять заказ', 'Take this order'],
   'z.release': ['Вернуть в очередь', 'Put back in the queue'],
   'z.done_note': [
@@ -289,6 +291,39 @@ const S = {
   'k.price_saved': ['Цена сохранена.', 'Price saved.'],
   'k.cert_days_saved': ['Срок действия сертификата сохранён.', 'Certificate validity saved.'],
   'k.staff_saved': ['{email} теперь {role}.', '{email} is now {role}.'],
+
+  /* ── Статистика ──────────────────────────────────────────────────
+     ⚠️ ПРЕФИКС `ss.`, А НЕ `st.`: под `st.` уже лежат состояния
+     заказа, и вторая сущность с тем же префиксом рано или поздно
+     столкнётся с первой на одинаковом хвосте. */
+  'ss.h': ['Статистика', 'Statistics'],
+  'ss.day': ['За сутки', 'Last 24 hours'],
+  'ss.week': ['За неделю', 'Last 7 days'],
+  'ss.month': ['За месяц', 'Last 30 days'],
+  'ss.orders': ['Заказов', 'Orders'],
+  'ss.revenue': ['Выручка', 'Revenue'],
+  'ss.revenue_note': [
+    'Выручка — это деньги, прошедшие через кассу. Оплаченное с баланса и заказы по сертификату сюда не входят: эти деньги уже посчитаны там, где их приняли.',
+    'Revenue is money that went through the payment provider. Balance payments and certificate orders are not counted here: that money was already counted where it came in.',
+  ],
+  'ss.queue': ['Сейчас в очереди', 'In queue now'],
+  'ss.queue_note': ['Оплаченные и взятые в работу.', 'Paid and in progress.'],
+  'ss.avg': ['Среднее время выполнения', 'Average completion time'],
+  'ss.avg_note': [
+    'От оплаты до закрытия, по выполненным заказам за 30 суток.',
+    'From payment to completion, over finished orders of the last 30 days.',
+  ],
+  'ss.avg_none': ['Выполненных заказов ещё не было.', 'No finished orders yet.'],
+  'ss.by_plan': ['По тарифам и срокам', 'By plan and term'],
+  'ss.certs': ['Сертификаты', 'Certificates'],
+  'ss.certs_bought': ['Куплено', 'Bought'],
+  'ss.certs_used': ['Активировано', 'Activated'],
+  'ss.sources': ['Источники заказов', 'Order sources'],
+  'ss.source': ['Источник', 'Source'],
+  'ss.source_direct': ['без меток', 'no tags'],
+  'ss.share': ['Доля', 'Share'],
+  'ss.none': ['Пока пусто.', 'Nothing yet.'],
+  'ss.hm': ['{h} ч {m} мин', '{h} h {m} min'],
 } as const satisfies Record<string, readonly [string, string]>;
 
 export type Klyuch = keyof typeof S;

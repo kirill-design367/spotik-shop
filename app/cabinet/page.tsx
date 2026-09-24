@@ -1,10 +1,12 @@
 import '../shop.css';
 import type { Metadata } from 'next';
 import LoginBox from '@/components/shop/LoginBox';
+import KabinetZhivoy from '@/components/shop/KabinetZhivoy';
 import { ktoKlient } from '@/lib/server/auth';
 import { balans, moiZakazy } from '@/lib/server/views';
 import { moiSertifikaty } from '@/lib/server/certificates';
 import { bazaEst } from '@/lib/server/db';
+import { otpechatokKabineta } from '@/lib/server/otpechatok';
 import { rubli } from '@/lib/server/money';
 import { deystvieOplatit, deystvieOtmenitSvoy, deystvieVyyti } from '@/lib/server/actions-client';
 import type { Status } from '@/lib/server/orders';
@@ -88,6 +90,12 @@ export default async function Cabinet({
           <button type="submit" className="btn btn--ghost btn--sm">Выйти</button>
         </form>
       </div>
+
+      {/* Кабинет обновляется сам: опрос отпечатка раз в пятнадцать
+          секунд и `router.refresh()` на изменение. Сам компонент
+          рисует только две строки — «сессия кончилась» и «доступы
+          выданы»; всё остальное по-прежнему рисует сервер. */}
+      <KabinetZhivoy nachalo={await otpechatokKabineta(kto.userId)} />
 
       <h2 className="panel__h">Заказы</h2>
       {!zakazy.length ? (

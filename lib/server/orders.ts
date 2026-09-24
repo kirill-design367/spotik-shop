@@ -17,6 +17,7 @@ import { odna, vTranzakcii, zapros } from './db';
 import { shifrGotov, zashifrovat } from './crypto';
 import { log } from './log';
 import { soobshchitKomande } from './notify';
+import { utmVRyad, type Utm } from './utm';
 import { pismoZakazGotov, pismoZakazOplachen, pismoZakazOtmenyon } from './letters';
 import { vydatSertifikat } from './certificates';
 import { cenaTarifa, katalog, naytiTarif, srokKratko, srokPolno } from './catalog';
@@ -72,6 +73,8 @@ export async function sozdatZakaz(opts: {
   uchastniki: VvodUchastnika[];
   soglasie: boolean;
   tratitBalans: boolean;
+  /** Метки кампании; их снял браузер при первом заходе (lib/server/utm.ts). */
+  utm?: Utm;
 }): Promise<ItogSozdaniya> {
   if (!opts.soglasie) return { ok: false, pochemu: 'Нужно согласие на обработку персональных данных.' };
 
@@ -113,11 +116,15 @@ export async function sozdatZakaz(opts: {
     const sBalansa = opts.tratitBalans ? Math.min(balans, cena) : 0;
     const kDoplate = cena - sBalansa;
 
+    /* ⚠️ МЕТКИ КАМПАНИИ ПИШУТСЯ РОВНО ЗДЕСЬ, В МОМЕНТ СОЗДАНИЯ
+       ЗАКАЗА, и больше нигде. Приписать их позже неоткуда: кука
+       живёт до конца сессии, а заказ — вечно. */
     const z = await c.query<{ id: string }>(
-      `insert into shop_order (user_id, kind, plan_id, period, status, total_kop, balance_kop, money_kop, source, consent_at)
-       values ($1, $2, $3, $4, 'new', $5, $6, 0, 'payment', now())
+      `insert into shop_order (user_id, kind, plan_id, period, status, total_kop, balance_kop, money_kop, source, consent_at,
+                               utm_source, utm_medium, utm_campaign, utm_term, utm_content)
+       values ($1, $2, $3, $4, 'new', $5, $6, 0, 'payment', now(), $7, $8, $9, $10, $11)
        returning id`,
-      [opts.userId, opts.kind, opts.planId, opts.period, cena, sBalansa],
+      [opts.userId, opts.kind, opts.planId, opts.period, cena, sBalansa, ...utmVRyad(opts.utm ?? {})],
     );
     const zakaz = Number(z.rows[0]!.id);
 
@@ -264,6 +271,7 @@ export async function zakazPoSertifikatu(opts: {
   period: number;
   certificateId: number;
   uchastniki: VvodUchastnika[];
+  utm?: Utm;
 }): Promise<number> {
   if (opts.uchastniki.some((u) => u.mode === 'renew') && !shifrGotov()) throw new Error('нет ключа шифрования');
   const zakaz = await vTranzakcii(async (c) => {
@@ -274,10 +282,11 @@ export async function zakazPoSertifikatu(opts: {
     if (!pometka.rows.length) throw new Error('сертификат уже активирован');
 
     const z = await c.query<{ id: string }>(
-      `insert into shop_order (user_id, kind, plan_id, period, status, total_kop, source, certificate_id, consent_at, paid_at)
-       values ($1, 'plan', $2, $3, 'paid', 0, 'certificate', $4, now(), now())
+      `insert into shop_order (user_id, kind, plan_id, period, status, total_kop, source, certificate_id, consent_at, paid_at,
+                               utm_source, utm_medium, utm_campaign, utm_term, utm_content)
+       values ($1, 'plan', $2, $3, 'paid', 0, 'certificate', $4, now(), now(), $5, $6, $7, $8, $9)
        returning id`,
-      [opts.userId, opts.planId, opts.period, opts.certificateId],
+      [opts.userId, opts.planId, opts.period, opts.certificateId, ...utmVRyad(opts.utm ?? {})],
     );
     const zakaz = Number(z.rows[0]!.id);
     for (let i = 0; i < opts.uchastniki.length; i++) {

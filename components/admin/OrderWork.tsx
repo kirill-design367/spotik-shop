@@ -70,6 +70,22 @@ export default function OrderWork({ z, staffId, y }: { z: ZakazOperatoru; staffI
                   card: rub(z.moneyKop),
                 })}
           </dd>
+          {/* ⚠️ ОТКУДА ПРИШЁЛ ЗАКАЗ — ЭТО ДАННЫЕ, А НЕ НАДПИСЬ: имена
+              меток и их значения не переводятся ни на каком языке
+              админки (закон 40). Строки нет вовсе, если меток не было:
+              «источник: —» на каждом прямом заходе — это шум. */}
+          {z.utm.length ? (
+            <>
+              <dt>{t('z.utm')}</dt>
+              <dd className="ad__utm">
+                {z.utm.map((m) => (
+                  <span key={m.imya}>
+                    {m.imya}={m.znachenie}
+                  </span>
+                ))}
+              </dd>
+            </>
+          ) : null}
           {z.cancelReason ? (
             <>
               <dt>{t('z.cancel_reason')}</dt>

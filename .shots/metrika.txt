@@ -1,0 +1,46 @@
+новых миграций нет
+ЯНДЕКС МЕТРИКА: где счётчик есть и где его нет.
+
+── ПУБЛИЧНЫЕ СТРАНИЦЫ: СЧЁТЧИК ЕСТЬ ──
+  OK   лендинг: очередь счётчика заведена
+  OK   лендинг: счётчик поднялся
+  OK   лендинг: библиотека пришла ПОСЛЕ load
+  OK   номер счётчика тот самый  113005479
+  OK   параметр ssr  true
+  OK   параметр webvisor  true
+  OK   параметр clickmap  true
+  OK   параметр ecommerce  "dataLayer"
+  OK   параметр accurateTrackBounce  true
+  OK   параметр trackLinks  true
+  OK   оферта: счётчик есть
+  OK   оферта: про Метрику в тексте сказано
+
+── ЦЕЛИ ──
+  OK   оформление: цель «начато оформление» отправлена  reachGoal
+  OK   почта и пароль закрыты от вебвизора  email:закрыто
+  OK   код сертификата закрыт от вебвизора  ym-disable-keys ym-hide-content
+
+── КАБИНЕТ И АДМИНКА: СЧЁТЧИК НЕ ДЕЛАЕТ НИЧЕГО ──
+  OK   /cabinet/ — window.ym не заведён  undefined
+  OK   /cabinet/ — слой данных не создан  undefined
+  OK   /cabinet/ — запроса к Метрике не было
+  OK   /admin/login/ — window.ym не заведён  undefined
+  OK   /admin/login/ — слой данных не создан  undefined
+  OK   /admin/login/ — запроса к Метрике не было
+  OK   /admin/ — window.ym не заведён  undefined
+  OK   /admin/ — слой данных не создан  undefined
+  OK   /admin/ — запроса к Метрике не было
+
+── МЕТКИ КАМПАНИИ ──
+  OK   метки сняты с первого захода  utm_source=yandex&utm_medium=cpc&utm_campaign=vesna&utm_term=spotify&utm_content=b1
+  OK     utm_source=yandex
+  OK     utm_medium=cpc
+  OK     utm_campaign=vesna
+  OK     utm_term=spotify
+  OK     utm_content=b1
+  OK   метки живут на другой странице
+  OK   повторный заход метки НЕ затирает  utm_source=yandex&utm_medium=cpc&utm_campaign=vesna&utm_term=spotify&utm_content=b1
+  OK   кука сеансовая и не уезжает на чужие сайты  expires=-1 sameSite=Lax
+
+МЕТРИКА НА МЕСТЕ: публичные страницы со счётчиком, кабинет и админка — без.
+

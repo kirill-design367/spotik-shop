@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from 'react';
 import { deystvieAktivirovat, deystvieProveritKodSertifikata, type Otvet } from '@/lib/server/actions-client';
+import { cel, CELI, BEZ_ZAPISI } from '@/lib/metrika';
 
 /**
  * Активация сертификата.
@@ -44,6 +45,7 @@ export default function CertificateForm({ voshyol }: { voshyol: boolean }) {
             required
             autoComplete="off"
             spellCheck={false}
+            className={BEZ_ZAPISI}
             value={kod}
             onChange={(e) => setKod(e.target.value)}
             placeholder="SPOTIK-"
@@ -69,7 +71,10 @@ export default function CertificateForm({ voshyol }: { voshyol: boolean }) {
       ) : null}
 
       {kodPrinyat && voshyol ? (
-        <form action={aktivirovat} className="panel">
+        /* ⚠️ ЦЕЛЬ НА ОТПРАВКЕ, А НЕ НА УДАЧЕ: действие уводит
+           в кабинет перенаправлением, а в кабинете счётчика нет
+           вовсе — по постановке. Отступление названо в отчёте. */
+        <form action={aktivirovat} onSubmit={() => cel(CELI.sertifikatAktivirovan)} className="panel">
           <h2 className="panel__h">{mest === 1 ? 'Куда включать Premium' : `Куда включать Premium — ${mest} аккаунта`}</h2>
           {itog.oshibka ? <p className="err">{itog.oshibka}</p> : null}
           <input type="hidden" name="code" value={kod} />
@@ -103,11 +108,11 @@ export default function CertificateForm({ voshyol }: { voshyol: boolean }) {
                   <div className="row2">
                     <label className="field">
                       <span className="field__label">Почта аккаунта Spotify</span>
-                      <input type="email" name={`login${i}`} required autoComplete="off" />
+                      <input type="email" name={`login${i}`} required autoComplete="off" className={BEZ_ZAPISI} />
                     </label>
                     <label className="field">
                       <span className="field__label">Пароль от аккаунта Spotify</span>
-                      <input type="password" name={`password${i}`} required autoComplete="off" />
+                      <input type="password" name={`password${i}`} required autoComplete="off" className={BEZ_ZAPISI} />
                     </label>
                   </div>
                 ) : (

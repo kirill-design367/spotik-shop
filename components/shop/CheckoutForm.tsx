@@ -3,6 +3,7 @@
 import { useActionState, useState } from 'react';
 import { deystvieOformit, type Otvet } from '@/lib/server/actions-client';
 import { rubli } from '@/lib/server/money';
+import { cel, CELI, BEZ_ZAPISI } from '@/lib/metrika';
 
 export type SrokVybor = { period: number; kop: number; label: string };
 
@@ -44,7 +45,13 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
   const kOplate = cena - sBalansa;
 
   return (
-    <form action={oformit}>
+    /* ⚠️ ЦЕЛЬ ШЛЁТСЯ НА ОТПРАВКЕ ФОРМЫ, А НЕ ПОСЛЕ ОТВЕТА СЕРВЕРА:
+       удачное действие уводит человека на Робокассу перенаправлением,
+       и кадра, в котором можно было бы что-то отправить, не остаётся
+       вовсе. `onSubmit` при этом идёт ПОСЛЕ проверки браузером
+       обязательных полей — на незаполненной галочке согласия он
+       не сработает. */
+    <form action={oformit} onSubmit={() => cel(CELI.perehodKOplate)}>
       <input type="hidden" name="plan" value={vvod.planId} />
       <input type="hidden" name="period" value={period} />
       {/* ⚠️ СЕРТИФИКАТ — ПРИЗНАК, А НЕ ТАРИФ (Р-93). Тариф и срок
@@ -110,11 +117,11 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
                 <div className="row2">
                   <label className="field">
                     <span className="field__label">Почта аккаунта Spotify</span>
-                    <input type="email" name={`login${i}`} required autoComplete="off" />
+                    <input type="email" name={`login${i}`} required autoComplete="off" className={BEZ_ZAPISI} />
                   </label>
                   <label className="field">
                     <span className="field__label">Пароль от аккаунта Spotify</span>
-                    <input type="password" name={`password${i}`} required autoComplete="off" />
+                    <input type="password" name={`password${i}`} required autoComplete="off" className={BEZ_ZAPISI} />
                   </label>
                 </div>
               )}

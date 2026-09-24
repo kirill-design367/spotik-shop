@@ -1,6 +1,8 @@
 import '../shop.css';
 import type { Metadata } from 'next';
 import CheckoutForm, { type Vvod } from '@/components/shop/CheckoutForm';
+import Celi from '@/components/shop/Celi';
+import { CELI } from '@/lib/metrika';
 import LoginBox from '@/components/shop/LoginBox';
 import { ktoKlient } from '@/lib/server/auth';
 import { katalog, naytiTarif, srokPolno } from '@/lib/server/catalog';
@@ -82,6 +84,12 @@ export default async function Checkout({
 
   return (
     <main id="main" className="page" tabIndex={-1}>
+      {/* ⚠️ ЦЕЛЬ СТОИТ ЗДЕСЬ, А НЕ ПОД УСЛОВИЕМ ВХОДА. «Начато
+          оформление» — это приход на страницу заказа: человек уже
+          выбрал тариф и нажал кнопку. Повесь мы её на показ формы —
+          в отчёт попадали бы только вошедшие, то есть воронка
+          потеряла бы ровно тот шаг, где люди и отваливаются. */}
+      <Celi imya={CELI.oformlenieNachato} />
       <a className="page__back" href="/">← На главную</a>
       <h1 className="page__h">{zagolovok}</h1>
       <p className="page__lead">

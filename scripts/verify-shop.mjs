@@ -179,6 +179,16 @@ const klient = await browser.newPage({ viewport: { width: 1280, height: 900 } })
 const oshibkiJS = [];
 klient.on('pageerror', (e) => oshibkiJS.push(String(e.message)));
 
+/* ⚠️ МЕТКИ КАМПАНИИ СНИМАЮТСЯ ДО ВХОДА И С ЛЕНДИНГА, а не с адреса
+   оформления: именно так приходит человек из рекламы. Дальше он идёт
+   на оформление, входит по коду, оформляет заказ — и в заказе метки
+   обязаны оказаться, хотя ни одна страница после лендинга их
+   в адресе уже не несёт. Это и есть «доезжают ли UTM до заказа». */
+await klient.goto(
+  `http://localhost:${PORT}/?utm_source=yandex&utm_medium=cpc&utm_campaign=vesna&utm_term=premium&utm_content=banner1`,
+  { waitUntil: 'domcontentloaded' },
+);
+
 await voyti(klient, KLIENT, '/checkout/?plan=duo&period=12&mode=new');
 chk('вход по коду из письма', klient.url().includes('/checkout/'), klient.url().replace(`http://localhost:${PORT}`, ''));
 
@@ -197,6 +207,24 @@ await nazhat(klient, 'button[type="submit"]');
 chk('после оплаты мы в кабинете', klient.url().includes('/cabinet/'));
 const telo1 = await klient.textContent('body');
 chk('заказ помечен оплаченным', /Оплачен, ждёт оператора/.test(telo1 ?? ''));
+
+console.log('── МЕТКИ КАМПАНИИ ДОЕХАЛИ ДО ЗАКАЗА ──');
+{
+  const pu = new pg.Pool({ connectionString: URL_BAZY, max: 1 });
+  const m = await pu.query(
+    'select utm_source, utm_medium, utm_campaign, utm_term, utm_content from shop_order order by id limit 1',
+  );
+  await pu.end();
+  const r = m.rows[0] ?? {};
+  /* ⚠️ СПРАШИВАЕТСЯ БАЗА, А НЕ КУКА. Кука доказала бы только,
+     что браузер её сохранил; метка нужна в СТРОКЕ ЗАКАЗА —
+     оттуда её берёт и карточка заказа, и статистика. */
+  chk('источник записан в заказ', r.utm_source === 'yandex', String(r.utm_source));
+  chk('канал записан', r.utm_medium === 'cpc', String(r.utm_medium));
+  chk('кампания записана', r.utm_campaign === 'vesna', String(r.utm_campaign));
+  chk('ключевое слово записано', r.utm_term === 'premium', String(r.utm_term));
+  chk('объявление записано', r.utm_content === 'banner1', String(r.utm_content));
+}
 
 console.log('── ПАРОЛЬ КЛИЕНТА НЕ ЛЕЖИТ ОТКРЫТЫМ ТЕКСТОМ ──');
 const p2 = new pg.Pool({ connectionString: URL_BAZY, max: 1 });
@@ -262,10 +290,72 @@ const posle = await admin.textContent('body');
    и `dd`, и между ними в `textContent` нет ни одного знака. */
 chk('заказ закрыт', /Заказ закрыт/.test(posle ?? '') && /Состояние\s*выполнен/.test((posle ?? '').replace(/\s+/g, ' ')));
 
+/*
+ * ── КАБИНЕТ ОБНОВИЛСЯ САМ, БЕЗ ПЕРЕЗАГРУЗКИ ───────────────────────
+ *
+ * ⚠️ ЭТУ СТРАНИЦУ НИКТО НЕ ТРОГАЛ С МОМЕНТА ВХОДА. Она была открыта
+ * ДО того, как оператор завёл доступы, и с тех пор мы её не
+ * перезагружали и не переходили по ссылкам. Значит появление логина
+ * на ней может объясняться ровно одним — опросом раз в пятнадцать
+ * секунд и `router.refresh()`.
+ *
+ * ⚠️ ЖДЁМ СОБЫТИЯ, А НЕ СЕКУНД (Р-94, Р-97, Р-98): опрашиваем сам
+ * экран с потолком. Фиксированная выдержка здесь была бы четвёртой
+ * гонкой подряд — тик может прийти и на первой секунде, и на
+ * пятнадцатой.
+ */
+{
+  let samo = '';
+  const doKogda = Date.now() + 45_000;
+  while (Date.now() < doKogda) {
+    samo = (await klient.textContent('body')) ?? '';
+    if (/novyy@pochta\.test/.test(samo)) break;
+    await klient.waitForTimeout(1000);
+  }
+  chk('кабинет обновился САМ, без перезагрузки', /novyy@pochta\.test/.test(samo));
+  chk('и сказал, что доступы выданы', /Доступы выданы/.test(samo), samo.match(/Доступы выданы[^<]*/)?.[0] ?? '');
+}
+
 await klient.reload({ waitUntil: 'networkidle' });
 const telo2 = await klient.textContent('body');
 chk('кабинет показывает выданные доступы', /novyy@pochta\.test/.test(telo2 ?? '') && /spotify-456/.test(telo2 ?? ''));
 chk('заказ в кабинете «Готов»', /Готов/.test(telo2 ?? ''));
+
+/*
+ * ── СТАТИСТИКА В АДМИНКЕ ──────────────────────────────────────────
+ *
+ * ⚠️ ЧИСЛА СВЕРЯЮТСЯ С БАЗОЙ, А НЕ С НАШИМ ПРЕДСТАВЛЕНИЕМ О НИХ.
+ * Постановка требует, чтобы цифры сходились с реальными заказами;
+ * значит и проверять их надо ЗАПРОСОМ К БАЗЕ, а не пересчётом
+ * по той же арифметике, какой считает сам раздел (Р-47).
+ */
+console.log('── СТАТИСТИКА: ТОЛЬКО АДМИНИСТРАТОРУ И ТОЛЬКО ИЗ БАЗЫ ──');
+{
+  await admin.goto(`http://localhost:${PORT}/admin/stats/`, { waitUntil: 'networkidle' });
+  const svod = (await admin.textContent('body')) ?? '';
+  const vyr = await p2.query(
+    `select coalesce(sum(money_kop), 0)::text as kop, count(*)::text as n
+       from shop_order where paid_at is not null and paid_at > now() - interval '1 day'`,
+  );
+  const rub = (Number(vyr.rows[0].kop) / 100).toLocaleString('ru-RU').replace(/\u00a0/g, ' ');
+  chk('раздел открылся', /Статистика/.test(svod));
+  chk('выручка за сутки совпала с базой', svod.replace(/\u00a0/g, ' ').includes(rub), `${rub} ₽`);
+  chk('заказов за сутки совпало с базой', new RegExp(`\\b${vyr.rows[0].n}\\b`).test(svod), vyr.rows[0].n);
+  chk('в очереди показано число', /Сейчас в очереди/.test(svod));
+  chk('источник заказа виден по UTM', /yandex/.test(svod));
+  chk('разбивка по тарифам не пуста', /На двоих/.test(svod));
+
+  /* ⚠️ ЗАПРЕТ ДЛЯ ИСПОЛНИТЕЛЯ ПРОВЕРЯЕТСЯ СМЕНОЙ РОЛИ, А НЕ ВТОРЫМ
+     ВХОДОМ: код входа выдаётся не чаще одного в минуту (Р-86),
+     и завести второго сотрудника прогон просто не успел бы. Роль
+     возвращается сразу же — иначе следующие проверки шли бы
+     от чужого лица. */
+  await p2.query(`update staff set role = 'operator' where email = $1`, [ADMIN]);
+  await admin.goto(`http://localhost:${PORT}/admin/stats/`, { waitUntil: 'networkidle' });
+  const chuzhoy = (await admin.textContent('body')) ?? '';
+  chk('исполнителю статистика закрыта', !/Сейчас в очереди/.test(chuzhoy) && /Только для администраторов/.test(chuzhoy));
+  await p2.query(`update staff set role = 'admin' where email = $1`, [ADMIN]);
+}
 
 console.log('── TELEGRAM НЕ ОТВЕТИЛ: ОПЛАТА ЦЕЛА, УВЕДОМЛЕНИЕ В ОЧЕРЕДИ ──');
 const ochered2 = await p2.query(

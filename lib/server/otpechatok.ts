@@ -1,0 +1,90 @@
+/**
+ * ОТПЕЧАТОК СОСТОЯНИЯ КАБИНЕТА.
+ *
+ * ⚠️ СЧИТАЕТСЯ ОДНИМ МЕСТОМ ДЛЯ ДВОИХ: страница берёт его при
+ * отрисовке и отдаёт в браузер, опрос берёт его же по таймеру.
+ * Считай его каждый по-своему — они разошлись бы на первом же
+ * различии в порядке строк, и кабинет либо обновлялся бы впустую
+ * каждые пятнадцать секунд, либо не обновлялся вовсе.
+ *
+ * ⚠️ И ИМЕННО ПОЭТОМУ ОТПЕЧАТОК ПРИ ОТРИСОВКЕ ОБЯЗАТЕЛЕН. Без него
+ * первый тик опроса просто запоминал бы, что видит, — а изменение,
+ * случившееся между отрисовкой страницы и первым тиком, оказалось бы
+ * ПРОГЛОЧЕННЫМ: оператор выдал доступ через пять секунд после
+ * загрузки, а человек не увидел бы его до перезагрузки руками.
+ *
+ * ⚠️ ОТПЕЧАТОК, А НЕ ДАННЫЕ. Второй путь, по которому наружу уходят
+ * выданные логины и пароли, — это второе место, где можно ошибиться
+ * в том, кому их показывать (Р-87). По отпечатку видно только, что
+ * что-то изменилось; рисует по-прежнему сервер.
+ */
+
+import { createHash } from 'node:crypto';
+import { bazaEst, odna } from './db';
+
+export type OtpechatokKabineta = { otpechatok: string; dostupov: number };
+
+export async function otpechatokKabineta(userId: number): Promise<OtpechatokKabineta> {
+  if (!bazaEst()) return { otpechatok: '', dostupov: 0 };
+
+  /* ⚠️ В ОТПЕЧАТОК ВХОДИТ ВСЁ, ЧТО КАБИНЕТ ПОКАЗЫВАЕТ, И НИЧЕГО
+     СВЕРХ ТОГО. Первая редакция брала статусы, ОБЩЕЕ число выданных
+     логинов, баланс и сертификаты — и пропускала три перемены,
+     которые человек видит на экране:
+
+       • оператор дописал пароль слоту, у которого логин уже стоял:
+         счётчик логинов не изменился, а на экране должен появиться
+         пароль;
+       • заказ доплатили с баланса: строка «Оплатить N ₽» обязана
+         пересчитаться, а статус при этом прежний;
+       • у закрытого заказа стёрлись секреты: доступов там могло
+         не быть вовсе (renew), статус не менялся, а примечание
+         «доступы стёрты» должно встать.
+
+     ⚠️ И НИ ОДНОГО РАСШИФРОВАННОГО ПОЛЯ: берётся только ЕСТЬ ЛИ
+     значение, а не какое оно. Отпечаток уходит в браузер каждые
+     пятнадцать секунд, и секретам в нём делать нечего (Р-87).
+
+     ⚠️ И НИ ОДНОЙ ВЕЛИЧИНЫ, ЗАВИСЯЩЕЙ ОТ ВРЕМЕНИ: `now()` внутри
+     означал бы, что отпечаток меняется сам собой, и кабинет
+     перерисовывался бы каждые пятнадцать секунд впустую. */
+  const r = await odna<{
+    zakazy: string;
+    sloty: string;
+    dostupov: string;
+    balans: string;
+    serty: string;
+  }>(
+    `select
+       (select coalesce(string_agg(
+                 o.id || ':' || o.status || ':' || coalesce(o.cancel_reason, '')
+                      || ':' || o.total_kop || ':' || o.balance_kop || ':' || o.money_kop
+                      || ':' || (o.secrets_wiped_at is not null)::int,
+                 ',' order by o.id), '')
+          from shop_order o where o.user_id = $1) as zakazy,
+       (select coalesce(string_agg(
+                 s.order_id || '.' || s.idx || ':'
+                      || (s.out_login_enc is not null)::int
+                      || (s.out_mail_pass_enc is not null)::int
+                      || (s.out_password_enc is not null)::int
+                      || (s.done_at is not null)::int,
+                 ',' order by s.order_id, s.idx), '')
+          from order_slot s join shop_order o on o.id = s.order_id
+         where o.user_id = $1) as sloty,
+       (select count(*)::text
+          from order_slot s join shop_order o on o.id = s.order_id
+         where o.user_id = $1 and s.out_login_enc is not null) as dostupov,
+       (select balance_kop::text from app_user where id = $1) as balans,
+       (select coalesce(string_agg(c.id || ':' || (c.used_at is not null)::int, ',' order by c.id), '')
+          from certificate c where c.buyer_id = $1) as serty`,
+    [userId],
+  );
+  const sostoyanie = `${r?.zakazy ?? ''}|${r?.sloty ?? ''}|${r?.balans ?? '0'}|${r?.serty ?? ''}`;
+  return {
+    otpechatok: createHash('sha256').update(sostoyanie).digest('hex').slice(0, 32),
+    /* Число выданных доступов уходит отдельным полем: по нему видно
+       не «что-то изменилось», а «доступов стало больше», — и только
+       это показывается человеку отдельной строкой. */
+    dostupov: Number(r?.dostupov ?? 0),
+  };
+}

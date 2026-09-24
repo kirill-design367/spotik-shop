@@ -4,8 +4,14 @@
   OK   заказ создан и ведёт на оплату  /pay/test/?payment=1
   OK   после оплаты мы в кабинете
   OK   заказ помечен оплаченным
+── МЕТКИ КАМПАНИИ ДОЕХАЛИ ДО ЗАКАЗА ──
+  OK   источник записан в заказ  yandex
+  OK   канал записан  cpc
+  OK   кампания записана  vesna
+  OK   ключевое слово записано  premium
+  OK   объявление записано  banner1
 ── ПАРОЛЬ КЛИЕНТА НЕ ЛЕЖИТ ОТКРЫТЫМ ТЕКСТОМ ──
-  OK   в базе шифротекст, а не пароль  v1.cGKL5qzWDMjUxdA…
+  OK   в базе шифротекст, а не пароль  v1.gxMPkVpPvxAcY7r…
   OK   пароля нет в журнале сервера
 ── ОПЕРАТОР ──
   OK   администратор вошёл  /admin/
@@ -20,8 +26,30 @@
   OK   заказ взят и открылся  /admin/orders/1/
   OK   оператору виден пароль клиента
   OK   заказ закрыт
+  OK   кабинет обновился САМ, без перезагрузки
+  OK   и сказал, что доступы выданы  Доступы выданы — они ниже, в карточке заказа.ЗаказыЗаказ № 1 · 24.09.2026На двоих · 12 месГотовАккаунт 1Логинnovyy@pochta.testПароль от почтыpochta-123Пароль Spotifyspotify-456СертификатыСертификатов нет.(function(){try{
+var s=document.getElementById('scroller');if(!s)return;
+var k='spotik:scroll';
+var v=sessionStorage.getItem(k);
+if(v&&performance.getEntriesByType('navigation')[0]&&
+   performance.getEntriesByType('navigation')[0].type!=='navigate'){s.scrollTop=+v||0;}
+else{sessionStorage.removeItem(k);}
+var save=function(){try{sessionStorage.setItem(k,String(s.scrollTop))}catch(e){}};
+addEventListener('pagehide',save);
+addEventListener('visibilitychange',function(){if(document.visibilityState==='hidden')save()});
+}catch(e){}})()(function(){try{
+var z=["/cabinet","/admin"],p=location.pathname;
+for(var i=0;i
   OK   кабинет показывает выданные доступы
   OK   заказ в кабинете «Готов»
+── СТАТИСТИКА: ТОЛЬКО АДМИНИСТРАТОРУ И ТОЛЬКО ИЗ БАЗЫ ──
+  OK   раздел открылся
+  OK   выручка за сутки совпала с базой  5 290 ₽
+  OK   заказов за сутки совпало с базой  1
+  OK   в очереди показано число
+  OK   источник заказа виден по UTM
+  OK   разбивка по тарифам не пуста
+  OK   исполнителю статистика закрыта
 ── TELEGRAM НЕ ОТВЕТИЛ: ОПЛАТА ЦЕЛА, УВЕДОМЛЕНИЕ В ОЧЕРЕДИ ──
   OK   оплата прошла, хотя Telegram недоступен
   OK   уведомление об оплате легло в очередь
@@ -33,7 +61,7 @@
   OK   цены сертификата в админке нет
   OK   оформление сертификата показывает тариф и цену
   OK   сертификат ведёт на оплату  /pay/test/?payment=2
-  OK   сертификат выдан и код виден в кабинете  SPOTIK-VQTQ-PUUV-MYBP
+  OK   сертификат выдан и код виден в кабинете  SPOTIK-3SB7-HSS4-EHH4
   OK   в кабинете виден подаренный тариф
   OK   письмо о сертификате называет тариф и срок
   OK   кода сертификата нет в базе открытым текстом

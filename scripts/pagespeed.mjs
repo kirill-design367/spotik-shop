@@ -1,55 +1,41 @@
 /**
- * PageSpeed локально через Lighthouse — тот же движок, что у сервиса Google.
- * Сам сервис из этой среды недоступен: исходящие запросы к google.com
- * закрыты политикой. Выдача поднимается по боевому пути — с корня.
+ * PageSpeed локально через Lighthouse — тот же движок, что у сервиса
+ * Google. Сам сервис из этой среды недоступен: исходящие запросы
+ * к google.com закрыты политикой.
+ *
+ * ⚠️ МЕРЯЕТСЯ БОЕВОЙ СЕРВЕР, А НЕ КАТАЛОГ `out/`. До тридцатой итерации
+ * здесь стоял свой файловый сервер поверх `out/` — снимка статического
+ * экспорта. Экспорта нет с двадцать седьмой (Р-85), `next build` каталог
+ * не создаёт вовсе, и замер три итерации подряд снимался с ТРЁХДНЕВНОГО
+ * снимка: правку футера двадцать девятой итерации он не видел
+ * по построению. Это ровно тот класс беды, что описан в Р-47, —
+ * проверка смотрела не на предмет, — и лечится он так же: открываем
+ * ТО ЖЕ, ЧТО ВИДИТ ЧЕЛОВЕК, через общий `serveOut` (Р-101).
+ *
+ * ⚠️ БЕЗ БАЗЫ, И ЭТО НАМЕРЕННО: лендинг обязан собираться и работать
+ * на умолчаниях из `lib/plans.ts` (закон 36). Заодно каждый прогон
+ * это подтверждает.
+ *
+ * ⚠️ СЕРИЮ ЧИТАТЬ ЦЕЛИКОМ, А НЕ ОДИН ПРОГОН: разброс в три пункта
+ * даёт среда контейнера — рядом добиваются браузеры других замеров.
+ * Число прогонов задаётся первым доводом: `node scripts/pagespeed.mjs 3`.
  */
-import { createServer } from 'node:http';
-import { gzipSync } from 'node:zlib';
-import { readFile, stat, mkdir } from 'node:fs/promises';
-import { join, extname, resolve } from 'node:path';
+import { readFile, mkdir } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
+import { serveOut, PREFIX } from './serve-out.mjs';
 
-const OUT = resolve('out');
-const PREFIX = '';
 const PORT = 4182;
-const MIME = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css',
-  '.woff2': 'font/woff2', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json',
-};
+const RAZ = Math.max(1, Number(process.argv[2] || 1));
 
-const server = createServer(async (req, res) => {
-  const url = decodeURIComponent(req.url.split('?')[0]);
-  if (!url.startsWith(PREFIX)) { res.writeHead(404).end(); return; }
-  let f = join(OUT, url.slice(PREFIX.length) || '/');
-  try { if ((await stat(f)).isDirectory()) f = join(f, 'index.html'); } catch {}
-  try {
-    let buf = await readFile(f);
-    const ext = extname(f);
-    const head = {
-      'content-type': MIME[ext] || 'application/octet-stream',
-      // GitHub Pages отдаёт статику сжатой и с длинным кэшем. Без этого
-      // замер штрафует за трафик, которого на боевой выдаче не будет.
-      'cache-control': ext === '.html' ? 'no-cache' : 'public, max-age=31536000, immutable',
-    };
-    const compressible = ['.html', '.js', '.css', '.json', '.svg', '.txt'].includes(ext);
-    if (compressible && /gzip/.test(req.headers['accept-encoding'] || '')) {
-      buf = gzipSync(buf);
-      head['content-encoding'] = 'gzip';
-    }
-    head['content-length'] = buf.length;
-    res.writeHead(200, head);
-    res.end(buf);
-  } catch { res.writeHead(404).end(); }
-});
-await new Promise((r) => server.listen(PORT, r));
 await mkdir('.shots', { recursive: true });
+const server = await serveOut(PORT);
 
-const run = (preset) =>
+const run = (preset, n) =>
   new Promise((done) => {
     const args = [
-      'lighthouse', `http://localhost:${PORT}${PREFIX}/`,
+      'lighthouse', server.url,
       `--preset=${preset === 'mobile' ? 'mobile' : 'desktop'}`,
-      '--output=json', `--output-path=.shots/lh-${preset}.json`,
+      '--output=json', `--output-path=.shots/lh-${preset}${n > 1 ? `-${n}` : ''}.json`,
       '--chrome-flags=--headless=new --no-sandbox --disable-dev-shm-usage',
       '--only-categories=performance,accessibility,best-practices,seo',
       '--quiet',
@@ -62,22 +48,27 @@ const run = (preset) =>
     cp.on('close', done);
   });
 
-for (const preset of ['mobile', 'desktop']) {
-  await run(preset);
-  const r = JSON.parse(await readFile(`.shots/lh-${preset}.json`, 'utf8'));
-  const c = r.categories;
-  const a = r.audits;
-  const pct = (x) => Math.round((x?.score ?? 0) * 100);
-  console.log(`\n=== ${preset === 'mobile' ? 'МОБИЛЬНЫЙ' : 'ДЕСКТОП'} ===`);
-  console.log(
-    `производительность ${String(pct(c.performance)).padStart(3)}   ` +
-      `доступность ${String(pct(c.accessibility)).padStart(3)}   ` +
-      `практики ${String(pct(c['best-practices'])).padStart(3)}   ` +
-      `SEO ${String(pct(c.seo)).padStart(3)}`,
-  );
-  for (const k of ['first-contentful-paint', 'largest-contentful-paint', 'total-blocking-time', 'cumulative-layout-shift', 'speed-index'])
-    console.log(`  ${(a[k]?.title ?? k).padEnd(28)} ${String(a[k]?.displayValue ?? '—').padStart(10)}`);
-  const fails = Object.values(a).filter((x) => x.score !== null && x.score < 0.9 && x.scoreDisplayMode === 'binary');
-  if (fails.length) console.log('  не прошло:', fails.map((x) => x.id).join(', '));
+console.log(`сервер поднят: ${server.url}${PREFIX ? ` (префикс ${PREFIX})` : ''}`);
+
+for (let n = 1; n <= RAZ; n++) {
+  for (const preset of ['mobile', 'desktop']) {
+    await run(preset, n);
+    const r = JSON.parse(await readFile(`.shots/lh-${preset}${n > 1 ? `-${n}` : ''}.json`, 'utf8'));
+    const c = r.categories;
+    const a = r.audits;
+    const pct = (x) => Math.round((x?.score ?? 0) * 100);
+    console.log(`\n=== ${preset === 'mobile' ? 'МОБИЛЬНЫЙ' : 'ДЕСКТОП'}${RAZ > 1 ? `, прогон ${n}` : ''} ===`);
+    console.log(
+      `производительность ${String(pct(c.performance)).padStart(3)}   ` +
+        `доступность ${String(pct(c.accessibility)).padStart(3)}   ` +
+        `практики ${String(pct(c['best-practices'])).padStart(3)}   ` +
+        `SEO ${String(pct(c.seo)).padStart(3)}`,
+    );
+    for (const k of ['first-contentful-paint', 'largest-contentful-paint', 'total-blocking-time', 'cumulative-layout-shift', 'speed-index'])
+      console.log(`  ${(a[k]?.title ?? k).padEnd(28)} ${String(a[k]?.displayValue ?? '—').padStart(10)}`);
+    const fails = Object.values(a).filter((x) => x.score !== null && x.score < 0.9 && x.scoreDisplayMode === 'binary');
+    if (fails.length) console.log('  не прошло:', fails.map((x) => x.id).join(', '));
+  }
 }
+
 server.close();

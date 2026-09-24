@@ -192,12 +192,18 @@ jobs:
       # без этой строки причина падения видна ТОЛЬКО человеку
       # в браузере, а мы читаем «Process completed with exit code 1».
       # Аннотации же отдаёт обычный API репозитория.
+      #
+      # verify-metrika — вторая половина постановки про счётчик, и она
+      # важнее первой: счётчика НЕ ДОЛЖНО БЫТЬ в кабинете и в админке,
+      # потому что вебвизор пишет страницу целиком, а там лежат
+      # выданные пароли от чужих аккаунтов. Судит он по живой
+      # странице, а не по нашей же функции отбора (Р-47).
       - name: "Проверить магазин: заказ, оплата, выдача, сертификат"
         env:
           DATABASE_URL: postgres://postgres:proverka@localhost:5433/spotik
         run: |
           set -o pipefail
-          for storozh in verify-shop verify-pay; do
+          for storozh in verify-shop verify-pay verify-metrika; do
             if node "scripts/$storozh.mjs" 2>&1 | tee "/tmp/$storozh.log"; then
               continue
             fi
