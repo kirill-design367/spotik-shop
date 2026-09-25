@@ -10,12 +10,23 @@ import { parolNeGoditsya, pochtaNeVerna, PRAVILO_PAROLYA } from '@/lib/proverka'
 
 export type SrokVybor = { period: number; kop: number; label: string };
 
+export type TarifVybor = {
+  id: string;
+  name: string;
+  people: number;
+  note: string;
+  sroki: SrokVybor[];
+};
+
 export type Vvod = {
   planId: string;
   planName: string;
   people: number;
   sertifikat: boolean;
   sroki: SrokVybor[];
+  /** Весь каталог: «Изменить» открывает и тарифы, и сроки. */
+  tarify: TarifVybor[];
+  zametka: string;
   periodPoUmolchaniyu: number;
   rezhimPoUmolchaniyu: 'new' | 'renew';
   /** Почты из заказа, который продлевают по ссылке из письма. */
@@ -48,7 +59,17 @@ export type Vvod = {
  * под своим полем, а не всплывающей подсказкой браузера.
  */
 export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
+  const [planId, setPlanId] = useState<string>(vvod.planId);
   const [period, setPeriod] = useState<number>(vvod.periodPoUmolchaniyu);
+  /* ⚠️ СПИСОК ВАРИАНТОВ ЗАКРЫТ, ПОКА НЕ НАЖАЛИ «ИЗМЕНИТЬ», НО ИЗ РАЗМЕТКИ
+     НЕ УБРАН. Человек выбрал тариф и срок на лендинге — переспрашивать
+     его тем же списком значит показывать лишний экран. А из разметки
+     список не уходит потому, что без скрипта поменять выбор было бы
+     нечем вовсе; закрытый он выведен из обхода `inert`. */
+  const [menyaem, setMenyaem] = useState(false);
+  const tarif = vvod.tarify.find((t) => t.id === planId);
+  const sroki = tarif ? tarif.sroki : vvod.sroki;
+  const mest = vvod.sertifikat ? 0 : (tarif?.people ?? vvod.people);
   const [rezhimy, setRezhimy] = useState<('new' | 'renew')[]>(
     Array.from({ length: vvod.sertifikat ? 0 : vvod.people }, () => vvod.rezhimPoUmolchaniyu),
   );
@@ -62,6 +83,24 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
   const [bedy, setBedy] = useState<{ login: string | null; password: string | null }[]>(
     Array.from({ length: vvod.sertifikat ? 0 : vvod.people }, () => ({ login: null, password: null })),
   );
+
+  /**
+   * Смена тарифа тянет за собой три вещи, и все три обязаны поехать
+   * в один ход: мест в тарифе может стать больше или меньше, срок
+   * может у нового тарифа не существовать вовсе (у «На троих» есть
+   * только месяц), а уже введённые данные участников терять нельзя.
+   */
+  const smenitTarif = (id: string) => {
+    const t = vvod.tarify.find((x) => x.id === id);
+    if (!t) return;
+    setPlanId(id);
+    if (!t.sroki.some((s) => s.period === period)) setPeriod(t.sroki[0]?.period ?? 1);
+    if (vvod.sertifikat) return;
+    const n = t.people;
+    setRezhimy((s) => Array.from({ length: n }, (_, i) => s[i] ?? vvod.rezhimPoUmolchaniyu));
+    setDannye((s) => Array.from({ length: n }, (_, i) => s[i] ?? { login: '', password: '' }));
+    setBedy((s) => Array.from({ length: n }, (_, i) => s[i] ?? { login: null, password: null }));
+  };
   const [bedaSoglasiya, setBedaSoglasiya] = useState<string | null>(null);
   const [otvet, oformit, idyot] = useActionState<Otvet, FormData>(deystvieOformit, {});
 
@@ -83,7 +122,7 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
       setBedaSoglasiya(ok ? null : 'Без согласия оформить заказ нельзя');
       return Boolean(ok);
     }
-    const svezhie = dannye.map((d) => ({
+    const svezhie = dannye.slice(0, mest).map((d) => ({
       login: pochtaNeVerna(d.login),
       password: parolNeGoditsya(d.password),
     }));
@@ -93,7 +132,9 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
     return Boolean(soglasie) && svezhie.every((b) => !b.login && !b.password);
   };
 
-  const cena = vvod.sroki.find((s) => s.period === period)?.kop ?? 0;
+  const cena = sroki.find((s) => s.period === period)?.kop ?? 0;
+  const srokLabel = sroki.find((s) => s.period === period)?.label ?? '';
+  const imyaTarifa = vvod.sertifikat ? `Сертификат · ${tarif?.name ?? vvod.planName}` : (tarif?.name ?? vvod.planName);
   const sBalansa = tratit ? Math.min(vvod.balansKop, cena) : 0;
   const kOplate = cena - sBalansa;
 
@@ -120,7 +161,7 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
         cel(CELI.perehodKOplate);
       }}
     >
-      <input type="hidden" name="plan" value={vvod.planId} />
+      <input type="hidden" name="plan" value={planId} />
       <input type="hidden" name="period" value={period} />
       {/* ⚠️ СЕРТИФИКАТ — ПРИЗНАК, А НЕ ТАРИФ (Р-93). Тариф и срок
           у него настоящие, и цена берётся у них; на сервере признак
@@ -130,32 +171,74 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
 
       {otvet.oshibka ? <p className="err">{otvet.oshibka}</p> : null}
 
-      <div className="panel">
-        <h2 className="panel__h">Срок</h2>
-        <div className="pick" role="radiogroup" aria-label="Срок подписки">
-          {vvod.sroki.map((s) => (
-            <button
-              key={s.period}
-              type="button"
-              role="radio"
-              aria-checked={period === s.period}
-              className="pick__btn"
-              onClick={() => setPeriod(s.period)}
-            >
-              {s.label} · {rubli(s.kop)}
-            </button>
-          ))}
+      {/* ⚠️ ВЫБОР ПОКАЗАН ОДНОЙ СТРОКОЙ, А НЕ СПИСКОМ (тридцать седьмая
+          итерация). Человек только что выбрал тариф и срок на лендинге;
+          повтор всего списка на следующем экране читается как «выбор
+          не засчитан». Строка называет, что выбрано, и цену, а варианты
+          открываются по «Изменить».
+
+          ⚠️ НЕВЫБРАННЫЕ НЕ ПОДСВЕЧЕНЫ НИЧЕМ: ни волосяной каймы,
+          ни яркого текста — отмечен только выбранный, зелёным полем.
+          Видимость невыбранной плашки держит СВЕТ СВЕРХУ в её заливке,
+          как у плашек срока на лендинге, а не обводка. */}
+      <div className="panel vybor">
+        <div className="vybor__stroka">
+          <span className="vybor__t">{imyaTarifa}</span>
+          <span className="vybor__s">{srokLabel}</span>
+          <span className="vybor__c tnum summa" key={cena}>{rubli(cena)}</span>
+          <button
+            type="button"
+            className="vybor__izm"
+            aria-expanded={menyaem}
+            onClick={() => setMenyaem((v) => !v)}
+          >
+            {menyaem ? 'Свернуть' : 'Изменить'}
+          </button>
+        </div>
+        <p className="panel__note vybor__z">{tarif?.note ?? vvod.zametka}</p>
+
+        <div className="vybor__varianty" data-on={menyaem ? '' : undefined}>
+          <div className="vybor__nutro" {...(menyaem ? {} : { inert: '' as unknown as boolean })}>
+            <p className="field__label">Тариф</p>
+            <div className="pick" role="radiogroup" aria-label="Тариф">
+              {vvod.tarify.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={t.id === planId}
+                  className="pick__btn"
+                  onClick={() => smenitTarif(t.id)}
+                >
+                  {t.name}
+                </button>
+              ))}
+            </div>
+            <p className="field__label">Срок</p>
+            <div className="pick" role="radiogroup" aria-label="Срок подписки">
+              {sroki.map((s) => (
+                <button
+                  key={s.period}
+                  type="button"
+                  role="radio"
+                  aria-checked={period === s.period}
+                  className="pick__btn"
+                  onClick={() => setPeriod(s.period)}
+                >
+                  {s.label} · {rubli(s.kop)}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
       {!vvod.sertifikat ? (
         <div className="panel">
-          <h2 className="panel__h">
-            {vvod.people === 1 ? 'Аккаунт' : `Аккаунты — ${vvod.people}`}
-          </h2>
-          {rezhimy.map((r, i) => (
-            <div key={i} style={{ marginBottom: i === rezhimy.length - 1 ? 0 : 24 }}>
-              {vvod.people > 1 ? <p className="field__label">Участник {i + 1}</p> : null}
+          <h2 className="panel__h">{mest === 1 ? 'Аккаунт' : `Аккаунты — ${mest}`}</h2>
+          {rezhimy.slice(0, mest).map((r, i) => (
+            <div key={i} className="uchastnik">
+              {mest > 1 ? <p className="field__label">Участник {i + 1}</p> : null}
               <input type="hidden" name={`mode${i}`} value={r} />
               <div className="pick" role="radiogroup" aria-label={`Аккаунт участника ${i + 1}`}>
                 {(
@@ -218,8 +301,8 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
             После оплаты код придёт вам на почту и появится в личном кабинете. Тариф и срок
             зашиты в коде: тот, кому вы его подарите, введёт код на сайте, увидит, что
             подарено, и сам выберет — завести новый аккаунт или продлить свой.
-            {vvod.people > 1
-              ? ` Аккаунтов в этом тарифе ${vvod.people}, и все ${vvod.people} он оформит сам.`
+            {(tarif?.people ?? vvod.people) > 1
+              ? ` Аккаунтов в этом тарифе ${tarif?.people ?? vvod.people}, и все ${tarif?.people ?? vvod.people} он оформит сам.`
               : ''}
           </p>
         </div>
@@ -228,7 +311,7 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
       <div className="panel">
         <h2 className="panel__h">К оплате</h2>
         <p className="sum">
-          <span>{vvod.planName}</span>
+          <span>{imyaTarifa} · {srokLabel}</span>
           {/* ⚠️ `key` ПО ЗНАЧЕНИЮ — ЭТО И ЕСТЬ ВЕСЬ ПРИЁМ. Сменился
               срок — React монтирует другой узел, и анимация появления
               играет заново: число «пересчитывается с движением», как

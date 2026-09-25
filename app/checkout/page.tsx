@@ -62,7 +62,11 @@ export default async function Checkout({
   const period = sroki.find((s) => s.period === zapros)?.period ?? sroki[0]?.period ?? 1;
   const kto = await ktoKlient();
 
-  const zagolovok = podarok ? `Сертификат в подарок · ${tarif.name}` : tarif.name;
+  /* ⚠️ ЗАГОЛОВОК БОЛЬШЕ НЕ НАЗЫВАЕТ ТАРИФ: тариф теперь меняется
+     прямо в форме, и зашитый в заголовок он разошёлся бы с выбором
+     на первом же нажатии «Изменить». Название стоит в строке выбора,
+     то есть ровно там, где его и меняют. */
+  const zagolovok = podarok ? 'Сертификат в подарок' : 'Оформление заказа';
 
   if (!sroki.length) {
     return (
@@ -86,12 +90,33 @@ export default async function Checkout({
   const prodlit = Number(odin('renew'));
   const pochty = kto && prodlit > 0 ? await pochtyZakaza(kto.userId, prodlit) : [];
 
+  /* ⚠️ В ФОРМУ ЕДЕТ ВЕСЬ КАТАЛОГ, А НЕ ОДИН ТАРИФ (тридцать седьмая
+     итерация). Постановка: «выбранный на лендинге вариант показывается
+     одной строкой — тариф, срок, цена и „Изменить“, а остальные
+     варианты открываются только по „Изменить“». Значит менять надо
+     не только срок: «варианты» — это пара тариф × срок, и уходить
+     за ней на лендинг человеку незачем.
+
+     Тарифы без единой цены сюда не попадают: «доступно» значит
+     «оформляется», а оформить без цены невозможно (Р-116). */
+  const tarify = spisok
+    .filter((t) => t.ceny.length > 0)
+    .map((t) => ({
+      id: t.id,
+      name: t.name,
+      people: t.people,
+      note: t.note,
+      sroki: t.ceny.map((c) => ({ period: c.period, kop: c.kop, label: srokPolno(c.period) })),
+    }));
+
   const vvod: Vvod = {
     planId: tarif.id,
     planName: podarok ? `Сертификат · ${tarif.name}` : tarif.name,
     people: tarif.people,
     sertifikat: podarok,
     sroki,
+    tarify,
+    zametka: tarif.note,
     periodPoUmolchaniyu: period,
     rezhimPoUmolchaniyu: odin('mode') === 'renew' || pochty.length ? 'renew' : 'new',
     pochtyPoUmolchaniyu: pochty,
@@ -108,11 +133,6 @@ export default async function Checkout({
       <Celi imya={CELI.oformlenieNachato} />
       <a className="page__back" href="/">← На главную</a>
       <h1 className="page__h">{zagolovok}</h1>
-      <p className="page__lead">
-        {podarok
-          ? `Сертификат стоит ровно столько, сколько сам тариф: ${tarif.note.charAt(0).toLowerCase()}${tarif.note.slice(1)}`
-          : tarif.note}
-      </p>
 
       {kto ? (
         <>

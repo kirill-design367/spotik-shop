@@ -303,8 +303,16 @@ const wB = inkBox(wordB);
 console.log(`\nширина чернил слова: раскрытое ${wA[1]} px, сжатое ${wB[1]} px при масштабе ${K}`);
 if (Math.abs(wA[1] - wB[1]) > 1) fail('ширина слова разъехалась между состояниями');
 
-/** Оптические просветы: средняя ширина белого между соседями, по растру. */
-console.log('\n── ОПТИЧЕСКИЕ ПРОСВЕТЫ (по растру, средняя ширина белого) ─────');
+/**
+ * ПРОСВЕТЫ: кратчайшее горизонтальное расстояние между чернилами.
+ *
+ * ⚠️ МЕРА СМЕНИЛАСЬ В ТРИДЦАТЬ СЕДЬМОЙ ИТЕРАЦИИ, и прежняя была
+ * неверной: она считала СРЕДНЮЮ ширину белого с обрезкой по глубине,
+ * то есть площадь. Глаз между двумя буквами видит ОДНО место — самое
+ * узкое. По прежней мере пары шли 15, 0, 5, 5, 26 px на 390, то есть
+ * P и O смыкались. См. Р-129.
+ */
+console.log('\n── ПРОСВЕТЫ (по растру, кратчайшее расстояние) ────────────────');
 const profile = (png, g, side) => {
   const out = [];
   for (let y = 0; y < png.height; y += 1) {
@@ -313,36 +321,29 @@ const profile = (png, g, side) => {
   }
   return out;
 };
-// та же глубина, что у сборки (WM_GAP_DEPTH), и в том же пространстве
-const DEPTH = 0.27 * capOf(shotsA[4], gA[4]);
-// Считаем по тем же строкам, что и сборка: по высоте ЧЕРНИЛ слова,
-// а не по всей рамке. Поле сверху пустое у обеих литер, и если его
-// учитывать, замер поедет на пустоте, которой глаз не видит.
-const inkRows = (() => {
-  let a = -1;
-  let b = -1;
-  for (let y = 0; y < wordA.height; y += 1) {
-    if (rowRuns(wordA, y, 0, wordA.width - 1).length) { if (a < 0) a = y; b = y; }
-  }
-  return [a, b];
-})();
-const meanGap = (i) => {
+const minGap = (i) => {
   const R = profile(shotsA[i], gA[i], 1);
   const L = profile(shotsA[i + 1], gA[i + 1], -1);
-  let sum = 0;
-  let n = 0;
-  for (let y = inkRows[0]; y <= inkRows[1]; y += 1) {
-    const r = R[y] === null ? gA[i][0] + gA[i][1] - 1 : R[y];
-    const l = L[y] === null ? gA[i + 1][0] : L[y];
-    sum += Math.min(Math.max(l - r, 0), DEPTH);
-    n += 1;
+  let best = null;
+  for (let y = 0; y < wordA.height; y += 1) {
+    /* Строки, где чернил нет У ОДНОЙ из литер, в счёт не идут вовсе:
+       между «ничем» и чернилами расстояния не существует. */
+    if (R[y] === null || L[y] === null) continue;
+    const g = L[y] - R[y] - 1;
+    if (best === null || g < best) best = g;
   }
-  return sum / n;
+  return best === null ? 0 : best;
 };
 const gaps = [];
-for (let i = 0; i < 5; i += 1) gaps.push(meanGap(i));
-console.log('  ' + gaps.map((v, i) => `${NAMES[i]}–${NAMES[i + 1]} ${(v / K).toFixed(1)}`).join('   ') +
-  `  (нормированных единиц, разброс ${((Math.max(...gaps) - Math.min(...gaps)) / K).toFixed(2)})`);
+for (let i = 0; i < 5; i += 1) gaps.push(minGap(i));
+const razbros = Math.max(...gaps) - Math.min(...gaps);
+console.log('  ' + gaps.map((v, i) => `${NAMES[i]}–${NAMES[i + 1]} ${v}`).join('   ') +
+  `  px при ширине слова ${wA[1]} px, разброс ${razbros}`);
+/* Допуск в долях ширины слова: на 385 px это 2 px, на 1895 — 10.
+   Растр квантует, и требовать ноль значило бы падать на округлении. */
+if (razbros > Math.max(2, Math.round(wA[1] * 0.006))) {
+  fail(`просветы разъехались на ${razbros} px`);
+}
 
 writeFileSync('.shots/morph-raster.json', JSON.stringify({ partA, rows }, null, 2));
 console.log(failed ? `\nПРОВАЛ: ${failed} проверок не прошло` : '\nВсе жёсткие условия выполнены.');

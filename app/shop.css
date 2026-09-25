@@ -24,7 +24,9 @@
 .page {
   max-width: 900px;
   margin: 0 auto;
-  padding: calc(var(--nav-h) + 28px) 20px 96px;
+  /* Низ с запасом под плашку поддержки: она прибита к правому нижнему
+     углу, и последняя кнопка страницы пряталась бы под ней. */
+  padding: calc(var(--nav-h) + 28px) 20px calc(104px + env(safe-area-inset-bottom));
 }
 @media (min-width: 768px) { .page { padding-left: 40px; padding-right: 40px; } }
 @media (min-width: 1440px) { .page { padding-left: 64px; padding-right: 64px; } }
@@ -44,7 +46,7 @@
   background: var(--surface);
   border-radius: var(--ui-r-lg);
   padding: 20px;
-  margin: 0 0 16px;
+  margin: 0 0 var(--ritm-lg);
 }
 @media (min-width: 768px) { .panel { padding: 28px; } }
 .panel__h {
@@ -52,7 +54,7 @@
   font-variation-settings: 'wght' 680;
   margin: 0 0 14px;
 }
-.panel__note { color: var(--dim-2); font-size: 14px; margin: 8px 0 0; }
+.panel__note { color: var(--dim-2); font-size: 14px; margin: var(--ritm) 0 0; }
 /* ── ПОДСКАЗКА ПЛАШКОЙ ─────────────────────────────────────────────────
    Строка про VPN стояла обычным мелким набором и терялась: человек
    упирался в оборванное соединение на странице банка и решал, что
@@ -69,13 +71,13 @@
   border-radius: var(--ui-r);
   padding: 12px 14px;
   color: var(--dim);
-  margin: 14px 0 0;
+  margin: var(--ritm) 0;
 }
 /* На тёмном фоне страницы (а не внутри панели) подложка берётся
    от `--surface`: иначе плашка сливалась бы с самой панелью. */
-.page > .panel__note--plate { background: var(--surface); margin: 0 0 16px; }
+.page > .panel__note--plate { background: var(--surface); margin: 0 0 var(--ritm-lg); }
 
-.field { display: block; margin: 0 0 14px; }
+.field { display: block; margin: 0 0 var(--ritm); }
 .field__label { display: block; font-size: 13px; color: var(--dim); margin: 0 0 6px; }
 .field input[type='text'],
 .field input[type='email'],
@@ -115,7 +117,7 @@
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: var(--ui-r);
+  border-radius: var(--ui-r-pill);
   background: transparent;
   color: var(--dim);
   cursor: pointer;
@@ -131,7 +133,7 @@
 .field__beda { margin: 6px 0 0; font-size: 12px; line-height: 1.45; color: #ff8f8f; }
 .field input[aria-invalid='true'] { box-shadow: inset 0 0 0 1px rgba(255, 90, 90, 0.75); }
 
-.check { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 14px; font-size: 14px; color: var(--dim); }
+.check { display: flex; gap: 10px; align-items: flex-start; margin: var(--ritm) 0; font-size: 14px; color: var(--dim); }
 .check input { width: 22px; height: 22px; accent-color: var(--green); flex: 0 0 auto; margin-top: 1px; }
 .check a { color: #fff; text-decoration: underline; }
 
@@ -154,9 +156,63 @@
   font-size: 14px;
 }
 
-.rows { display: grid; gap: 12px; }
-.row2 { display: grid; gap: 12px; }
+.rows { display: grid; gap: var(--ritm); }
+.row2 { display: grid; gap: var(--ritm); }
+/* Участники внутри панели идут тем же шагом, что и всё остальное. */
+.uchastnik + .uchastnik { margin-top: var(--ritm-lg); }
 @media (min-width: 560px) { .row2 { grid-template-columns: 1fr 1fr; } }
+
+/* ── ВЫБРАННЫЙ ВАРИАНТ ОДНОЙ СТРОКОЙ ─────────────────────────────────────
+   Постановка тридцать седьмой итерации. Тариф, срок и цена стоят
+   в строку, список вариантов закрыт до нажатия «Изменить».
+
+   ⚠️ СВОРАЧИВАНИЕ ИДЁТ `grid-template-rows: 0fr → 1fr`, а не высотой
+   в пикселях: высоту списка пришлось бы читать из JS, а читать её
+   здесь не нужно вовсе. Ни фильтра, ни маски — закон 29. */
+.vybor__stroka {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+.vybor__t { font-size: 17px; font-variation-settings: 'wght' 680; }
+.vybor__s { color: var(--dim); font-size: 15px; }
+.vybor__c { margin-left: auto; font-size: 19px; font-variation-settings: 'wght' 700; }
+.vybor__izm {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--ui-r-pill);
+  background: color-mix(in srgb, var(--surface) 78%, #fff);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-variation-settings: 'wght' 620;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background-color 160ms var(--ease);
+}
+.vybor__izm:hover { background: color-mix(in srgb, var(--surface) 62%, #fff); }
+.vybor__izm:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+/* Строка «Изменить» на телефоне уходит на свою строку и занимает её
+   целиком: на 320 она не вставала рядом с ценой. */
+@media (max-width: 419px) {
+  .vybor__c { margin-left: 0; }
+  .vybor__izm { width: 100%; margin-top: 4px; }
+}
+.vybor__z { margin-top: 6px; }
+.vybor__varianty {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 320ms var(--ease);
+}
+.vybor__varianty[data-on] { grid-template-rows: 1fr; }
+.vybor__nutro { overflow: hidden; min-height: 0; }
+.vybor__varianty[data-on] .vybor__nutro { padding-top: var(--ritm); }
+@media (prefers-reduced-motion: reduce) {
+  .vybor__varianty { transition: none; }
+}
 
 /* ── ПЛАШКИ ВЫБОРА ───────────────────────────────────────────────────────
    ⚠️ КРУПНЫЕ, И ЭТО ПОСТАНОВКА ТРИДЦАТЬ ШЕСТОЙ ИТЕРАЦИИ. Прежние
@@ -166,15 +222,20 @@
    и на лендинге (`.opt`), только формой там пилюля: на лендинге
    скруглены лишь кнопка, плашка срока и карта (закон раздела 3),
    а здесь скруглено всё и одним токеном. */
-.pick { display: grid; gap: 10px; margin: 0 0 16px; }
+.pick { display: grid; gap: 10px; margin: 0 0 var(--ritm); }
 @media (min-width: 560px) { .pick { grid-template-columns: 1fr 1fr; } }
 .pick__btn {
   min-height: 60px;
   padding: 0 18px;
   border: 0;
-  border-radius: var(--ui-r);
-  background: var(--ink);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+  /* ⚠️ ПИЛЮЛЯ, И ОБВОДКИ НЕТ НИ ОДНОЙ (тридцать седьмая итерация):
+     «невыбранные ничем не подсвечены — ни волосяной каймы, ни яркого
+     текста; отмечен только выбранный». Видимость невыбранной плашки
+     держит СВЕТ СВЕРХУ в её заливке — тот же приём, что у плашек
+     срока на лендинге, и по той же причине: заливка `--ink` против
+     панели `--surface` сама по себе даёт 1.16:1. */
+  border-radius: var(--ui-r-pill);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ink) 84%, #fff) 0%, var(--ink) 62%);
   color: var(--dim);
   font: inherit;
   font-size: 15px;
@@ -189,7 +250,7 @@
 }
 .pick__btn:hover { color: #fff; }
 .pick__btn:active { transform: translateY(1px); }
-.pick__btn[aria-checked='true'] { background: var(--green); color: var(--on-green-dim); box-shadow: none; font-variation-settings: 'wght' 700; }
+.pick__btn[aria-checked='true'] { background: var(--green); color: var(--on-green-dim); font-variation-settings: 'wght' 700; }
 .pick__btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 
 .sum { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; font-size: 15px; }
@@ -280,12 +341,30 @@
   right: max(16px, env(safe-area-inset-right));
   bottom: max(16px, env(safe-area-inset-bottom));
   z-index: 40;
-  min-height: 44px;
-  padding: 0 18px;
+  min-height: 48px;
+  padding: 0 20px 0 16px;
   border: 0;
   border-radius: 999px;
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18), 0 8px 28px rgba(0, 0, 0, 0.45);
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  /* ⚠️ ОБВОДКИ ПО КРАЮ НЕТ НИ ОДНОЙ (тридцать седьмая итерация):
+     объём капсуле даёт СВЕТ, а не контур. Свет набран двумя статичными
+     заливками — мягкое пятно сверху и вертикальный перелив тела, —
+     а тень лежит снаружи двумя слоями: ближняя держит капсулу
+     на поверхности, дальняя отрывает её от страницы. Ни фильтра,
+     ни маски: в кадре здесь не меняется ничего (закон 29). */
+  background:
+    radial-gradient(120% 150% at 50% -18%, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0) 60%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface) 78%, #fff) 0%,
+      var(--surface) 58%,
+      color-mix(in srgb, var(--surface) 88%, #000) 100%
+    );
+  box-shadow:
+    0 2px 5px rgba(0, 0, 0, 0.38),
+    0 12px 28px rgba(0, 0, 0, 0.5);
   color: #fff;
   font: inherit;
   font-size: 14px;
@@ -297,8 +376,18 @@
   pointer-events: none;
   transition: opacity 260ms var(--ease), translate 260ms var(--ease);
 }
+.pd__ikonka { width: 19px; height: 19px; flex: 0 0 auto; display: block; }
 .pd__knopka[data-vidna] { opacity: 1; translate: 0 0; pointer-events: auto; }
-.pd__knopka:hover { background: color-mix(in srgb, var(--surface) 80%, #fff); }
+.pd__knopka:hover {
+  background:
+    radial-gradient(120% 150% at 50% -18%, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0) 60%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--surface) 68%, #fff) 0%,
+      color-mix(in srgb, var(--surface) 92%, #fff) 58%,
+      color-mix(in srgb, var(--surface) 90%, #000) 100%
+    );
+}
 .pd__knopka:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
   .pd__knopka { transition: none; }
@@ -319,13 +408,26 @@
   position: absolute;
   inset: 0;
   z-index: 0;
+  animation: pd-fon 240ms linear both;
   border: 0;
   background: rgba(0, 0, 0, 0.62);
   cursor: default;
 }
+/* ⚠️ ОКНО ПОЯВЛЯЕТСЯ ОТ КНОПКИ, И ВЫСОТА У НЕГО ИЗВЕСТНА НА ПЕРВОМ
+   КАДРЕ. Второе — не про CSS: чанк формы грузится ДО открытия
+   (см. `Podderzhka.tsx`), поэтому окно рисуется сразу целиком
+   и расти ему нечем. А раз высота не меняется, появление можно вести
+   кейфреймом: он начинается с первого кадра сам, без возни
+   с состоянием и двумя rAF.
+
+   Начало координат — нижний правый угол: там стоит кнопка, и окно
+   растёт буквально из неё. Двигаются `opacity` и `scale`, обе
+   композитные. */
 .pd__okno {
   position: relative;
   z-index: 1;
+  transform-origin: 100% 100%;
+  animation: pd-okno 280ms var(--ease) both;
   width: min(100%, 520px);
   max-height: min(86svh, 720px);
   overflow-y: auto;
@@ -334,12 +436,25 @@
   background: var(--surface);
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
 }
+@keyframes pd-okno {
+  from { opacity: 0; scale: 0.94; translate: 0 10px; }
+  to { opacity: 1; scale: 1; translate: 0 0; }
+}
+@keyframes pd-fon {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+/* «Простое мягкое проявление» — постановка. */
+@media (prefers-reduced-motion: reduce) {
+  .pd__okno { animation: pd-fon 200ms linear both; }
+}
+
 .pd__shapka { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .pd__krest {
   width: 44px;
   height: 44px;
   border: 0;
-  border-radius: var(--ui-r);
+  border-radius: var(--ui-r-pill);
   background: transparent;
   color: var(--dim);
   font-size: 18px;
@@ -395,7 +510,7 @@
   min-height: 52px;
   padding: 0 16px;
   border: 0;
-  border-radius: var(--ui-r);
+  border-radius: var(--ui-r-pill);
   background: var(--surface);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
   color: var(--dim);
@@ -420,7 +535,7 @@
   min-height: 32px;
   padding: 0 12px;
   border: 0;
-  border-radius: var(--ui-r);
+  border-radius: var(--ui-r-pill);
   background: transparent;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
   color: var(--dim);

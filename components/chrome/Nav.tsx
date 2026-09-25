@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { onLayoutChange, scrollToId, scroller } from '@/lib/scroll';
+import { onLayoutChange, scrollToId, scrollToTop, scroller } from '@/lib/scroll';
 import WordmarkMark from '@/components/wordmark/WordmarkMark';
 import { glyphShapes, rectShape } from '@/lib/inkshape';
 
@@ -296,7 +296,19 @@ export default function Nav() {
     <div className="menu" data-open={open ? '1' : undefined} aria-hidden={!open}>
       <div className="menu__bar shell">
         <div className="logo-slot" data-logo-slot="reserved">
-          <span className="logo-slot__text">SPOTIK</span>
+          <a
+            className="logo-slot__text"
+            href="/"
+            aria-label="Spotik Shop, на главную"
+            onClick={(e) => {
+              close();
+              if (window.location.pathname !== '/') return;
+              e.preventDefault();
+              scrollToTop();
+            }}
+          >
+            SPOTIK
+          </a>
         </div>
         <button ref={closeRef} type="button" className="menu__close" onClick={close}>
           <span className="sr-only">Закрыть меню</span>
@@ -351,13 +363,28 @@ export default function Nav() {
       <nav ref={navRef} className="nav" aria-label="Основная навигация">
         <div className="nav__band">
           <div className="nav__row shell">
+            {/* ⚠️ ЛОГОТИП ВЕДЁТ НА ГЛАВНУЮ, А НЕ К ЯКОРЮ `#hero`,
+                и это была настоящая поломка, а не придирка: на всех
+                страницах, кроме лендинга, якоря `#hero` не существует
+                вовсе, `scrollToId` молча выходил, а `preventDefault`
+                уже случился — нажатие не делало НИЧЕГО. Теперь адрес
+                настоящий (`/`), и на внутренних страницах работает сам
+                браузер; перехватываем мы только лендинг, где переход
+                на себя же перезагрузил бы страницу вместо прокрутки.
+
+                ⚠️ И ССЫЛКА ЗАНИМАЕТ ВЕСЬ СЛОТ. Прежняя была шириной
+                по тексту: справа от литеры K оставалась полоса слота,
+                на которую человек и целится, а нажатие там не ловилось
+                ничем. */}
             <div className="logo-slot" data-logo-slot="reserved">
               <a
                 className="logo-slot__text"
-                href="#hero"
+                href="/"
+                aria-label="Spotik Shop, на главную"
                 onClick={(e) => {
+                  if (window.location.pathname !== '/') return;
                   e.preventDefault();
-                  scrollToId('hero');
+                  scrollToTop();
                 }}
               >
                 SPOTIK

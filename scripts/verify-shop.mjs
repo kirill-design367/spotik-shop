@@ -815,9 +815,13 @@ console.log('── СКРУГЛЁННЫЕ УГЛЫ В РАЗДЕЛЕ, И ЛЕН
      ⚠️ СУДИМ ПО ВЫЧИСЛЕННОМУ РАДИУСУ ЖИВОЙ СТРАНИЦЫ, А НЕ ПО ТОМУ,
      ЧТО МЫ НАПИСАЛИ В CSS. Имя класса доказало бы только, что правило
      существует; здесь спрашивается, доехало ли оно до элемента.
-     И ⚠️ ВЕЛИЧИНА ОБЯЗАНА БЫТЬ ОДНА: собираем РАЗНЫЕ радиусы у полей
-     и кнопок выбора и требуем ровно один — второй означал бы, что
-     кто-то завёл своё число мимо токена. */
+     И ⚠️ КАЖДЫЙ ИЗМЕРЕННЫЙ РАДИУС ОБЯЗАН СОВПАСТЬ С ОБЪЯВЛЕННЫМ
+     ТОКЕНОМ. Токенов с тридцать седьмой итерации ТРИ, а не два:
+     поверхности (`--ui-r`), крупные панели (`--ui-r-lg`) и КНОПКИ
+     (`--ui-r-pill`) — постановка «все кнопки в кабинете
+     и на оформлении полными пилюлями». Смысл проверки не изменился:
+     число, не совпавшее ни с одним токеном, означает, что кто-то
+     завёл своё мимо них. */
   const kruglo = async (page, url, sel) => {
     await page.goto(`http://localhost:${PORT}${url}`, { waitUntil: 'networkidle' });
     return page.evaluate((s2) => {
@@ -837,9 +841,11 @@ console.log('── СКРУГЛЁННЫЕ УГЛЫ В РАЗДЕЛЕ, И ЛЕН
      их значения заранее — иначе он проверял бы нашу же память. */
   const tokeny = await klient.evaluate(() => {
     const cs = getComputedStyle(document.documentElement);
-    return [cs.getPropertyValue('--ui-r'), cs.getPropertyValue('--ui-r-lg')].map((v) =>
-      parseFloat(v),
-    );
+    return [
+      cs.getPropertyValue('--ui-r'),
+      cs.getPropertyValue('--ui-r-lg'),
+      cs.getPropertyValue('--ui-r-pill'),
+    ].map((v) => parseFloat(v));
   });
   const hudshy = (a) => (a.length ? Math.min(...a.map((v) => v.r)) : -1);
   const imena = (a) =>
@@ -865,14 +871,14 @@ console.log('── СКРУГЛЁННЫЕ УГЛЫ В РАЗДЕЛЕ, И ЛЕН
     adm.length >= 3 && adm.every((v) => v.r >= 6),
     `${adm.length} шт., наименьший ${hudshy(adm)}${imena(adm) ? `: ${imena(adm)}` : ''}`);
 
-  /* ⚠️ ВЕЛИЧИНА ОДНА, А НЕ НАБОР: каждый измеренный радиус обязан
-     СОВПАСТЬ с одним из двух токенов. Третье число означало бы,
-     что кто-то завёл своё мимо `--ui-r`. */
+  /* ⚠️ ВЕЛИЧИНЫ БЕРУТСЯ ТОКЕНАМИ: каждый измеренный радиус обязан
+     СОВПАСТЬ с одним из трёх. Четвёртое число означало бы, что кто-то
+     завёл своё мимо них. */
   const chuzhie = [...new Set(
     [...ost, ...kab, ...adm].map((v) => v.r).filter((r) => !tokeny.some((t) => Math.abs(t - r) < 0.6)),
   )];
-  chk('радиус один на всё, а не набор чисел',
-    tokeny.length === 2 && tokeny.every((t) => t > 0) && chuzhie.length === 0,
+  chk('радиусы берутся токенами, а не своими числами',
+    tokeny.length === 3 && tokeny.every((t) => t > 0) && chuzhie.length === 0,
     `токены ${tokeny.join(' и ')} px, чужих значений ${chuzhie.length ? chuzhie.join(', ') : 'нет'}`);
 
   /* ⚠️ ЛЕНДИНГ ОБЯЗАН ОСТАТЬСЯ С РАДИУСОМ 0. Проверяется перебором
@@ -1076,6 +1082,57 @@ console.log('── ФОРМА ОТКАЗЫВАЕТ СВОИМИ СЛОВАМИ,
   chk('заказ на слабом пароле не завёлся', skolkoStalo === skolkoBylo, `${skolkoBylo} → ${skolkoStalo}`);
 }
 
+console.log('── ВЫБРАННЫЙ ВАРИАНТ ОДНОЙ СТРОКОЙ, ОСТАЛЬНЫЕ ПО «ИЗМЕНИТЬ» ──');
+{
+  /* Постановка тридцать седьмой: «на оформлении не повторяй весь список
+     тарифов и сроков: выбранный на лендинге вариант показывается одной
+     строкой — тариф, срок, цена и „Изменить“, а остальные варианты
+     открываются только по „Изменить“».
+
+     ⚠️ СУДИМ ПО ВЫСОТЕ ЖИВОГО БЛОКА, А НЕ ПО АТРИБУТУ. Атрибут доказал бы
+     только, что состояние переключилось; здесь спрашивается, свёрнут ли
+     список НА ЭКРАНЕ (Р-47). */
+  await klient.goto(`http://localhost:${PORT}/checkout/?plan=duo&period=12`, { waitUntil: 'networkidle' });
+  const stroka = await klient.innerText('.vybor__stroka');
+  chk('выбор показан одной строкой: тариф, срок, цена и «Изменить»',
+    /На двоих/.test(stroka) && /Год/.test(stroka) && /290/.test(stroka) && /Изменить/.test(stroka),
+    stroka.replace(/\s+/g, ' '));
+
+  const zakryto = await klient.evaluate(
+    () => document.querySelector('.vybor__nutro')?.getBoundingClientRect().height ?? -1);
+  chk('список вариантов закрыт до нажатия', zakryto < 4, `${Math.round(zakryto)} px`);
+
+  await klient.click('.vybor__izm');
+  await klient.waitForTimeout(600);
+  const otkryto = await klient.evaluate(
+    () => document.querySelector('.vybor__nutro')?.getBoundingClientRect().height ?? -1);
+  chk('«Изменить» открывает и тарифы, и сроки', otkryto > 120, `${Math.round(otkryto)} px`);
+
+  /* Смена тарифа тянет за собой число участников: это то, ради чего
+     каталог и поехал в форму целиком. */
+  await klient.locator('.pick__btn', { hasText: 'На троих' }).first().click();
+  await klient.waitForTimeout(400);
+  const uch = await klient.locator('.uchastnik').count();
+  chk('смена тарифа меняет число участников', uch === 3, `${uch} участника`);
+
+  /* ⚠️ НЕВЫБРАННАЯ ПЛАШКА НЕ ПОДСВЕЧЕНА НИЧЕМ: ни каймы, ни яркого
+     текста. Судится по вычисленному стилю живой страницы. */
+  const plashki = await klient.$$eval('.pick__btn', (els) =>
+    els.slice(0, 6).map((el) => {
+      const cs = getComputedStyle(el);
+      return {
+        vybran: el.getAttribute('aria-checked') === 'true',
+        ten: cs.boxShadow,
+        cvet: cs.color,
+      };
+    }));
+  const nevybrannye = plashki.filter((v) => !v.vybran);
+  chk('у невыбранных плашек нет ни каймы, ни белого текста',
+    nevybrannye.length > 0
+      && nevybrannye.every((v) => v.ten === 'none' && !/255, 255, 255/.test(v.cvet)),
+    nevybrannye.map((v) => `${v.ten} ${v.cvet}`).slice(0, 2).join(' · '));
+}
+
 console.log('── СКИДКА И ВЫКЛЮЧЕННАЯ ЯЧЕЙКА: ЧЕРЕЗ АДМИНКУ И НА САЙТЕ ──');
 {
   /* ⚠️ ЗАДАЁТСЯ ЧЕРЕЗ АДМИНКУ, А НЕ ВСТАВКОЙ В БАЗУ. Лендинг
@@ -1112,8 +1169,16 @@ console.log('── СКИДКА И ВЫКЛЮЧЕННАЯ ЯЧЕЙКА: ЧЕР�
   /* Цена замораживается при создании заказа: заказ на «На троих»
      обязан стоить ровно столько, сколько стоил в момент оформления. */
   await klient.goto(`http://localhost:${PORT}/checkout/?plan=trio&period=1`, { waitUntil: 'networkidle' });
-  const chek = (await klient.textContent('body')) ?? '';
-  chk('оформление считает по цене со скидкой', /690/.test(chek) && !/890/.test(chek));
+  /* ⚠️ СПРАШИВАЕТСЯ ВИДИМЫЙ ТЕКСТ, А НЕ `textContent` ВСЕГО ТЕЛА.
+     В теле лежат ещё и сериализованные пропсы страницы, а в них
+     с тридцать седьмой итерации едет ВЕСЬ каталог — «Изменить»
+     открывает и тарифы, и сроки. Цена «на двоих за полгода» это
+     2 890 ₽, то есть строка «890» честно есть в разметке и никогда
+     не попадает на экран. Проверка про ЭКРАН, значит и читать надо
+     экран. */
+  const chek = await klient.innerText('main');
+  chk('оформление считает по цене со скидкой', /690/.test(chek) && !/890/.test(chek),
+    chek.replace(/\s+/g, ' ').slice(0, 90));
 
   // Выключаем «на одного · три месяца» и смотрим, что срока не стало.
   await admin.goto(`http://localhost:${PORT}/admin/settings/`, { waitUntil: 'networkidle' });

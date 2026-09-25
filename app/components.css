@@ -398,6 +398,12 @@
   /* слот 26 px по высоте, но тач-цель обязана быть не меньше 44 */
   display: flex;
   align-items: center;
+  /* ⚠️ ССЫЛКА ЗАНИМАЕТ ВЕСЬ СЛОТ, а не ширину надписи: справа от литеры K
+     оставалась полоса в три десятка пикселей, по виду принадлежащая
+     логотипу, а нажатие там не ловилось ничем. Литеры при этом остаются
+     слева — выключка у флекса своя, и фигура выворотки собирается
+     по строчному боксу из `Range`, а не по боксу элемента (Р-46). */
+  width: 100%;
   min-height: 44px;
   margin-block: -9px;
   font-family: var(--font-text);
@@ -794,7 +800,11 @@
   color: var(--ink);
   /* режет верхушки литер, вышедшие выше секции на величину среза */
   overflow: hidden;
-  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  /* ⚠️ ЗАПАС СНИЗУ ДЕРЖИТ МЕСТО ПОД ПЛАШКУ ПОДДЕРЖКИ. Она прибита
+     к правому нижнему углу экрана, и на телефоне последняя строка
+     футера — ссылки на документы — оказывалась ровно под ней.
+     Плашка 48 px плюс её отступ 16. */
+  padding-bottom: calc(80px + env(safe-area-inset-bottom));
   /* НА ПОСЛЕДНЕМ ЭКРАНЕ ЗЕЛЁНОЕ ВО ВЕСЬ ЭКРАН. Слово и реквизиты вместе
      ниже экрана, и без этого в самом низу страницы сверху оставалась бы
      полоса предыдущего блока: 113 px на 1920. Лишнюю высоту забирает
@@ -813,23 +823,49 @@
 .footer__body {
   padding-top: clamp(24px, 5vw, 48px);
   display: grid;
-  /* Две колонки начинаются с самых узких экранов: в одну колонку четыре
-     блока реквизитов дают 551 px и не помещаются ни на одном мобильном. */
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 24px 20px;
+  /* ⚠️ КОЛОНОК ТЕПЕРЬ ДВЕ, А НЕ ТРИ: документы уехали из сетки
+     отдельной строкой под ней (тридцать седьмая итерация). На телефоне
+     колонка одна — оговорка в половину ширины разваливалась на семь
+     строк. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
 }
 @media (min-width: 640px) {
-  .footer__body { gap: 28px 32px; }
+  .footer__body { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 32px; }
 }
 @media (min-width: 900px) {
-  /* Колонок ТРИ: «Документы» снята тринадцатой итерацией вместе
-     с единственной строкой «Оферта — готовится». */
-  .footer__body { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; }
+  .footer__body { gap: 32px; }
 }
-/* Оговорка идёт третьей и на двух колонках занимает всю строку:
-   иначе рядом с ней зияла бы пустая половина. */
-.footer__col--note { grid-column: 1 / -1; }
-@media (min-width: 900px) { .footer__col--note { grid-column: auto; } }
+
+/* ── ДОКУМЕНТЫ ОДНОЙ СТРОКОЙ ────────────────────────────────────────────
+   Постановка тридцать седьмой: «сейчас они свалены в столбик — разложи
+   лаконично: одна-две строки мелкого текста через тонкий разделитель».
+
+   ⚠️ РАЗДЕЛИТЕЛЬ РИСУЕТ ЭЛЕМЕНТ СПИСКА, А НЕ ССЫЛКА. Внутри ссылки
+   черта попала бы в её кликабельную область, и нажатие рядом с чертой
+   уводило бы на документ, до которого человек не дотягивался. */
+.footer__docs {
+  margin-top: clamp(20px, 3.2vw, 32px);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  row-gap: 6px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  font-variation-settings: 'wght' 480;
+}
+@media (min-width: 560px) { .footer__docs { font-size: 12px; } }
+.footer__doc { position: relative; }
+.footer__doc + .footer__doc { padding-left: 21px; }
+.footer__doc + .footer__doc::before {
+  content: '';
+  position: absolute;
+  left: 10px;
+  top: 0.16em;
+  width: 1px;
+  height: 0.86em;
+  background: rgba(18, 18, 18, 0.34);
+}
 
 /* ⚠️ ПОДПИСЕЙ У КОЛОНОК НЕТ ВОВСЕ. «Реквизиты» и «Связь» сняты
    арт-директором в двадцать третьей итерации; вместе с ними ушла
@@ -857,8 +893,23 @@
    (замерено: +3.3 px). Перенос по любому знаку срабатывает только там,
    где иначе был бы вылет: на всех прочих ширинах строки целые. */
 .footer__req dd { margin: 1px 0 0; overflow-wrap: anywhere; }
-.footer__req a { color: inherit; text-decoration: none; border-bottom: 1px solid rgba(18, 18, 18, 0.45); }
-.footer__req a:hover { border-bottom-color: currentColor; }
+/* ⚠️ ПОДЧЁРКИВАНИЙ В ФУТЕРЕ НЕТ НИ ОДНОГО (тридцать седьмая итерация),
+   и на наведении меняется ТОЛЬКО ЦВЕТ. Разница названа числом: покой —
+   82 % чернил в зелёном, это 5.5:1 на зелёном поле, наведение — чистые
+   чернила, 7.2:1. Оба выше нормы 4.5:1, то есть приглушение здесь
+   не роняет читаемость, а седьмого цвета в палитре не заводит:
+   `color-mix` двух палитровых, как у ховера кнопки (раздел 3). */
+.footer__req a,
+.footer__docs a,
+.req__knopka {
+  color: color-mix(in srgb, var(--on-green-dim) 82%, var(--green));
+  text-decoration: none;
+  border-bottom: 0;
+  transition: color 160ms linear;
+}
+.footer__req a:hover,
+.footer__docs a:hover,
+.req__knopka:hover { color: var(--on-green-dim); }
 
 /* ── РЕКВИЗИТЫ СОБИРАЮТСЯ ИЗ ТОЧЕК ──────────────────────────────────────
    Постановка тридцать шестой итерации: реквизиты спрятаны за одну
@@ -885,12 +936,9 @@
   letter-spacing: 0.16em;
   text-transform: uppercase;
   font-variation-settings: 'wght' 700;
-  color: var(--on-green-dim);
-  border-bottom: 1px solid rgba(18, 18, 18, 0.45);
   cursor: pointer;
   touch-action: manipulation;
 }
-.req__knopka:hover { border-bottom-color: currentColor; }
 .req__knopka:focus-visible { outline: 2px solid var(--on-green-dim); outline-offset: 3px; }
 
 .req__para + .req__para { margin-top: 12px; }

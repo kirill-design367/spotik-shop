@@ -171,10 +171,38 @@ let lenisUp = false;
    с фактической позицией, если её подвинул не он. */
 type LenisLike = {
   animatedScroll: number;
-  scrollTo: (t: number, o?: { immediate?: boolean; force?: boolean }) => void;
+  scrollTo: (t: number, o?: { immediate?: boolean; force?: boolean; onComplete?: () => void }) => void;
   on: (e: string, f: () => void) => void;
 };
 let lenis: LenisLike | null = null;
+
+/**
+ * ⚠️ ПОКА К ЦЕЛИ ВЕДЁМ МЫ САМИ, СВЕРКА ОБЯЗАНА МОЛЧАТЬ.
+ *
+ * Это нашлось на логотипе: нажатие с середины страницы уводило её
+ * вверх на три-четыре сотни пикселей и ТАМ ОСТАНАВЛИВАЛО — а иногда
+ * не двигало вовсе. Причина в самой сверке. Lenis пишет `scrollTop`,
+ * браузер шлёт нативное `scroll` СЛЕДУЮЩИМ кадром, и к этому моменту
+ * `animatedScroll` уже ушёл дальше. На длинном ходе шаг за кадр
+ * больше допуска в два пикселя — сверка честно решает, что позицию
+ * подвинул кто-то чужой, и гасит его же ход `immediate: true`.
+ *
+ * Флаг снимает `onComplete`, а страховкой стоит будильник: не пришёл
+ * `onComplete` (ход перебили рукой) — сверка вернётся сама.
+ */
+let vedyomSami = false;
+let vedyomTok = 0;
+
+function lenisK(top: number) {
+  if (!lenis) return;
+  const tok = (vedyomTok += 1);
+  vedyomSami = true;
+  const konec = () => {
+    if (tok === vedyomTok) vedyomSami = false;
+  };
+  lenis.scrollTo(top, { onComplete: konec });
+  window.setTimeout(konec, 2500);
+}
 
 /**
  * ПОЗИЦИЮ МОЖЕТ ПОДВИНУТЬ НЕ ТОЛЬКО LENIS.
@@ -190,7 +218,7 @@ let lenis: LenisLike | null = null;
  */
 function resync() {
   const sc = scroller();
-  if (!lenis || !sc) return;
+  if (!lenis || !sc || vedyomSami) return;
   if (Math.abs(sc.scrollTop - lenis.animatedScroll) > 2) {
     lenis.scrollTo(sc.scrollTop, { immediate: true, force: true });
   }
@@ -406,6 +434,32 @@ export function onScrollProgress(
  * при вложенной прокрутке норовит подвинуть заодно и документ, а документ
  * у нас обязан стоять — иначе панель Safari снова начнёт сворачиваться.
  */
+/**
+ * Наверх страницы.
+ *
+ * ⚠️ ЭТО НЕ ТО ЖЕ, ЧТО ПЕРЕХОД К ЯКОРЮ `#hero`. Якорь ведёт к ВЕРХУ
+ * СЕКЦИИ, а у неё есть собственное прилипание и ход морфа: к нулю
+ * прокрутки она приводит только пока страница в самом начале. Логотипу
+ * нужен именно ноль — «на главной плавно прокручивает наверх».
+ *
+ * Пока позицию ведёт Lenis, переход обязан идти ЧЕРЕЗ НЕГО: своя плавная
+ * прокрутка браузера и его кривая тянули бы страницу в разные стороны
+ * (те же грабли, что у якоря, Р-45).
+ */
+export function scrollToTop() {
+  const behavior: ScrollBehavior = prefersReducedMotion() ? 'auto' : 'smooth';
+  const sc = scroller();
+  if (sc) {
+    if (lenis && behavior === 'smooth') {
+      lenisK(0);
+      return;
+    }
+    sc.scrollTo({ top: 0, behavior });
+    return;
+  }
+  window.scrollTo({ top: 0, behavior });
+}
+
 export function scrollToId(id: string) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -417,7 +471,7 @@ export function scrollToId(id: string) {
        собственная плавная прокрутка браузера и его кривая тянут страницу
        в разные стороны, и она дёргается. */
     if (lenis && behavior === 'smooth') {
-      lenis.scrollTo(top);
+      lenisK(top);
       return;
     }
     sc.scrollTo({ top, behavior });
