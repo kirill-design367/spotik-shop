@@ -1388,7 +1388,12 @@ console.log('── ОБРАЩЕНИЕ В ПОДДЕРЖКУ ──');
     !server.zhurnal().includes('Не приходит письмо с кодом входа'));
 
   // Лимит: три обращения за десять минут, четвёртое отбито.
-  const poslat = async (tekst) => {
+  const schyotPopytok = async () =>
+    (await p2.query(
+      `select count(*)::int n from support_try where created_at > now() - interval '10 minutes'`,
+    )).rows[0].n;
+
+  const poslat = async (tekst, zhdatZapis = true) => {
     /* Окно после удачной отправки показывает подтверждение — закрываем
        его крестиком и открываем заново, как это делает человек. */
     await klient.click('.pd__krest');
@@ -1398,14 +1403,38 @@ console.log('── ОБРАЩЕНИЕ В ПОДДЕРЖКУ ──');
     await klient.fill('textarea[name="tekst"]', tekst);
     await klient.fill('input[name="svyaz"]', '@spotik_klient');
     await klient.waitForTimeout(2000);
+    const bylo = await schyotPopytok();
     await otpravitIZhdat();
+    if (!zhdatZapis) return;
+    /* ⚠️ ЖДЁМ СОБЫТИЯ, А НЕ ИЗМЕНЕНИЯ ТЕКСТА, И ЭТО СТОИЛО ВЫКЛАДКИ
+       № 123. Текст окна меняется и БЕЗ ответа сервера: форма
+       спрашивает почту вошедшего отдельным действием и подставляет
+       её в поле. На медленной машине этот ответ приходил ПОСЛЕ
+       нажатия, `waitForFunction` считал его изменением и отпускал
+       сторож раньше, чем попытка успевала записаться, — а лимит
+       считает именно записи. Событие тут одно и однозначное: строка
+       в `support_try`. Те же грабли, что в Р-94 и Р-97. */
+    const do_ = Date.now();
+    while (Date.now() - do_ < 20000 && (await schyotPopytok()) === bylo) {
+      await klient.waitForTimeout(150);
+    }
   };
   await poslat('Ещё одно обращение номер два, всё подробно.');
   await poslat('Ещё одно обращение номер три, всё подробно.');
-  await poslat('Четвёртое подряд обращение, его пора отбить.');
+  /* ⚠️ СЧЁТ ПОПЫТОК СНИМАЕТСЯ ДО ЧЕТВЁРТОЙ, И ЭТО НЕ ЛИШНЕЕ ЧИСЛО.
+     Отбитое как машинное обращение отвечает «принято» и в счёт НЕ идёт
+     (Р-119). Значит «четвёртое не отбито» имеет две разные причины —
+     сломан лимит или одна из трёх не засчиталась, — и без этого числа
+     они неразличимы: ровно на этом выкладка № 123 сказала «СБОЙ»
+     и не сказала почему. */
+  const popytok = (await p2.query(
+    `select count(*)::int n from support_try where created_at > now() - interval '10 minutes'`)).rows[0].n;
+  await poslat('Четвёртое подряд обращение, его пора отбить.', false);
   const chetvyortoe = (await klient.textContent('body')) ?? '';
+  chk('три обращения записаны в счёт', popytok === 3, `${popytok} из 3`);
   chk('четвёртое подряд обращение отбито по частоте',
-    /Обращение уже отправлено/.test(chetvyortoe));
+    /Обращение уже отправлено/.test(chetvyortoe),
+    chetvyortoe.replace(/\s+/g, ' ').match(/Обращени[^.]{0,60}/)?.[0] ?? 'нет строки про обращение');
 
   // Ловушка: заполненное скрытое поле отвечает «принято», а в чат
   // не уходит ничего.
