@@ -74,8 +74,36 @@
   margin: var(--ritm) 0;
 }
 /* На тёмном фоне страницы (а не внутри панели) подложка берётся
-   от `--surface`: иначе плашка сливалась бы с самой панелью. */
-.page > .panel__note--plate { background: var(--surface); margin: 0 0 var(--ritm-lg); }
+   от `--surface`: иначе плашка сливалась бы с самой панелью. То же
+   и у плашки про рабочее время: она стоит МЕЖДУ панелями, то есть
+   на фоне страницы, а не внутри панели. */
+.page > .panel__note--plate,
+.ozhivayet > .panel__note--plate { background: var(--surface); margin: 0 0 var(--ritm-lg); }
+
+/* ── ВЫБОР ТАРИФА КАРТАМИ (страница сертификатов) ───────────────────────
+   Тридцать девятая итерация: «Приведи его к виду тарифов на главной».
+   Сами карты и плашки срока — общий компонент с лендингом и его же
+   классы (`.seg`, `.cards`, `.card`), объявленные в `components.css`;
+   здесь только обвязка вокруг них.
+
+   ⚠️ БЛОК НЕ ПАНЕЛЬ, И ЭТО НЕ ЗАБЫТЫЙ КЛАСС. У карты свет ЗА ней —
+   размытая белая тень на тёмном фоне; положи её на `--surface`
+   панели, и свет сольётся с подложкой, то есть приёма не станет
+   вовсе. Карты стоят на фоне страницы ровно так же, как на лендинге. */
+.vybor-kart { margin: 0 0 var(--ritm-lg); }
+.vybor-kart__h {
+  font-size: 18px;
+  font-variation-settings: 'wght' 640;
+  letter-spacing: -0.01em;
+  margin: 0 0 var(--ritm);
+  text-align: center;
+}
+.vybor-kart__z {
+  color: var(--dim-2);
+  font-size: 14px;
+  margin: var(--ritm-lg) 0 0;
+  text-align: center;
+}
 
 .field { display: block; margin: 0 0 var(--ritm); }
 .field__label { display: block; font-size: 13px; color: var(--dim); margin: 0 0 6px; }
@@ -659,6 +687,10 @@
 
 /* ── ОФОРМЛЕНИЕ ОЖИВАЕТ ────────────────────────────────────────────────── */
 .ozhivayet > .panel { animation: panel-vhod 420ms var(--ease) both; }
+/* Плашка про рабочее время — не панель, но приезжает тем же ходом
+   и в свою очередь: между первой панелью и второй. `nth-of-type`
+   ниже считает ДИВЫ, и абзац их счёт не сбивает. */
+.ozhivayet > .panel__note--plate { animation: panel-vhod 420ms var(--ease) 75ms both; }
 .ozhivayet > .panel:nth-of-type(1) { animation-delay: 40ms; }
 .ozhivayet > .panel:nth-of-type(2) { animation-delay: 110ms; }
 .ozhivayet > .panel:nth-of-type(3) { animation-delay: 180ms; }
@@ -678,6 +710,6 @@
 @media (prefers-reduced-motion: reduce) {
   .svorach { transition: none; }
   .galka__krug, .galka__put { animation: none; stroke-dashoffset: 0; }
-  .ozhivayet > .panel, .summa { animation: none; }
+  .ozhivayet > .panel, .ozhivayet > .panel__note--plate, .summa { animation: none; }
   .shkala__tochka { transition: none; }
 }

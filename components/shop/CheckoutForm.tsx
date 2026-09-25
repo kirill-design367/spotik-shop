@@ -7,6 +7,7 @@ import { rubli } from '@/lib/server/money';
 import { cel, CELI } from '@/lib/metrika';
 import { Pole, PoleParolya } from './Polya';
 import { parolNeGoditsya, pochtaNeVerna, PRAVILO_PAROLYA } from '@/lib/proverka';
+import { CHASY_SLOVAMI } from '@/lib/chasy';
 
 export type SrokVybor = { period: number; kop: number; label: string };
 
@@ -32,6 +33,8 @@ export type Vvod = {
   /** Почты из заказа, который продлевают по ссылке из письма. */
   pochtyPoUmolchaniyu: string[];
   balansKop: number;
+  /** Посчитано НА СЕРВЕРЕ и по Москве — см. `lib/chasy.ts`. */
+  vneRabochego: boolean;
 };
 
 /**
@@ -232,6 +235,25 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
           </div>
         </div>
       </div>
+
+      {/* ⚠️ ПЛАШКА ПРО РАБОЧЕЕ ВРЕМЯ СТОИТ МЕЖДУ ТАРИФОМ И АККАУНТОМ,
+          и это место названо постановкой. Смысл её ровно один: человек,
+          оформляющий заказ ночью, должен знать, что доступ включат
+          утром, а не решить, что мы пропали.
+
+          ⚠️ ВРЕМЯ ПОСЧИТАЛ СЕРВЕР И ПО МОСКВЕ (`lib/chasy.ts`).
+          Спроси мы часы устройства — плашка врала бы ровно тем, кому
+          она нужнее всего: человеку из Владивостока, у которого утро,
+          а у оператора в Москве ещё ночь.
+
+          ⚠️ У СЕРТИФИКАТА ЕЁ НЕТ, И ЭТО НЕ ПРОПУСК. Код сертификата
+          выдаёт не оператор, а сам сервер сразу после оплаты: обещать
+          там «выполним в рабочее время» значило бы сказать неправду. */}
+      {vvod.vneRabochego && !vvod.sertifikat ? (
+        <p className="panel__note panel__note--plate">
+          Заказ будет выполнен в рабочее время сервиса ({CHASY_SLOVAMI}).
+        </p>
+      ) : null}
 
       {!vvod.sertifikat ? (
         <div className="panel">

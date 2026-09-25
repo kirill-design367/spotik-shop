@@ -10,6 +10,7 @@ import { telegramNastroen } from '@/lib/server/telegram';
 import { env } from '@/lib/server/env';
 import { yazykSotrudnika } from '@/lib/server/yazyk';
 import { slovar, sostoyanie } from '@/lib/admin/slova';
+import { imyaTarifa } from '@/lib/plans';
 
 export const dynamic = 'force-dynamic';
 
@@ -74,7 +75,7 @@ export default async function AdminHome() {
                 <td>
                   <a href={`/admin/orders/${r.id}/`}>{r.id}</a>
                 </td>
-                <td>{r.plan}</td>
+                <td>{imyaTarifa(r.planId, y === 'en')}</td>
                 <td>{r.client}</td>
                 <td>{sostoyanie(t, r.status)}</td>
                 <td>{new Date(r.closedAt).toLocaleString(kogda)}</td>

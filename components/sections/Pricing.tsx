@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useState } from 'react';
 import SectionHead from './SectionHead';
-import { attachCards } from '@/lib/cards';
-import { DARIMYE, PERIODS, formatPrice, savings, type Plan, type PeriodKey } from '@/lib/plans';
+import VyborTarifa, { type KartaTarifa } from '@/components/mid/VyborTarifa';
+import { DARIMYE, PERIODS, formatPrice, type PeriodKey } from '@/lib/plans';
 
 /**
  * ⚠️ СОСТАВ ТАРИФОВ ПО-ПРЕЖНЕМУ В `lib/plans.ts`, А ЦЕНЫ ПРИХОДЯТ
@@ -12,6 +12,11 @@ import { DARIMYE, PERIODS, formatPrice, savings, type Plan, type PeriodKey } fro
  * их при сборке кадра (см. `revalidate` в app/page.tsx). База
  * недоступна — приходит `undefined`, и работают прежние умолчания:
  * лендинг обязан собираться на раннере, где базы нет вовсе.
+ *
+ * ⚠️ В `ceny` ЛЕЖАТ ТОЛЬКО ТЕ СРОКИ, НА КОТОРЫЕ ТАРИФ ПРОДАЁТСЯ.
+ * Выключенную в админке пару `katalog()` не отдаёт вовсе (Р-116),
+ * значит «нет числа» здесь и значит «эта карта на этом сроке
+ * не показывается».
  */
 export type CenyTarifov = Record<string, Partial<Record<PeriodKey, number>>>;
 /**
@@ -32,96 +37,60 @@ export type SkidkiTarifov = Record<string, Partial<Record<PeriodKey, { bylo: num
  * итерация). Четвёртой карточкой стоял «Сертификат», и держалась сетка
  * ровно на нём: тарифов трое. Сертификат уехал на свою страницу
  * `/sertifikaty/`, и карточек стало столько, сколько тарифов включено
- * в админке — сейчас три, завтра может быть два. Поэтому сетка теперь
- * НЕ ЗАДАЁТ ЧИСЛО ЯЧЕЕК ВОВСЕ: на десктопе карты идут одним рядом
- * (`grid-auto-flow: column`), на телефоне — столбиком, и это ДРУГАЯ
- * карта: широкая и низкая, название слева, цена справа.
+ * в админке — сейчас три, завтра может быть два.
  *
- * ⚠️ СВЕТ ЗА КАРТОЙ ПЕРЕЕХАЛ В ОБЁРТКУ, И ЭТО СЛЕДСТВИЕ ТОГО ЖЕ.
- * Раньше слой света был СОСЕДОМ карты в самой сетке, а его ячейка
- * задавалась явными линиями `grid-area` по номеру — при переменном
- * числе карт и двух раскладках таких правил понадобилось бы вдвое
- * больше, и каждое пришлось бы чинить при добавлении тарифа. Теперь
- * ячейку сетки занимает обёртка `.cards__slot`, а свет лежит в ней
- * абсолютом. Запрет Р-68 при этом цел: обёртка НЕ СОЗДАЁТ контекста
- * наложения (ни `isolation`, ни `z-index`, ни трансформа), поэтому
- * все слои света по-прежнему рисуются слоем 0, а все карты слоем 1,
- * и свет соседа не может лечь поверх чужой карты.
- *
- *     .cards
- *       .cards__slot     — ячейка сетки, ничего не рисует
- *         span.cards__glow — размытый свет ЗА картой, слоем 0
- *         .card            — наклон в перспективе сетки, слой 1
- *           .card__edge    — кайма в один пиксель; у выбранной она
- *                            зелёная, и по ней идёт перелив
- *           .card__plate   — ровная тёмная поверхность
- *           .card__face    — название и цена, обычный HTML
- *
- * Наклон с пружинной доводкой, дыхание в покое и подъём выбранной
- * ведёт `lib/cards.ts`. Решение — Р-74.
+ * ⚠️ САМИ ПЛАШКИ СРОКА И КАРТЫ ЖИВУТ В ОБЩЕМ КОМПОНЕНТЕ
+ * `components/mid/VyborTarifa.tsx`: с тридцать девятой итерации тот же
+ * выбор стоит на странице сертификатов, и второй копии карт у нас
+ * быть не должно. Здесь остаётся ровно то, чего на сертификатах нет, —
+ * область под сеткой: выбор аккаунта, кнопка и строка про подарок.
  *
  * ── БЕЗ СКРИПТА И ПРИ «УМЕНЬШИТЬ ДВИЖЕНИЕ» ────────────────────────────────
  * Карта полностью нарисована CSS: без JS она просто стоит ровно.
  * Прятать нечего и подменять нечем.
  *
- * ── ВЫБОР КАРТОЧКИ ВЕДЁТ ОБЛАСТЬ ПОД СЕТКОЙ ───────────────────────────────
- * Карточки — настоящий radiogroup со стрелками на клавиатуре
- * и `aria-checked`. Под сеткой стоит выбор аккаунта и кнопка с ценой
- * ВЫБРАННОЙ карточки.
- *
- * Почему управление снаружи, а не в каждой карточке: три одинаковых
- * набора кнопок и три кнопки «Оформить» — это три призыва к действию
- * в одном кадре. Приём карточек держится на том, что они лаконичные,
- * и первое же управление внутри это ломает.
- *
  * ── СРОК ПО УМОЛЧАНИЮ — МЕСЯЦ ─────────────────────────────────────────────
  * ⚠️ БЫЛ ГОД, И ЭТО ПРАВКА ПОСТАНОВКИ. Страница открывается на самом
  * коротком сроке: человек сначала видит цену входа, а уже потом
- * выбирает срок подлиннее и видит, сколько экономит. Год по умолчанию
- * читался как «тут всё дорого».
+ * выбирает срок подлиннее и видит, сколько экономит.
  */
 export default function Pricing({ ceny, skidki }: { ceny?: CenyTarifov; skidki?: SkidkiTarifov }) {
   /* ⚠️ ТАРИФ БЕЗ ЕДИНОЙ ЦЕНЫ В СЕТКУ НЕ ПОПАДАЕТ ВОВСЕ. Это и есть
-     «столько карточек, сколько тарифов включено в админке»: выключают
-     тариф там снятием всех его цен. Без этого условия карточка
-     осталась бы на месте и показала бы пустую цену. */
-  const vse: Plan[] = ceny ? DARIMYE.map((p) => (ceny[p.id] ? { ...p, prices: ceny[p.id]! } : p)) : DARIMYE;
-  const plans: Plan[] = vse.filter((p) => Object.values(p.prices).some((v) => typeof v === 'number'));
-  const [period, setPeriod] = useState<PeriodKey>(1);
-  const [planId, setPlanId] = useState<string>(DARIMYE[0].id);
+     «тариф, скрытый на всех сроках, не показывается нигде»: выключают
+     его в админке снятием всех цен или всех ячеек доступности. */
+  const tarify: KartaTarifa[] = DARIMYE.map((p) => {
+    const ceny_ = ceny?.[p.id] ?? p.prices;
+    return {
+      id: p.id,
+      name: p.name,
+      short: p.short ?? p.name,
+      ceny: PERIODS.flatMap((s) => {
+        const rub = ceny_[s.key];
+        if (typeof rub !== 'number') return [];
+        const sk = skidki?.[p.id]?.[s.key];
+        return [{ period: s.key as number, rub, byloRub: sk?.bylo, doDaty: sk?.doDaty }];
+      }),
+    };
+  }).filter((t) => t.ceny.length > 0);
+
+  const [period, setPeriod] = useState<number>(1);
+  const [planId, setPlanId] = useState<string>(tarify[0]?.id ?? DARIMYE[0].id);
   const [account, setAccount] = useState<Record<string, 'new' | 'renew'>>({});
-  /** Какая плашка сейчас переворачивается. Снимается по концу хода. */
-  const [flip, setFlip] = useState<PeriodKey | null>(null);
-  const statusId = useId();
-  const cardsRef = useRef<HTMLDivElement>(null);
 
-  /* Наклон, дыхание и подъём. React в движении не участвует вовсе:
-     ни одного перерендера на указатель. */
-  useEffect(() => {
-    const root = cardsRef.current;
-    return root ? attachCards(root) : undefined;
-  }, []);
-
-  const plan = plans.find((p) => p.id === planId) ?? plans[0];
   /* Ни одного тарифа с ценой — показывать нечего, и выдумывать
      тоже нечего: сетка молчит. Случай угловой (так выглядит
      совсем пустой каталог), но он не имеет права падать. */
-  if (!plan) return null;
-  const total = plan.prices[period];
-  const monthOnly = !total ? plan.prices[1] : undefined;
-  const acc = account[plan.id] ?? 'new';
-  const save = total ? savings(plan, period) : 0;
+  if (!tarify.length) return null;
 
-  /**
-   * Стрелки внутри radiogroup. Без них roving tabindex делает только хуже:
-   * в группу можно войти табом, а переключить выбор уже нечем.
-   */
-  const rove = (
-    e: React.KeyboardEvent,
-    count: number,
-    current: number,
-    apply: (i: number) => void,
-  ) => {
+  const vidnye = tarify.filter((t) => t.ceny.some((c) => c.period === period));
+  const plan = vidnye.find((t) => t.id === planId) ?? vidnye[0] ?? tarify[0];
+  const cena = plan.ceny.find((c) => c.period === period);
+  const acc = account[plan.id] ?? 'new';
+  /* Экономия относительно помесячной оплаты того же тарифа. */
+  const mes = plan.ceny.find((c) => c.period === 1)?.rub;
+  const save = cena && mes && period > 1 ? mes * period - cena.rub : 0;
+
+  const rove = (e: React.KeyboardEvent, count: number, current: number, apply: (i: number) => void) => {
     const keys = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'];
     if (!keys.includes(e.key)) return;
     e.preventDefault();
@@ -131,16 +100,6 @@ export default function Pricing({ ceny, skidki }: { ceny?: CenyTarifov; skidki?:
     const group = e.currentTarget as HTMLElement;
     group.querySelectorAll<HTMLElement>('[role="radio"]')[next]?.focus();
   };
-
-  const announce = (() => {
-    const p = PERIODS.find((x) => x.key === period)!;
-    const price = total
-      ? `${formatPrice(total)} рублей`
-      : monthOnly
-        ? `${formatPrice(monthOnly)} рублей за месяц, другие сроки по запросу`
-        : 'на этот срок не оформляется';
-    return `${p.label}, тариф «${plan.name}»: ${price}`;
-  })();
 
   return (
     <section id="pricing" className="section section--clipx">
@@ -152,113 +111,16 @@ export default function Pricing({ ceny, skidki }: { ceny?: CenyTarifov; skidki?:
           center
         />
 
-        <div
-          className="seg seg--center rv"
-          role="radiogroup"
-          aria-label="Срок подписки"
-          onKeyDown={(e) =>
-            rove(
-              e,
-              PERIODS.length,
-              PERIODS.findIndex((p) => p.key === period),
-              (i) => setPeriod(PERIODS[i].key),
-            )
-          }
-        >
-          {PERIODS.map((p) => (
-            <button
-              key={p.key}
-              type="button"
-              role="radio"
-              aria-checked={period === p.key}
-              tabIndex={period === p.key ? 0 : -1}
-              className="seg__btn"
-              /* Переворот заводит АТРИБУТ, а снимает его конец самой
-                 анимации: у `:active` ход кончился бы вместе
-                 с отпусканием пальца, то есть на середине. */
-              data-flip={flip === p.key ? '' : undefined}
-              onAnimationEnd={() => setFlip((f) => (f === p.key ? null : f))}
-              onClick={() => {
-                setFlip(p.key);
-                setPeriod(p.key);
-              }}
-            >
-              <span className="seg__t">{p.short}</span>
-            </button>
-          ))}
-        </div>
-
-        <p id={statusId} role="status" aria-atomic="true" className="sr-only">
-          {announce}
-        </p>
-
-        <div
-          ref={cardsRef}
-          className="cards rv"
-          role="radiogroup"
-          aria-label="Тариф"
-          onKeyDown={(e) =>
-            rove(
-              e,
-              plans.length,
-              plans.findIndex((p) => p.id === planId),
-              (i) => setPlanId(plans[i].id),
-            )
-          }
-        >
-          {plans.map((p) => {
-            const t = p.prices[period];
-            const m = !t ? p.prices[1] : undefined;
-            const sk = skidki?.[p.id]?.[t ? period : 1];
-            return (
-              /* ⚠️ ОБЁРТКА НИЧЕГО НЕ РИСУЕТ И НЕ СОЗДАЁТ КОНТЕКСТА
-                 НАЛОЖЕНИЯ. Ей нужна ровно одна вещь — `position:
-                 relative`, чтобы свет внутри неё встал по кромке
-                 карты. Дай ей `isolation` или `z-index` — и свет
-                 соседа снова ляжет поверх чужой карты (Р-68). */
-              <span key={p.id} className="cards__slot">
-                <span className="cards__glow" aria-hidden="true" />
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={planId === p.id}
-                  tabIndex={planId === p.id ? 0 : -1}
-                  className="card"
-                  onClick={() => setPlanId(p.id)}
-                >
-                  {/* КАЙМА ИДЁТ ПЕРВОЙ, ПЛИТА ПОВЕРХ НЕЁ И НА ПИКСЕЛЬ УЖЕ:
-                      видимой остаётся ровно рамка в один пиксель. Так кайму
-                      рисует обычная заливка, а не маска — маска внутри карты
-                      заставляла бы перерисовывать её целиком (Р-62). */}
-                  <span className="card__edge" aria-hidden="true" />
-                  <span className="card__plate" aria-hidden="true" />
-                  <span className="card__face">
-                    <span className="card__name">{p.short ?? p.name}</span>
-                    <span className="card__price tnum">
-                      {/* ⚠️ СТАРАЯ ЦЕНА СТОИТ НАД НОВОЙ И ЗАЧЁРКНУТА,
-                          а срок скидки — рядом с новой. Иначе «до 30.09»
-                          читается как срок тарифа, а не скидки. */}
-                      {sk ? <s className="card__bylo">{formatPrice(sk.bylo)} ₽</s> : null}
-                      {t ? (
-                        <>
-                          <b>{formatPrice(t)} ₽</b>
-                          <span className="card__per">
-                            за {period} мес{sk ? ` · до ${sk.doDaty}` : ''}
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <b>{formatPrice(m!)} ₽</b>
-                          <span className="card__per">за месяц{sk ? ` · до ${sk.doDaty}` : ''}</span>
-                        </>
-                      )}
-                    </span>
-                  </span>
-                </button>
-              </span>
-            );
-          })}
-        </div>
+        <VyborTarifa
+          tarify={tarify}
+          planId={plan.id}
+          period={period}
+          vybrat={(id, p) => {
+            setPlanId(id);
+            setPeriod(p);
+          }}
+          poyavlenie
+        />
 
         {/* Область под сеткой работает для ВЫБРАННОЙ карточки. */}
         <div className="order rv">
@@ -315,24 +177,18 @@ export default function Pricing({ ceny, skidki }: { ceny?: CenyTarifov; skidki?:
             тариф, срок и вид аккаунта уезжают в адрес: страница
             оформления открывается уже заполненной.
 
-            Это ССЫЛКА, а не кнопка, и выглядит она ровно так же:
-            у `.btn` уже стоят `inline-flex` и `text-decoration: none`,
-            поэтому разметка меняется, а кадр — нет.
+            ⚠️ И ЗАПАСНОГО «за месяц» У НЕЁ БОЛЬШЕ НЕТ. Раньше карта
+            без цены на выбранном сроке показывала месячную — ровно
+            это и было «при сроке 6 мес видна карточка „На троих“
+            за 459 ₽ за месяц». Карты без цены на экране теперь нет,
+            значит и цена у кнопки всегда настоящая.
           */}
-          {total || monthOnly ? (
-            <a
-              className="btn btn--wide"
-              href={`/checkout/?plan=${plan.id}&period=${total ? period : 1}&mode=${acc}`}
-            >
-              {total
-                ? `Оформить за ${formatPrice(total)} ₽`
-                : `Оформить на месяц за ${formatPrice(monthOnly!)} ₽`}
-            </a>
-          ) : (
-            <button type="button" className="btn btn--wide" disabled>
-              Оформить · на этот срок не оформляется
-            </button>
-          )}
+          <a
+            className="btn btn--wide"
+            href={`/checkout/?plan=${plan.id}&period=${period}&mode=${acc}`}
+          >
+            Оформить за {formatPrice(cena?.rub ?? 0)} ₽
+          </a>
 
           {/* ⚠️ СЕРТИФИКАТ УШЁЛ ИЗ СЕТКИ, И ЗДЕСЬ ОСТАЁТСЯ ОДНА СТРОКА
               К НЕМУ. Совсем убрать её нельзя: сертификат — это те же

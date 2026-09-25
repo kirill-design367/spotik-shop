@@ -4,7 +4,7 @@ import { ktoSotrudnik } from '@/lib/server/auth';
 import { bazaEst, zapros } from '@/lib/server/db';
 import { katalogPoUmolchaniyu, skidkiIVyklyuchennye, SROKI } from '@/lib/server/catalog';
 import { srokSertifikataDney } from '@/lib/server/settings';
-import { DARIMYE } from '@/lib/plans';
+import { DARIMYE, imyaTarifa, srokDlyaSotrudnika } from '@/lib/plans';
 import { yazykSotrudnika } from '@/lib/server/yazyk';
 import { slovar } from '@/lib/admin/slova';
 
@@ -40,9 +40,12 @@ export default async function AdminSettings() {
       const kop = baz ?? um;
       rows.push({
         planId: p.id,
-        planName: p.name,
+        /* ⚠️ НАЗВАНИЕ ТАРИФА И СРОК — НАДПИСИ, А НЕ ДАННЫЕ ЗАКАЗА
+           (закон 40 с тридцать девятой итерации): в английской
+           админке они английские. */
+        planName: imyaTarifa(p.id, y === 'en'),
         period: s2.key,
-        label: s2.label,
+        label: srokDlyaSotrudnika(s2.key, y === 'en'),
         rub: kop === undefined ? '' : String(kop / 100),
         /* ⚠️ ОТКУДА ВЗЯЛАСЬ ЦЕНА — ЭТО НАДПИСЬ, А НЕ ДАННЫЕ: она
            переводится, поэтому сюда едет признак, а не слово. */

@@ -5,6 +5,7 @@ import type { StrokaOcheredi } from '@/lib/server/views';
 import { adminSetQueueRate, adminTake, type OtvetA } from '@/lib/server/actions-admin';
 import { CHASTOTY_OCHEREDI } from '@/lib/admin/chastoty';
 import { slovar, type Yazyk } from '@/lib/admin/slova';
+import { imyaTarifa, srokKratkoDlyaSotrudnika } from '@/lib/plans';
 
 /**
  * Очередь заказов, которая обновляется сама.
@@ -121,7 +122,11 @@ export default function Queue({
                   <a href={`/admin/orders/${r.id}/`}>{r.id}</a>
                 </td>
                 <td>
-                  {r.plan}
+                  {/* ⚠️ НАЗВАНИЕ ТАРИФА — НАДПИСЬ, А НЕ ДАННЫЕ: в английской
+                      админке оно тоже английское (закон 40 с тридцать
+                      девятой итерации). Сервер отдаёт `planId`, переводит
+                      страница — как любой другой ключ. */}
+                  {imyaTarifa(r.planId, y === 'en')}
                   {/* ⚠️ ПОМЕТКА «ПОДАРОЧНЫЙ» ОБЯЗАТЕЛЬНА (Р-93): такой заказ
                       оплачен ЗАРАНЕЕ, покупателем сертификата, и денег
                       за ним не числится вовсе. Без пометки оператор
@@ -129,7 +134,7 @@ export default function Queue({
                   {r.bySertificate ? <span className="ad__tag ad__tag--gift">{t('q.gift')}</span> : null}
                 </td>
                 <td>{r.people}</td>
-                <td>{r.period}</td>
+                <td>{srokKratkoDlyaSotrudnika(r.period, y === 'en')}</td>
                 <td>{r.paidAt ? new Date(r.paidAt).toLocaleString(y === 'en' ? 'en-GB' : 'ru-RU') : '—'}</td>
                 <td>
                   {r.status === 'paid' ? (

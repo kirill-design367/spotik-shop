@@ -7,6 +7,7 @@ import { svodka } from '@/lib/server/stats';
 import { rubli } from '@/lib/server/money';
 import { yazykSotrudnika } from '@/lib/server/yazyk';
 import { slovar, type Klyuch } from '@/lib/admin/slova';
+import { imyaTarifa, srokKratkoDlyaSotrudnika } from '@/lib/plans';
 
 export const dynamic = 'force-dynamic';
 
@@ -104,9 +105,9 @@ export default async function AdminStats() {
               </thead>
               <tbody>
                 {d.tarify.map((r) => (
-                  <tr key={`${r.plan}-${r.srok}`}>
-                    <td>{r.plan}</td>
-                    <td>{r.srok}</td>
+                  <tr key={`${r.planId}-${r.period}`}>
+                    <td>{imyaTarifa(r.planId, y === 'en')}</td>
+                    <td>{srokKratkoDlyaSotrudnika(r.period, y === 'en')}</td>
                     <td className="tnum">{r.zakazov}</td>
                     <td className="tnum">{rubli(r.vyruchkaKop)}</td>
                   </tr>

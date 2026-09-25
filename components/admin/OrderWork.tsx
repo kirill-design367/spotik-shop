@@ -14,6 +14,7 @@ import {
   type OtvetA,
 } from '@/lib/server/actions-admin';
 import { slovar, sostoyanie, type Perevod, type Yazyk } from '@/lib/admin/slova';
+import { imyaTarifa, srokKratkoDlyaSotrudnika } from '@/lib/plans';
 
 /**
  * Рабочий экран оператора.
@@ -49,7 +50,7 @@ export default function OrderWork({ z, staffId, y }: { z: ZakazOperatoru; staffI
         <dl className="ad__kv">
           <dt>{t('t.plan')}</dt>
           <dd>
-            {z.plan} · {z.period}
+            {imyaTarifa(z.planId, y === 'en')} · {srokKratkoDlyaSotrudnika(z.period, y === 'en')}
             {z.bySertificate ? <span className="ad__tag ad__tag--gift">{t('q.gift')}</span> : null}
           </dd>
           <dt>{t('t.client')}</dt>

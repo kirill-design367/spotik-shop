@@ -8,6 +8,7 @@ import { ktoKlient } from '@/lib/server/auth';
 import { katalog, naytiTarif, srokPolno } from '@/lib/server/catalog';
 import { balans, pochtyZakaza } from '@/lib/server/views';
 import { bazaEst } from '@/lib/server/db';
+import { rabocheeVremya } from '@/lib/chasy';
 
 export const metadata: Metadata = { title: 'Оформление — Spotik Shop', robots: { index: false, follow: false } };
 /** Страница зависит от куки, поэтому статической быть не может. */
@@ -121,6 +122,11 @@ export default async function Checkout({
     rezhimPoUmolchaniyu: odin('mode') === 'renew' || pochty.length ? 'renew' : 'new',
     pochtyPoUmolchaniyu: pochty,
     balansKop: kto ? await balans(kto.userId) : 0,
+    /* ⚠️ ВРЕМЯ СЧИТАЕТ СЕРВЕР, А НЕ БРАУЗЕР — постановка прямо
+       требует «по Москве, а не по часам устройства клиента».
+       Страница динамическая, поэтому плашка приезжает уже решённой:
+       переведя часы на телефоне, её не подменить. */
+    vneRabochego: !rabocheeVremya(),
   };
 
   return (

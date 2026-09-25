@@ -4,6 +4,7 @@ import { bazaEst } from '@/lib/server/db';
 import { vypushchennyeSertifikaty } from '@/lib/server/views';
 import { yazykSotrudnika } from '@/lib/server/yazyk';
 import { slovar, type Klyuch } from '@/lib/admin/slova';
+import { imyaTarifa, srokKratkoDlyaSotrudnika } from '@/lib/plans';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,7 +60,8 @@ export default async function AdminCertificates() {
                 <tr key={r.id}>
                   <td>…{r.tail}</td>
                   <td>
-                    {r.plan} · {r.period}
+                    {imyaTarifa(r.planId, y === 'en')} ·{' '}
+                    {srokKratkoDlyaSotrudnika(r.period, y === 'en')}
                   </td>
                   <td>
                     <span

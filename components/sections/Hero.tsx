@@ -1,6 +1,7 @@
 'use client';
 
 import Wordmark from '@/components/wordmark/Wordmark';
+import { CHASY_OT_DO } from '@/lib/chasy';
 import { scrollToId } from '@/lib/scroll';
 import { MORPH_TRAVEL } from '@/lib/wordmark';
 
@@ -23,6 +24,13 @@ import { MORPH_TRAVEL } from '@/lib/wordmark';
  * НАДСТРОЧНАЯ СТРОКА на мобильной убрана с экрана, но не из документа:
  * это единственный h1 страницы. Прячет её CSS приёмом .sr-only —
  * см. components.css.
+ *
+ * ⚠️ ЧАСЫ РАБОТЫ СТОЯТ СПРАВА ВНИЗУ, НА ОДНОЙ ЛИНИИ С ТЕКСТАМИ
+ * (тридцать девятая итерация). Сами часы приходят из `lib/chasy.ts` —
+ * оттуда же их берёт плашка на оформлении, и разойтись им негде.
+ * На телефоне строка встаёт В РЯД С КНОПКОЙ, а не под ней: высота
+ * текстов хиро — это `--wm-reserve`, от которой считается потолок
+ * высоты знака, и лишняя строка ужала бы слово (Р-38).
  */
 export default function Hero() {
   return (
@@ -55,6 +63,10 @@ export default function Hero() {
           >
             Выбрать тариф
           </button>
+
+          <p className="hero__hours">
+            Время работы: <b>{CHASY_OT_DO}</b> по Москве
+          </p>
         </div>
       </div>
     </section>

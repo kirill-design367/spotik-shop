@@ -20,7 +20,8 @@ import { soobshchitKomande } from './notify';
 import { utmVRyad, type Utm } from './utm';
 import { pismoPochtaZanyata, pismoZakazGotov, pismoZakazOplachen, pismoZakazOtmenyon } from './letters';
 import { vydatSertifikat } from './certificates';
-import { cenaTarifa, katalog, naytiTarif, srokKratko, srokPolno } from './catalog';
+import { cenaTarifa, katalog, naytiTarif, srokKratko } from './catalog';
+import { imyaTarifa, srokDlyaSotrudnika } from '@/lib/plans';
 import { parolNeGoditsya, pochtaNeVerna } from '@/lib/proverka';
 
 export type Status = 'new' | 'paid' | 'in_work' | 'done' | 'cancelled';
@@ -322,11 +323,17 @@ async function posleOplaty(zakaz: number): Promise<void> {
   }
 
   await pismoZakazOplachen(z.email, nazvanie);
+  /* ⚠️ В ЧАТ УХОДЯТ АНГЛИЙСКИЕ НАЗВАНИЯ, И ЭТО НЕ ПЕРЕВОД ДАННЫХ.
+     Сообщения бота — надписи интерфейса для двух сотрудников
+     (закон 40); с тридцать девятой итерации к ним отнесены и тариф
+     со сроком: «Plan: Индивидуальный, месяц» читалось как недоделка.
+     Почта клиента, его пароль и причина отмены переводу не подлежат
+     по-прежнему — их не выбирали мы. */
   await soobshchitKomande({
     vid: 'zakaz_oplachen',
     zakaz,
-    tarif: tarif?.name ?? z.plan_id,
-    srok: srokPolno(z.period).toLowerCase(),
+    tarif: imyaTarifa(z.plan_id, true),
+    srok: srokDlyaSotrudnika(z.period, true),
     mest: tarif?.people ?? 1,
     podarok: false,
   });
@@ -391,13 +398,11 @@ export async function zakazPoSertifikatu(opts: {
      И такой заказ уходит оператору ТАК ЖЕ, как обычный оплаченный:
      работа по нему та же, разница только в том, что денег за ним нет
      вовсе — их взяли при покупке сертификата (Р-93). */
-  const spisok = await katalog();
-  const tarif = naytiTarif(spisok, opts.planId);
   await soobshchitKomande({
     vid: 'zakaz_oplachen',
     zakaz,
-    tarif: tarif?.name ?? opts.planId,
-    srok: srokPolno(opts.period).toLowerCase(),
+    tarif: imyaTarifa(opts.planId, true),
+    srok: srokDlyaSotrudnika(opts.period, true),
     mest: opts.uchastniki.length,
     podarok: true,
   });

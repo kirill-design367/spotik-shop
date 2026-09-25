@@ -11,7 +11,7 @@
 import { odna, zapros } from './db';
 import { poprobovatRasshifrovat } from './crypto';
 import { STATUS_SLOVAMI, type Rezhim, type Status } from './orders';
-import { katalog, naytiTarif, podarokSlovami, srokKratko } from './catalog';
+import { katalog, naytiTarif, srokKratko } from './catalog';
 import { METKI } from './utm';
 
 export type SlotKlientu = {
@@ -172,11 +172,20 @@ export async function balans(userId: number): Promise<number> {
 
 /* ── Админка ───────────────────────────────────────────────────── */
 
+/**
+ * ⚠️ ТАРИФ И СРОК УЕЗЖАЮТ В АДМИНКУ СЫРЫМИ — `planId` и число
+ * месяцев, — А НЕ ГОТОВОЙ РУССКОЙ СТРОКОЙ (тридцать девятая
+ * итерация). Админка двуязычная, и названия тарифов в ней — такие же
+ * надписи интерфейса, как «Queue» и «Prices»: переводит их страница,
+ * зная свой язык, ровно как любой другой ключ (закон 40). Отдай мы
+ * отсюда готовую строку — половина английской таблицы осталась бы
+ * русской, и починить это было бы нечем.
+ */
 export type StrokaOcheredi = {
   id: number;
-  plan: string;
+  planId: string;
   people: number;
-  period: string;
+  period: number;
   status: Status;
   paidAt: string | null;
   createdAt: string;
@@ -205,12 +214,11 @@ export async function ochered(): Promise<StrokaOcheredi[]> {
       order by o.paid_at asc nulls last, o.id asc
       limit 200`,
   );
-  const spisok = await katalog();
   return rows.map((r) => ({
     id: Number(r.id),
-    plan: naytiTarif(spisok, r.plan_id)?.name ?? r.plan_id,
+    planId: r.plan_id,
     people: Number(r.slots),
-    period: srokKratko(r.period),
+    period: r.period,
     status: r.status,
     paidAt: r.paid_at ? new Date(r.paid_at).toISOString() : null,
     createdAt: new Date(r.created_at).toISOString(),
@@ -235,8 +243,8 @@ export type SlotOperatoru = {
 
 export type ZakazOperatoru = {
   id: number;
-  plan: string;
-  period: string;
+  planId: string;
+  period: number;
   status: Status;
   clientEmail: string;
   operatorId: number | null;
@@ -316,11 +324,10 @@ export async function zakazDlyaAdminki(id: number, staffId: number, admin: boole
        from order_slot where order_id = $1 order by idx`,
     [id],
   );
-  const spisok = await katalog();
   return {
     id: Number(r.id),
-    plan: naytiTarif(spisok, r.plan_id)?.name ?? r.plan_id,
-    period: srokKratko(r.period),
+    planId: r.plan_id,
+    period: r.period,
     status: r.status,
     clientEmail: r.email,
     operatorId: r.operator_id ? Number(r.operator_id) : null,
@@ -350,9 +357,8 @@ export async function zakazDlyaAdminki(id: number, staffId: number, admin: boole
 export type VypushchennySertifikat = {
   id: number;
   tail: string;
-  plan: string;
-  period: string;
-  chto: string;
+  planId: string;
+  period: number;
   status: 'valid' | 'used' | 'expired';
   buyer: string | null;
   activatedBy: string | null;
@@ -395,16 +401,13 @@ export async function vypushchennyeSertifikaty(limit = 200): Promise<Vypushchenn
     [limit],
   );
   if (!rows.length) return [];
-  const spisok = await katalog();
   const teper = Date.now();
   return rows.map((r) => {
-    const name = naytiTarif(spisok, r.plan_id)?.name ?? r.plan_id;
     return {
       id: Number(r.id),
       tail: r.tail,
-      plan: name,
-      period: srokKratko(r.period),
-      chto: podarokSlovami(name, r.period),
+      planId: r.plan_id,
+      period: r.period,
       status: r.used_at ? 'used' : new Date(r.expires_at).getTime() < teper ? 'expired' : 'valid',
       buyer: r.buyer,
       activatedBy: r.activator,
@@ -416,7 +419,7 @@ export async function vypushchennyeSertifikaty(limit = 200): Promise<Vypushchenn
   });
 }
 
-export type ZakrytyyZakaz = { id: number; status: Status; closedAt: string; plan: string; client: string };
+export type ZakrytyyZakaz = { id: number; status: Status; closedAt: string; planId: string; client: string };
 
 export async function zakrytye(limit = 50): Promise<ZakrytyyZakaz[]> {
   const rows = await zapros<{ id: string; status: Status; closed_at: Date; plan_id: string; email: string }>(
@@ -426,12 +429,11 @@ export async function zakrytye(limit = 50): Promise<ZakrytyyZakaz[]> {
       order by o.closed_at desc limit $1`,
     [limit],
   );
-  const spisok = await katalog();
   return rows.map((r) => ({
     id: Number(r.id),
     status: r.status,
     closedAt: new Date(r.closed_at).toISOString(),
-    plan: naytiTarif(spisok, r.plan_id)?.name ?? r.plan_id,
+    planId: r.plan_id,
     client: r.email,
   }));
 }

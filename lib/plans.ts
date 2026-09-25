@@ -4,16 +4,32 @@
  */
 export type PeriodKey = 1 | 3 | 6 | 12;
 
-export const PERIODS: { key: PeriodKey; label: string; short: string }[] = [
-  { key: 1, label: 'Месяц', short: '1 мес' },
-  { key: 3, label: 'Три месяца', short: '3 мес' },
-  { key: 6, label: 'Полгода', short: '6 мес' },
-  { key: 12, label: 'Год', short: '12 мес' },
+/**
+ * ⚠️ У СРОКА ТЕПЕРЬ ЧЕТЫРЕ НАДПИСИ, А НЕ ДВЕ, И ЭТО ПОСТАНОВКА
+ * ТРИДЦАТЬ ДЕВЯТОЙ ИТЕРАЦИИ. Сотрудников двое, интерфейс у них
+ * двуязычный, и «Plan: Индивидуальный, месяц» в английском боте
+ * читается как недоделка. По-английски форма ОДНА — «1 month»,
+ * «3 months»: в русском их две (полное «Полгода» и краткое
+ * «6 мес»), в английском обе совпадают, и выдумывать вторую,
+ * чтобы таблица была симметричной, незачем.
+ */
+export const PERIODS: { key: PeriodKey; label: string; short: string; en: string }[] = [
+  { key: 1, label: 'Месяц', short: '1 мес', en: '1 month' },
+  { key: 3, label: 'Три месяца', short: '3 мес', en: '3 months' },
+  { key: 6, label: 'Полгода', short: '6 мес', en: '6 months' },
+  { key: 12, label: 'Год', short: '12 мес', en: '12 months' },
 ];
 
 export type Plan = {
   id: string;
   name: string;
+  /**
+   * Имя для СОТРУДНИКОВ: бот и английская админка. Названия тарифов
+   * там — такие же надписи интерфейса, как «Queue» и «Prices»
+   * (закон 40 с тридцать девятой итерации), а не данные, введённые
+   * клиентом: их выбираем мы, и перевод у них наш.
+   */
+  nameEn: string;
   /**
    * Имя НА КАРТОЧКЕ. Сетка 2×2 держится на всех размерах, и на 390
    * карточка выходит около 185 px: «Сертификат в подарок» туда
@@ -42,6 +58,7 @@ export const PLANS: Plan[] = [
   {
     id: 'solo',
     name: 'Индивидуальный',
+    nameEn: 'Individual',
     /* «Индивидуальный» — 14 знаков одним словом, и переносить его нечем:
        именно оно держало кегль названия на карточке в 12.5 px. Ряд
        «на одного — на двоих — на троих» вдобавок ровнее. Полное имя
@@ -54,6 +71,7 @@ export const PLANS: Plan[] = [
   {
     id: 'duo',
     name: 'На двоих',
+    nameEn: 'Duo',
     people: 2,
     note: 'Два независимых профиля: истории прослушиваний не смешиваются.',
     prices: { 1: 599, 3: 1590, 6: 2890, 12: 5290 },
@@ -62,6 +80,7 @@ export const PLANS: Plan[] = [
   {
     id: 'trio',
     name: 'На троих',
+    nameEn: 'Trio',
     people: 3,
     note: 'Пока оформляется только на месяц. Остальные сроки — по запросу.',
     prices: { 1: 890 },
@@ -69,6 +88,7 @@ export const PLANS: Plan[] = [
   {
     id: 'gift',
     name: 'Сертификат в подарок',
+    nameEn: 'Gift certificate',
     short: 'Сертификат',
     people: 1,
     note: 'Подписка вместо очередной коробки: её открывают один раз и слушают весь срок.',
@@ -83,6 +103,38 @@ export const PLANS: Plan[] = [
  * для другого человека.
  */
 export const DARIMYE: Plan[] = PLANS.filter((p) => !p.gift);
+
+/**
+ * НАЗВАНИЕ ТАРИФА НА ЯЗЫКЕ СОТРУДНИКА.
+ *
+ * ⚠️ ЖИВЁТ ЗДЕСЬ, А НЕ В `lib/server/catalog.ts`, И ЭТО ВЫНУЖДЕННО:
+ * каталог ходит в базу, а звать эту функцию надо и из КЛИЕНТСКИХ
+ * кусков админки (очередь обновляется сама). Состав тарифов и так
+ * лежит здесь — значит и имена оттуда же.
+ *
+ * ⚠️ НЕИЗВЕСТНЫЙ ТАРИФ ОТДАЁТ СВОЙ `id`, А НЕ ПУСТОТУ. Заказ, чей
+ * тариф сняли из каталога, обязан остаться читаемым в админке:
+ * `solo` понятнее, чем пустая ячейка.
+ */
+export function imyaTarifa(planId: string, en: boolean): string {
+  const p = PLANS.find((x) => x.id === planId);
+  if (!p) return planId;
+  return en ? p.nameEn : p.name;
+}
+
+/** Срок на языке сотрудника: «Полгода» / «6 months». */
+export function srokDlyaSotrudnika(period: number, en: boolean): string {
+  const p = PERIODS.find((x) => x.key === period);
+  if (!p) return en ? `${period} months` : `${period} мес`;
+  return en ? p.en : p.label;
+}
+
+/** Он же кратко: в русском «6 мес», в английском та же форма. */
+export function srokKratkoDlyaSotrudnika(period: number, en: boolean): string {
+  const p = PERIODS.find((x) => x.key === period);
+  if (!p) return en ? `${period} months` : `${period} мес`;
+  return en ? p.en : p.short;
+}
 
 /** 1 490 вместо 1490 — разряды обязательны, иначе цифра не читается. */
 export function formatPrice(v: number): string {

@@ -277,6 +277,21 @@ chk('по умолчанию русский', /Очередь заказов/.te
 await nazhat(admin, '.ad__lang-btn[value="en"]');
 const poAngl = await admin.textContent('body');
 chk('переключился на английский', /Order queue/.test(poAngl ?? '') && !/Очередь заказов/.test(poAngl ?? ''));
+/* ⚠️ НАЗВАНИЕ ТАРИФА И СРОК В АНГЛИЙСКОЙ АДМИНКЕ ТОЖЕ АНГЛИЙСКИЕ
+   (тридцать девятая итерация). Проверяются ОБЕ стороны: английское
+   появилось И русского не осталось — одного первого мало, «Duo»
+   могло бы стоять рядом с «На двоих» в соседней колонке.
+   ⚠️ И СПРАШИВАЕТСЯ `innerText`, А НЕ `textContent` ВСЕГО ТЕЛА:
+   в теле лежат ещё и потоковые чанки Next со СТАРЫМ, русским
+   отрисованным деревом, и по ним проверка падала на исправном
+   коде. Читать надо видимую часть. */
+const vidnoEn = await admin.innerText('main.ad');
+chk(
+  'в английской админке тариф и срок по-английски',
+  /Duo/.test(vidnoEn) && /12 months/.test(vidnoEn)
+    && !/На двоих/.test(vidnoEn) && !/12 мес/.test(vidnoEn),
+  vidnoEn.replace(/\s+/g, ' ').match(/Duo.{0,24}/)?.[0] ?? 'английского названия нет',
+);
 chk('атрибут языка сменился', (await admin.getAttribute('main.ad', 'lang')) === 'en');
 const vBaze = await p2.query('select lang from staff where email = $1', [ADMIN]);
 chk('выбор лёг В СТРОКУ СОТРУДНИКА, а не только в куку', vBaze.rows[0]?.lang === 'en', String(vBaze.rows[0]?.lang));
@@ -287,6 +302,12 @@ await admin.goto(`http://localhost:${PORT}/admin/`, { waitUntil: 'networkidle' }
 await nazhat(admin, '.ad__lang-btn[value="ru"]');
 const nazad = await admin.textContent('body');
 chk('вернулся на русский', /Очередь заказов/.test(nazad ?? ''));
+const vidnoRu = await admin.innerText('main.ad');
+chk(
+  'в русской админке тариф и срок по-русски',
+  /На двоих/.test(vidnoRu) && /12 мес/.test(vidnoRu) && !/Duo/.test(vidnoRu),
+  vidnoRu.replace(/\s+/g, ' ').match(/На двоих.{0,20}/)?.[0] ?? 'русского названия нет',
+);
 
 await nazhat(admin, 'button:has-text("Взять")');
 chk('заказ взят и открылся', /\/admin\/orders\//.test(admin.url()), admin.url().replace(`http://localhost:${PORT}`, ''));
@@ -402,20 +423,28 @@ const oplachen = ochered2.rows.find((r) => r.vid === 'zakaz_oplachen');
 const zakryt = ochered2.rows.find((r) => r.vid === 'zakaz_zakryt');
 chk('оплата прошла, хотя Telegram недоступен', ochered2.rows.length > 0 && bad === 0);
 /* ⚠️ РАБОЧИЕ СООБЩЕНИЯ БОТА ПО-АНГЛИЙСКИ С ТРИДЦАТЬ ЧЕТВЁРТОЙ
-   ИТЕРАЦИИ (постановка), а ДАННЫЕ ЗАКАЗА не переводятся: название
-   тарифа и срок приходят из каталога и остаются русскими. Сторож
-   проверяет ровно это — английские надписи и русские данные. */
+   ИТЕРАЦИИ, А С ТРИДЦАТЬ ДЕВЯТОЙ — И НАЗВАНИЕ ТАРИФА СО СРОКОМ.
+   Постановка: «Plan: Индивидуальный, месяц» читалось как недоделка.
+   Граница закона 40 при этом не сдвинулась: тариф и срок выбираем
+   МЫ — это наши надписи; почта клиента, его пароль и причина отмены
+   не переводятся по-прежнему. Сторож требует, чтобы русского
+   в рабочем сообщении не осталось НИ ОДНОЙ буквы: одна забытая
+   подстановка и есть весь дефект. */
 chk(
   'уведомление об оплате легло в очередь',
   Boolean(oplachen) && /New paid order #1/.test(oplachen?.tekst ?? ''),
 );
 chk(
   'в уведомлении тариф, срок, число участников и ссылка в админку',
-  /На двоих/.test(oplachen?.tekst ?? '') &&
-    /год/.test(oplachen?.tekst ?? '') &&
+  /Plan: Duo, 12 months/.test(oplachen?.tekst ?? '') &&
     /Participants: 2/.test(oplachen?.tekst ?? '') &&
     /\/admin\/orders\/1\//.test(oplachen?.tekst ?? ''),
   (oplachen?.tekst ?? '').replace(/\n/g, ' · '),
+);
+chk(
+  'в рабочем сообщении бота нет ни одной русской буквы',
+  !/[А-Яа-яЁё]/.test(oplachen?.tekst ?? ''),
+  (oplachen?.tekst ?? '').match(/[А-Яа-яЁё][^\n]*/)?.[0] ?? 'русского нет',
 );
 chk('уведомление о выполнении называет исполнителя', /Operator: admin@spotik\.test/.test(zakryt?.tekst ?? ''));
 /* ⚠️ ПОПЫТОК МОЖЕТ БЫТЬ УЖЕ НЕ ОДНА, И ЭТО НОРМА: минутный будильник
@@ -1448,6 +1477,251 @@ console.log('── ОБРАЩЕНИЕ В ПОДДЕРЖКУ ──');
     await klient.$eval('.pd__okno input[name="website"]', (e) => e.getAttribute('tabindex') === '-1'));
   const stalo = (await p2.query(`select count(*)::int n from notify_outbox where vid = 'obrashchenie'`)).rows[0].n;
   chk('отбитые обращения в чат не попали', stalo === bylo, `${bylo} → ${stalo}`);
+}
+
+console.log('── СКРЫТОЕ СОЧЕТАНИЕ ТАРИФ × СРОК ИСЧЕЗАЕТ С САЙТА ──');
+{
+  /* ⚠️ СОСТОЯНИЕ КАТАЛОГА ЗДЕСЬ УЖЕ НЕ УМОЛЧАНИЕ, И ЭТО ХОРОШО:
+     выше по прогону админка выключила «на одного · три месяца»
+     и поставила скидку. Значит на полугоде скрыт «На троих»
+     (цены нет вовсе), а на трёх месяцах — ещё и «Индивидуальный»,
+     и проверяются обе причины сразу: нет цены и ячейка выключена. */
+  const snyat = () =>
+    klient.$$eval('.cards__slot', (els) =>
+      els.map((e) => {
+        const k = e.querySelector('.card');
+        return {
+          imya: (e.querySelector('.card__name')?.textContent ?? '').trim(),
+          off: e.hasAttribute('data-off'),
+          inert: e.hasAttribute('inert'),
+          w: Math.round(e.getBoundingClientRect().width),
+          vybran: k?.getAttribute('aria-checked') === 'true',
+          prozr: Number(getComputedStyle(k).opacity),
+        };
+      }));
+  const srok = async (podpis) => {
+    await klient.locator('.seg__btn', { hasText: podpis }).first().click();
+    await klient.waitForTimeout(900);
+  };
+
+  await klient.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' });
+  const na1 = await snyat();
+  chk('на месяце видны все включённые тарифы',
+    na1.length >= 3 && na1.every((v) => !v.off),
+    na1.map((v) => `${v.imya}${v.off ? ' (скрыт)' : ''}`).join(' · '));
+  const shirina1 = na1.find((v) => v.imya === 'На двоих')?.w ?? 0;
+
+  /* Выбираем именно тот тариф, который сейчас пропадёт: без этого
+     «выбор мягко переходит на первый доступный» не проверяется
+     вовсе — он и так стоял бы на доступном. */
+  await klient.locator('.card', { hasText: 'На троих' }).first().click();
+  await klient.waitForTimeout(250);
+  chk('«На троих» выбран', (await snyat()).find((v) => v.imya === 'На троих')?.vybran === true);
+
+  /* ⚠️ ПЛАВНОСТЬ СУДИТСЯ ПО ПРОМЕЖУТОЧНОЙ ШИРИНЕ, А НЕ ПО ОБЪЯВЛЕНИЮ
+     В CSS. Опрашиваем ячейку, пока она схлопывается: при мгновенном
+     переключении ширина идёт полная → ноль и промежуточного значения
+     не бывает НИ В ОДИН кадр. Ждать фиксированные миллисекунды тут
+     нельзя (Р-94): на медленном раннере ход начнётся позже. */
+  const trioSel = '.cards__slot:has(.card__name:text-is("На троих"))';
+  await klient.locator('.seg__btn', { hasText: '6 мес' }).first().click();
+  let promezh = 0;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 1500) {
+    const w = await klient
+      .$eval(trioSel, (e) => Math.round(e.getBoundingClientRect().width))
+      .catch(() => -1);
+    if (w > 4 && w < shirina1 - 10) { promezh = w; break; }
+    if (w === 0) break;
+  }
+  chk('карточка исчезает ПЛАВНО, а не рывком',
+    promezh > 4 && promezh < shirina1 - 10,
+    promezh ? `поймана на ${promezh} px при полной ${shirina1}` : 'промежуточной ширины не было ни в один кадр');
+
+  await klient.waitForTimeout(900);
+  const na6 = await snyat();
+  const trio6 = na6.find((v) => v.imya === 'На троих');
+  const vidnye6 = na6.filter((v) => !v.off);
+  chk('на полугоде «На троих» скрыт целиком',
+    Boolean(trio6?.off) && (trio6?.w ?? 99) < 4 && (trio6?.prozr ?? 1) < 0.05,
+    `ширина ${trio6?.w} px, прозрачность ${trio6?.prozr}`);
+  chk('скрытая карточка выведена из обхода клавиатурой', trio6?.inert === true);
+  chk('выбор мягко перешёл на первый доступный',
+    !trio6?.vybran && vidnye6[0]?.vybran === true,
+    `выбран «${na6.find((v) => v.vybran)?.imya ?? 'никто'}»`);
+  chk('оставшиеся съехались и стали шире',
+    (vidnye6.find((v) => v.imya === 'На двоих')?.w ?? 0) > shirina1 + 40,
+    `${shirina1} → ${vidnye6.find((v) => v.imya === 'На двоих')?.w} px`);
+  /* ⚠️ И КНОПКА БОЛЬШЕ НЕ ПРЕДЛАГАЕТ МЕСЯЧНУЮ ЦЕНУ. Ровно это
+     и было дефектом: «при сроке 6 мес видна карточка „На троих“
+     с ценой 459 ₽ за месяц». */
+  const ssylka = (await klient.getAttribute('.order .btn', 'href')) ?? '';
+  const nadpis = ((await klient.textContent('.order .btn')) ?? '').replace(/\s+/g, ' ');
+  chk('кнопка ведёт на выбранный срок и не зовёт «за месяц»',
+    /period=6/.test(ssylka) && !/plan=trio/.test(ssylka) && !/за месяц/.test(nadpis),
+    `${ssylka} · ${nadpis}`);
+
+  /* Обратно: карточка возвращается, соседи расходятся. */
+  await srok('1 мес');
+  const nazad1 = await snyat();
+  const trio1 = nazad1.find((v) => v.imya === 'На троих');
+  chk('на месяце карточка вернулась и раскрылась',
+    !trio1?.off && (trio1?.w ?? 0) > 40 && (trio1?.prozr ?? 0) > 0.9,
+    `ширина ${trio1?.w} px, прозрачность ${trio1?.prozr}`);
+
+  /* ⚠️ ПРИ «УМЕНЬШИТЬ ДВИЖЕНИЕ» — СРАЗУ, БЕЗ ДВИЖЕНИЯ. Проверяется
+     ОТДЕЛЬНОЙ страницей с этой настройкой: ширина обязана стать
+     нулевой ещё до того, как истёк бы ход. */
+  const tihaya = await browser.newPage({ viewport: { width: 1280, height: 900 }, reducedMotion: 'reduce' });
+  await tihaya.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' });
+  await tihaya.locator('.seg__btn', { hasText: '6 мес' }).first().click();
+  await tihaya.waitForTimeout(120);
+  const bystro = await tihaya
+    .$eval(trioSel, (e) => Math.round(e.getBoundingClientRect().width))
+    .catch(() => -1);
+  chk('при «уменьшить движение» карточка исчезает сразу', bystro >= 0 && bystro < 4, `${bystro} px через 120 мс`);
+  await tihaya.close();
+}
+
+console.log('── СЕРТИФИКАТЫ: ТОТ ЖЕ ВЫБОР, ЧТО НА ГЛАВНОЙ ──');
+{
+  /* Постановка: «тариф выбирается такими же карточками… срок —
+     такими же небольшими пилюлями». Проверяется ЖИВОЙ страницей:
+     те же классы и та же логика скрытия, что на лендинге. */
+  await klient.goto(`http://localhost:${PORT}/sertifikaty/`, { waitUntil: 'networkidle' });
+  const kart = await klient.locator('.vybor-kart .cards .card').count();
+  const plashek = await klient.locator('.vybor-kart .seg .seg__btn').count();
+  chk('на странице сертификатов карты тарифов и плашки срока',
+    kart >= 3 && plashek >= 2, `${kart} карт, ${plashek} плашек срока`);
+  /* Кайма и свет за картой — те же, что на лендинге: судим
+     по вычисленному стилю, а не по имени класса. */
+  const est = await klient.evaluate(() => {
+    const k = document.querySelector('.vybor-kart .card');
+    const sv = document.querySelector('.vybor-kart .cards__glow');
+    return {
+      r: Math.round(parseFloat(getComputedStyle(k).borderTopLeftRadius) || 0),
+      kayma: Boolean(k?.querySelector('.card__edge')),
+      ten: getComputedStyle(sv).boxShadow,
+    };
+  });
+  chk('у карты сертификатов та же кайма и тот же свет сзади',
+    est.kayma && est.r >= 18 && /px/.test(est.ten) && est.ten !== 'none',
+    `радиус ${est.r} px, свет ${est.ten.slice(0, 40)}`);
+
+  await klient.locator('.vybor-kart .seg__btn', { hasText: '6 мес' }).first().click();
+  await klient.waitForTimeout(900);
+  const sert6 = await klient.$$eval('.vybor-kart .cards__slot', (els) =>
+    els.map((e) => ({
+      imya: (e.querySelector('.card__name')?.textContent ?? '').trim(),
+      off: e.hasAttribute('data-off'),
+    })));
+  chk('скрытое сочетание не предлагается и в подарок',
+    sert6.find((v) => v.imya === 'На троих')?.off === true,
+    sert6.map((v) => `${v.imya}${v.off ? ' (скрыт)' : ''}`).join(' · '));
+  const darSsylka = (await klient.getAttribute('.panel .btn', 'href')) ?? '';
+  chk('кнопка подарка ведёт на настоящий тариф со сроком',
+    /gift=1/.test(darSsylka) && /period=6/.test(darSsylka) && !/plan=trio/.test(darSsylka),
+    darSsylka);
+}
+
+console.log('── ПЛАШКА ПРО РАБОЧЕЕ ВРЕМЯ ──');
+{
+  /* ⚠️ СУДИМ ПО НЕЗАВИСИМО ПОСЧИТАННОМУ МОСКОВСКОМУ ЧАСУ, А НЕ ПО
+     НАШЕЙ ЖЕ ФУНКЦИИ. Спроси сторож `rabocheeVremya()` — он проверял
+     бы модель предмета (Р-47) и был бы зелёным при любой ошибке
+     внутри неё. Здесь час берётся у `Intl` прямо тут, а плашка —
+     с живой страницы; сходиться они обязаны в любой час суток.
+     Границы (09:59, 10:00, 21:59, 22:00) и зима проверяются
+     подменой времени отдельно: `scripts/verify-chasy.mjs`. */
+  const chasMsk = Number(
+    new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Moscow', hour: '2-digit', hour12: false })
+      .format(new Date()),
+  );
+  const dolzhna = chasMsk < 10 || chasMsk >= 22;
+  await klient.goto(`http://localhost:${PORT}/checkout/?plan=duo&period=12`, { waitUntil: 'networkidle' });
+  const plashka = await klient.evaluate(() => {
+    const el = [...document.querySelectorAll('.panel__note--plate')]
+      .find((e) => /рабочее время/.test(e.textContent ?? ''));
+    if (!el) return null;
+    const panely = [...document.querySelectorAll('form.ozhivayet > .panel')];
+    return {
+      tekst: (el.textContent ?? '').replace(/\s+/g, ' ').trim(),
+      /* Плашка стоит МЕЖДУ панелями, а не внутри панели тарифа. */
+      snaruzhi: el.parentElement?.classList.contains('ozhivayet') === true,
+      posleTarifa: Boolean(panely[0] && el.compareDocumentPosition(panely[0]) & Node.DOCUMENT_POSITION_PRECEDING),
+      doAkkaunta: Boolean(panely[1] && el.compareDocumentPosition(panely[1]) & Node.DOCUMENT_POSITION_FOLLOWING),
+    };
+  });
+  chk('плашка стоит ровно тогда, когда в Москве не рабочее время',
+    Boolean(plashka) === dolzhna,
+    `в Москве ${String(chasMsk).padStart(2, '0')} ч — плашка ${plashka ? 'есть' : 'её нет'}`);
+  if (plashka) {
+    chk('плашка называет часы работы', /10:00–22:00 по Москве/.test(plashka.tekst), plashka.tekst);
+    chk('плашка стоит между тарифом и «Аккаунтом»',
+      plashka.snaruzhi && plashka.posleTarifa && plashka.doAkkaunta,
+      `вне панели ${plashka.snaruzhi}, после тарифа ${plashka.posleTarifa}, до аккаунта ${plashka.doAkkaunta}`);
+  }
+
+  /* ⚠️ ЧАСЫ УСТРОЙСТВА НЕ РЕШАЮТ НИЧЕГО — прямое требование
+     постановки. Открываем ту же страницу в браузере, живущем
+     в Окленде (разница с Москвой девять-десять часов, то есть
+     «рабочее» и «нерабочее» там почти всегда разные), и плашка
+     обязана остаться такой же. */
+  const chuzhoyChas = await browser.newPage({
+    viewport: { width: 1280, height: 900 },
+    timezoneId: 'Pacific/Auckland',
+  });
+  await chuzhoyChas.context().addCookies(await klient.context().cookies());
+  await chuzhoyChas.goto(`http://localhost:${PORT}/checkout/?plan=duo&period=12`, { waitUntil: 'networkidle' });
+  const uNego = await chuzhoyChas.evaluate(() =>
+    [...document.querySelectorAll('.panel__note--plate')].some((e) => /рабочее время/.test(e.textContent ?? '')));
+  const ihChas = await chuzhoyChas.evaluate(() => new Date().getHours());
+  chk('плашка считается по Москве, а не по часам устройства',
+    uNego === dolzhna,
+    `на устройстве ${ihChas} ч, в Москве ${chasMsk} ч — плашка ${uNego ? 'есть' : 'её нет'}`);
+  await chuzhoyChas.close();
+}
+
+console.log('── ЧАСЫ РАБОТЫ В ХИРО ──');
+{
+  for (const [w, h, imya] of [[390, 844, 'телефон'], [1920, 1080, 'десктоп']]) {
+    const p = await browser.newPage({ viewport: { width: w, height: h } });
+    await p.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' });
+    const v = await p.evaluate(() => {
+      const el = document.querySelector('.hero__hours');
+      if (!el) return null;
+      const b = el.getBoundingClientRect();
+      const nota = document.querySelector('.hero__note')?.getBoundingClientRect();
+      const stage = document.querySelector('.hero__stage')?.getBoundingClientRect();
+      /* ⚠️ «СПРАВА» МЕРЯЕТСЯ ОТ ПОЛЯ СТРАНИЦЫ, А НЕ ОТ КРАЯ ЭКРАНА.
+         У `.shell` есть потолок ширины: на 1920 он 1680, и до края
+         экрана от него 184 px законного воздуха — от сцены эта
+         проверка провалилась бы на исправной вёрстке. */
+      const poleEl = document.querySelector('.hero__foot');
+      const pole = poleEl?.getBoundingClientRect();
+      /* ⚠️ И ОТ ЕГО СОДЕРЖИМОГО, А НЕ ОТ БОРДЕР-БОКСА: у `.shell`
+         поле страницы 20/40/64 px лежит ВНУТРИ бокса, и правый край
+         текста до бордер-бокса законно не достаёт. */
+      const polePad = poleEl ? parseFloat(getComputedStyle(poleEl).paddingRight) || 0 : 0;
+      return {
+        tekst: (el.textContent ?? '').replace(/\s+/g, ' ').trim(),
+        vidno: b.width > 20 && b.height > 6 && getComputedStyle(el).visibility !== 'hidden',
+        /* «Справа внизу»: правый край плотно к правому краю поля,
+           и низ строки не выше низа соседнего текста. */
+        sprava: pole ? pole.right - polePad - b.right < 3 : false,
+        vnizu: nota ? b.bottom >= nota.bottom - 2 : false,
+        /* И строка не вылезает за сцену: у неё `overflow: hidden`,
+           и вылезшее не съезжает вниз, а МОЛЧА ОБРЕЗАЕТСЯ (Р-16). */
+        vEkrane: stage ? b.bottom <= stage.bottom + 1 : false,
+      };
+    });
+    chk(`часы работы видны в хиро (${imya})`,
+      Boolean(v?.vidno) && /10:00–22:00 по Москве/.test(v?.tekst ?? ''), v?.tekst ?? 'строки нет');
+    chk(`часы стоят справа внизу и не вылезают за экран (${imya})`,
+      Boolean(v?.sprava && v?.vnizu && v?.vEkrane),
+      `справа ${v?.sprava}, внизу ${v?.vnizu}, в экране ${v?.vEkrane}`);
+    await p.close();
+  }
 }
 
 chk('ни одной ошибки JavaScript', oshibkiJS.length === 0, oshibkiJS.slice(0, 3).join(' | '));

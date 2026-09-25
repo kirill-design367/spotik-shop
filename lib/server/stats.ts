@@ -21,10 +21,10 @@
  */
 
 import { odna, zapros } from './db';
-import { katalog, naytiTarif, srokKratko } from './catalog';
 
 export type StrokaPerioda = { kluch: 'day' | 'week' | 'month'; zakazov: number; vyruchkaKop: number };
-export type StrokaTarifa = { plan: string; srok: string; zakazov: number; vyruchkaKop: number };
+/* ⚠️ ТАРИФ И СРОК СЫРЫЕ: переводит их страница, зная свой язык. */
+export type StrokaTarifa = { planId: string; period: number; zakazov: number; vyruchkaKop: number };
 export type StrokaIstochnika = { istochnik: string | null; zakazov: number; dolya: number };
 
 export type Svodka = {
@@ -81,10 +81,9 @@ export async function svodka(): Promise<Svodka> {
       group by plan_id, period
       order by count(*) desc, plan_id`,
   );
-  const spisok = await katalog();
   const tarify: StrokaTarifa[] = potarif.map((r) => ({
-    plan: naytiTarif(spisok, r.plan_id)?.name ?? r.plan_id,
-    srok: srokKratko(r.period),
+    planId: r.plan_id,
+    period: r.period,
     zakazov: Number(r.n),
     vyruchkaKop: Number(r.kop),
   }));
