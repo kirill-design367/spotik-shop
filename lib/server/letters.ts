@@ -75,6 +75,60 @@ export async function pismoZakazOtmenyon(komu: string, zakaz: number, naBalans: 
 }
 
 /**
+ * На почту уже есть аккаунт Spotify, и новый на неё не завести.
+ *
+ * ⚠️ ЭТО НЕ ОТКАЗ, А РАЗВИЛКА. Человек хотел новый аккаунт, а он
+ * у него уже есть — значит заказ тот же самый, только режим другой.
+ * Письмо и зовёт оформить заново, выбрав «Продлить существующий»,
+ * а деньги к этому моменту уже лежат на балансе: оформление
+ * получается в один клик.
+ */
+export async function pismoPochtaZanyata(komu: string, zakaz: number, naBalans: number): Promise<void> {
+  await otpravit({
+    komu,
+    tema: `Заказ № ${zakaz}: на эту почту уже есть аккаунт Spotify`,
+    telo:
+      `Мы попробовали завести новый аккаунт Spotify на указанную почту — она уже занята: ` +
+      `аккаунт на ней существует.\n\n` +
+      `Что сделать: оформите заказ заново и выберите «Продлить существующий» — ` +
+      `мы включим Premium на том аккаунте, который у вас уже есть.\n` +
+      `${env.siteUrl}/checkout/\n\n` +
+      (naBalans > 0
+        ? `Деньги за заказ № ${zakaz} — ${rubli(naBalans)} — вернулись на баланс в личном кабинете, ` +
+          `и новый заказ закроется ими же.\n${env.siteUrl}/cabinet/\n`
+        : '') +
+      PODPIS,
+  });
+}
+
+/**
+ * Подписка скоро кончится.
+ *
+ * ⚠️ ССЫЛКА «ПРОДЛИТЬ» ОТКРЫВАЕТ ОФОРМЛЕНИЕ УЖЕ ЗАПОЛНЕННЫМ: тариф,
+ * срок, режим «продлить существующий» и почта аккаунта. Человеку
+ * остаётся ввести пароль и нажать кнопку — а не собирать заказ
+ * заново, вспоминая, что у него было.
+ */
+export async function pismoSkoroKonec(opts: {
+  komu: string;
+  zakaz: number;
+  chto: string;
+  kogda: Date;
+  ssylka: string;
+}): Promise<void> {
+  await otpravit({
+    komu: opts.komu,
+    tema: `Подписка Spotify Premium заканчивается ${opts.kogda.toLocaleDateString('ru-RU')}`,
+    telo:
+      `Доступ по заказу № ${opts.zakaz} (${opts.chto}) заканчивается ` +
+      `${opts.kogda.toLocaleDateString('ru-RU')}.\n\n` +
+      `Продлить на тот же аккаунт можно здесь — тариф, срок и почта уже подставлены:\n` +
+      `${opts.ssylka}\n` +
+      PODPIS,
+  });
+}
+
+/**
  * Восстановление пароля Spotify.
  *
  * ⚠️ ЭТО ПИСЬМО — ОБЯЗАТЕЛЬНЫЙ ШАГ ПЕРЕД ОТМЕНОЙ, и порядок жёсткий

@@ -18,7 +18,19 @@ export type SlotKlientu = {
   idx: number;
   mode: Rezhim;
   gotov: boolean;
-  /** Что выдал оператор. Только для mode='new' и только владельцу. */
+  /**
+   * Почта, которую человек указал сам: при «новом аккаунте» это
+   * адрес, НА КОТОРЫЙ оператор завёл аккаунт и включил Premium,
+   * при продлении — его собственный аккаунт.
+   *
+   * ⚠️ ЭТО ЕГО СОБСТВЕННЫЕ ДАННЫЕ, и читатель тут прежний —
+   * владелец заказа (закон 35). Пароль ему обратно не показываем:
+   * он его и так знает, а лишнее место, где открытый пароль
+   * оказывается на экране, нам не нужно.
+   */
+  pochta: string | null;
+  /** Что выдал оператор. Только у СТАРЫХ заказов: с тридцать
+   *  четвёртой итерации оператор ничего не выдаёт. */
   login: string | null;
   mailPass: string | null;
   spotifyPass: string | null;
@@ -37,6 +49,8 @@ export type ZakazKlientu = {
   kDoplate: number;
   poSertifikatu: boolean;
   sozdan: Date;
+  /** Когда доступ заканчивается. Считается при закрытии заказа. */
+  konchaetsya: Date | null;
   prichinaOtmeny: string | null;
   sekretyStyorty: boolean;
   slots: SlotKlientu[];
@@ -56,9 +70,10 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
     created_at: Date;
     cancel_reason: string | null;
     secrets_wiped_at: Date | null;
+    expires_at: Date | null;
   }>(
     `select id, kind, plan_id, period, status, total_kop, balance_kop, money_kop, source,
-            created_at, cancel_reason, secrets_wiped_at
+            created_at, cancel_reason, secrets_wiped_at, expires_at
        from shop_order where user_id = $1 order by created_at desc limit 100`,
     [userId],
   );
@@ -67,12 +82,13 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
     order_id: string;
     idx: number;
     mode: Rezhim;
+    in_login_enc: string | null;
     out_login_enc: string | null;
     out_mail_pass_enc: string | null;
     out_password_enc: string | null;
     done_at: Date | null;
   }>(
-    `select order_id, idx, mode, out_login_enc, out_mail_pass_enc, out_password_enc, done_at
+    `select order_id, idx, mode, in_login_enc, out_login_enc, out_mail_pass_enc, out_password_enc, done_at
        from order_slot where order_id = any($1::bigint[]) order by idx`,
     [rows.map((r) => Number(r.id))],
   );
@@ -102,18 +118,39 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
       kDoplate: Math.max(0, total - bal - mon),
       poSertifikatu: r.source === 'certificate',
       sozdan: new Date(r.created_at),
+      konchaetsya: r.expires_at ? new Date(r.expires_at) : null,
       prichinaOtmeny: r.cancel_reason,
       sekretyStyorty: Boolean(r.secrets_wiped_at),
       slots: svoi.map((s) => ({
         idx: s.idx,
         mode: s.mode,
         gotov: Boolean(s.done_at),
+        pochta: poprobovatRasshifrovat(s.in_login_enc),
         login: poprobovatRasshifrovat(s.out_login_enc),
         mailPass: poprobovatRasshifrovat(s.out_mail_pass_enc),
         spotifyPass: poprobovatRasshifrovat(s.out_password_enc),
       })),
     };
   });
+}
+
+/**
+ * Почты участников заказа — ВЛАДЕЛЬЦУ, для подстановки в продление.
+ *
+ * ⚠️ ЧИТАТЕЛЬ ТОТ ЖЕ, ЧТО У КАБИНЕТА: владелец заказа и его
+ * собственные данные. Отдельной двери для этого не заводится —
+ * запрос сам проверяет `user_id`, и чужой заказ отдаёт пустой список.
+ * Ради этого ссылка в письме и несёт НОМЕР ЗАКАЗА, а не адрес:
+ * адрес остаётся в базе шифротекстом и в письмо не попадает.
+ */
+export async function pochtyZakaza(userId: number, zakaz: number): Promise<string[]> {
+  const rows = await zapros<{ in_login_enc: string | null }>(
+    `select s.in_login_enc
+       from order_slot s join shop_order o on o.id = s.order_id
+      where s.order_id = $1 and o.user_id = $2 order by s.idx`,
+    [zakaz, userId],
+  );
+  return rows.map((r) => poprobovatRasshifrovat(r.in_login_enc) ?? '');
 }
 
 export async function balans(userId: number): Promise<number> {

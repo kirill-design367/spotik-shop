@@ -192,11 +192,64 @@ const S = {
   'u.recovery_sent': ['Письмо с восстановлением отправлено', 'Recovery email sent'],
   'u.recovery': ['Пароль не подошёл — написать клиенту', 'Password does not work — email the client'],
   'u.sending': ['Отправляем…', 'Sending…'],
+  /* ⚠️ ШАГИ ДЛЯ НОВОГО АККАУНТА ДРУГИЕ С ТРИДЦАТЬ ЧЕТВЁРТОЙ
+     ИТЕРАЦИИ: почту и пароль даёт КЛИЕНТ, оператор заводит аккаунт
+     ровно на них и ничего не вписывает. Прежние шаги остались
+     рядом (`u.new_steps_old`) — по ним доделываются заказы,
+     заведённые до этой итерации. */
   'u.new_steps': [
-    '1. Заведите клиенту новый почтовый ящик. 2. Зарегистрируйте на него аккаунт Spotify и включите Premium на выбранный срок. 3. Впишите все три строки ниже — клиент увидит их в кабинете сразу.',
-    '1. Create a fresh mailbox for the client. 2. Register a Spotify account on it and turn Premium on for the chosen term. 3. Paste all three below — the client sees them in their cabinet right away.',
+    '1. Зарегистрируйте аккаунт Spotify на почту и пароль клиента — они ниже. 2. Включите Premium на выбранный срок. 3. Вернитесь и отметьте выполненным. Вписывать ничего не нужно: доступ уже у клиента.',
+    '1. Register a Spotify account on the client’s email and password — they are below. 2. Turn Premium on for the chosen term. 3. Come back and mark it done. Nothing to type in: the client already has the access.',
+  ],
+  'u.new_done': ['Аккаунт заведён, Premium включён — отметить выполненным', 'Account created, Premium is on — mark done'],
+  'u.email_taken': ['На эту почту уже есть аккаунт Spotify', 'This email already has a Spotify account'],
+  'u.email_taken_hint': [
+    'Нажмите, если новый аккаунт на эту почту завести нельзя: заказ закроется, деньги лягут на баланс клиента, а ему уйдёт письмо с просьбой оформить заново, выбрав «Продлить существующий».',
+    'Press this if a new account cannot be created on this email: the order closes, the money goes to the client’s balance, and they get an email asking to order again with “Renew existing”.',
+  ],
+  'u.new_steps_old': [
+    'Старый заказ: доступы для него заводит оператор. 1. Заведите клиенту новый почтовый ящик. 2. Зарегистрируйте на него аккаунт Spotify и включите Premium. 3. Впишите все три строки ниже.',
+    'Old order: the operator creates the credentials. 1. Create a fresh mailbox. 2. Register a Spotify account on it and turn Premium on. 3. Paste all three below.',
   ],
   'u.login': ['Логин', 'Login'],
+
+  /* ── Скидки, доступность, частота очереди, генератор ссылок ──── */
+  'c.discount': ['Скидка', 'Discount'],
+  'c.discount_h': ['Скидки', 'Discounts'],
+  'c.discount_hint': [
+    'Цена по скидке и последний день её действия. После этого дня скидка снимается сама, а обычная цена остаётся. Цена в заказе замораживается в момент оформления.',
+    'The discounted price and the last day it applies. After that day the discount lifts itself and the regular price stays. An order freezes its price at checkout.',
+  ],
+  'c.until': ['до', 'until'],
+  'c.grid_h': ['Что продаём', 'What is on sale'],
+  'c.grid_hint': [
+    'Ячейка выключена — этого срока нет на сайте. Тариф без единого срока пропадает с сайта целиком, а срок, выключенный у всех тарифов, пропадает из переключателя.',
+    'A disabled cell is gone from the site. A plan with no terms left disappears entirely, and a term disabled for every plan disappears from the switcher.',
+  ],
+  'c.on': ['продаём', 'on sale'],
+  'c.off': ['не продаём', 'off'],
+  'q.rate': ['Обновлять', 'Auto-refresh'],
+  'q.rate_off': ['выкл', 'off'],
+  'q.rate_sec': ['{n} с', '{n} s'],
+  'q.rate_min': ['{n} мин', '{n} min'],
+  'g.h': ['Ссылка с метками', 'Link with UTM tags'],
+  'g.hint': [
+    'Соберите ссылку для рекламы: метки из неё доедут до заказа и попадут в статистику.',
+    'Build an ad link: its tags reach the order and show up in the statistics.',
+  ],
+  'g.url': ['Адрес страницы', 'Page URL'],
+  'g.source': ['Источник (utm_source)', 'Source (utm_source)'],
+  'g.medium': ['Тип (utm_medium)', 'Medium (utm_medium)'],
+  'g.campaign': ['Кампания (utm_campaign)', 'Campaign (utm_campaign)'],
+  'g.content': ['Объявление (utm_content)', 'Content (utm_content)'],
+  'g.term': ['Ключевое слово (utm_term)', 'Keyword (utm_term)'],
+  'g.copy': ['Скопировать', 'Copy'],
+  'g.copied': ['Скопировано', 'Copied'],
+  'g.direct': ['Заготовка Яндекс Директа', 'Yandex Direct preset'],
+  'g.direct_hint': [
+    'Подставляет yandex / cpc и подстановки Директа: номер кампании и номер объявления он заменит сам при переходе.',
+    'Fills in yandex / cpc and Direct macros: it substitutes the campaign and ad ids on click.',
+  ],
   'u.login_email': ['Логин (почта)', 'Login (email)'],
   'u.mailpass': ['Пароль от ящика', 'Mailbox password'],
   'u.spotpass': ['Пароль от Spotify', 'Spotify password'],
@@ -268,6 +321,12 @@ const S = {
     'Send the password-recovery email first — cancelling is blocked until then.',
   ],
   'e.cancel_fail': ['Отменить не вышло.', 'Could not cancel.'],
+  'e.bad_rate': ['Такой частоты нет.', 'No such refresh rate.'],
+  'e.bad_date': ['Укажите дату окончания скидки.', 'Set the discount end date.'],
+  'e.no_price_first': [
+    'Сначала задайте цену на этот срок — без неё оформить нельзя.',
+    'Set a price for this term first — without one it cannot be ordered.',
+  ],
   'e.pick_plan': ['Выберите тариф и срок.', 'Pick a plan and a term.'],
   'e.price_number': ['Цена должна быть неотрицательным числом.', 'Price must be a non-negative number.'],
   'e.days_number': ['Срок должен быть целым числом дней больше нуля.', 'Validity must be a positive number of days.'],
@@ -290,6 +349,11 @@ const S = {
   'k.price_removed': ['Цена убрана: на этот срок больше не продаём.', 'Price removed: this term is no longer sold.'],
   'k.price_saved': ['Цена сохранена.', 'Price saved.'],
   'k.cert_days_saved': ['Срок действия сертификата сохранён.', 'Certificate validity saved.'],
+  'k.discount_saved': ['Скидка сохранена.', 'Discount saved.'],
+  'k.discount_removed': ['Скидка снята.', 'Discount removed.'],
+  'k.cell_on': ['Срок включён.', 'Term enabled.'],
+  'k.cell_off': ['Срок выключен: на сайте его больше нет.', 'Term disabled: it is gone from the site.'],
+  'k.rate_saved': ['Частота обновления сохранена.', 'Refresh rate saved.'],
   'k.staff_saved': ['{email} теперь {role}.', '{email} is now {role}.'],
 
   /* ── Статистика ──────────────────────────────────────────────────

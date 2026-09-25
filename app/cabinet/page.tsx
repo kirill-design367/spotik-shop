@@ -1,4 +1,5 @@
 import '../shop.css';
+import PodderzhkaForma from '@/components/shop/PodderzhkaForma';
 import type { Metadata } from 'next';
 import LoginBox from '@/components/shop/LoginBox';
 import KabinetZhivoy from '@/components/shop/KabinetZhivoy';
@@ -131,6 +132,41 @@ export default async function Cabinet({
               <p className="panel__note">Причина: {z.prichinaOtmeny}</p>
             ) : null}
 
+            {/* ⚠️ ДАТА ОКОНЧАНИЯ — ПРОСТАЯ СТРОКА, и это постановка:
+                «в кабинете показать дату окончания обычной строкой,
+                оформление придёт следующей задачей». Стоит она только
+                у закрытых заказов: пока доступ не выдан, кончаться
+                нечему. */}
+            {z.konchaetsya && z.status === 'done' ? (
+              <p className="panel__note">
+                Доступ действует до {z.konchaetsya.toLocaleDateString('ru-RU')}. За три дня
+                до конца пришлём письмо со ссылкой на продление.
+              </p>
+            ) : null}
+
+            {/* ⚠️ ЧТО ПОКАЗАНО ПО НОВОМУ АККАУНТУ — ПОЧТА, А НЕ ЛОГИН
+                С ПАРОЛЕМ. С тридцать четвёртой итерации аккаунт заводит
+                оператор на данные КЛИЕНТА: выдавать нечего, доступ
+                у человека с самого начала, и единственное, что ему
+                нужно знать, — на какую почту включили Premium.
+                ⚠️ СТАРЫЕ ЗАКАЗЫ НЕ ТРОНУТЫ: там, где оператор доступы
+                ВЫДАВАЛ, они по-прежнему видны строкой ниже. */}
+            {z.status === 'done' && z.slots.some((s) => s.pochta && !s.login) ? (
+              <div className="creds">
+                {z.slots
+                  .filter((s) => s.pochta && !s.login)
+                  .map((s) => (
+                    <div key={s.idx} className="cred">
+                      {z.slots.length > 1 ? <span className="cred__k">Аккаунт {s.idx + 1}</span> : null}
+                      <span className="cred__k">
+                        {s.mode === 'new' ? 'Premium включён на почте' : 'Premium продлён на почте'}
+                      </span>
+                      <b>{s.pochta}</b>
+                    </div>
+                  ))}
+              </div>
+            ) : null}
+
             {/* Выданные доступы: только там, где оператор их завёл. */}
             {z.slots.some((s) => s.login) ? (
               <div className="creds">
@@ -188,6 +224,20 @@ export default async function Cabinet({
           </div>
         ))
       )}
+
+      {/* ⚠️ БЛОК «НУЖНА ПОМОЩЬ?» — ТА ЖЕ ФОРМА, ЧТО В ПЛАШКЕ, и это
+          один компонент, а не два: два разошлись бы на первой правке.
+          Здесь она стоит В ПОТОКЕ, а не накладкой: человек пришёл
+          в кабинет с вопросом по своему заказу, и открывать ради
+          этого окно поверх экрана незачем. Почта аккаунта известна
+          странице, поэтому подставляется сразу. */}
+      <h2 className="panel__h" style={{ marginTop: 40 }}>Нужна помощь?</h2>
+      <div className="panel pd__pomoshch">
+        <p className="panel__note" style={{ marginTop: 0 }}>
+          Напишите, что случилось, — ответим в рабочее время, с 10:00 до 22:00 по Москве.
+        </p>
+        <PodderzhkaForma pochta={kto.email} />
+      </div>
     </main>
   );
 }

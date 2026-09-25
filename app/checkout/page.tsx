@@ -6,7 +6,7 @@ import { CELI } from '@/lib/metrika';
 import LoginBox from '@/components/shop/LoginBox';
 import { ktoKlient } from '@/lib/server/auth';
 import { katalog, naytiTarif, srokPolno } from '@/lib/server/catalog';
-import { balans } from '@/lib/server/views';
+import { balans, pochtyZakaza } from '@/lib/server/views';
 import { bazaEst } from '@/lib/server/db';
 
 export const metadata: Metadata = { title: 'Оформление — Spotik Shop', robots: { index: false, follow: false } };
@@ -71,6 +71,16 @@ export default async function Checkout({
     );
   }
 
+  /* ⚠️ ССЫЛКА «ПРОДЛИТЬ» ИЗ ПИСЬМА НЕСЁТ НОМЕР ЗАКАЗА, А НЕ ПОЧТУ.
+     Почта аккаунта Spotify лежит в базе шифротекстом ровно затем,
+     чтобы не гулять открытым текстом; письмо живёт в ящике вечно
+     и пересылается кому угодно. Поэтому адрес читает САМА страница,
+     у владельца заказа и через то же единственное место, где
+     расшифровка разрешена (закон 35). Чужой номер отдаёт пустой
+     список и не подставляет ничего. */
+  const prodlit = Number(odin('renew'));
+  const pochty = kto && prodlit > 0 ? await pochtyZakaza(kto.userId, prodlit) : [];
+
   const vvod: Vvod = {
     planId: tarif.id,
     planName: podarok ? `Сертификат · ${tarif.name}` : tarif.name,
@@ -78,7 +88,8 @@ export default async function Checkout({
     sertifikat: podarok,
     sroki,
     periodPoUmolchaniyu: period,
-    rezhimPoUmolchaniyu: odin('mode') === 'renew' ? 'renew' : 'new',
+    rezhimPoUmolchaniyu: odin('mode') === 'renew' || pochty.length ? 'renew' : 'new',
+    pochtyPoUmolchaniyu: pochty,
     balansKop: kto ? await balans(kto.userId) : 0,
   };
 
@@ -113,7 +124,7 @@ export default async function Checkout({
              как есть. Уйти на чужой домен он не мог (адрес
              начинается с `/checkout/?`), но дописать своих
              параметров — вполне. */
-          next={`/checkout/?plan=${tarif.id}&period=${period}${podarok ? '&gift=1' : vvod.rezhimPoUmolchaniyu === 'renew' ? '&mode=renew' : ''}`}
+          next={`/checkout/?plan=${tarif.id}&period=${period}${podarok ? '&gift=1' : prodlit > 0 ? `&renew=${prodlit}` : vvod.rezhimPoUmolchaniyu === 'renew' ? '&mode=renew' : ''}`}
           zagolovok={podarok ? 'Сначала вход — на эту же почту придёт код сертификата' : 'Сначала вход — на эту же почту придёт доступ'}
         />
       )}

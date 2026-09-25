@@ -21,6 +21,7 @@ import { ktoSotrudnik, normPochta, poprositKod, proveritKod, vyyti, zavestiSessi
 import { bazaEst, zapros } from './db';
 import {
   otmenitZakaz,
+  PRICHINA_POCHTA_ZANYATA,
   otmetitSlotGotovym,
   vernutVOchered,
   vzyatZakaz,
@@ -32,6 +33,8 @@ import { pismoParolNePodoshyol } from './letters';
 import { odna } from './db';
 import { zadatNastroyku, SROK_SERTIFIKATA } from './settings';
 import { shifrGotov } from './crypto';
+import { katalogPolny } from './catalog';
+import { CHASTOTY_OCHEREDI } from '@/lib/admin/chastoty';
 import { zapomnitYazyk } from './yazyk';
 import { ponyatYazyk, type Klyuch, type Podstanovki } from '@/lib/admin/slova';
 
@@ -183,6 +186,28 @@ export async function adminSendRecovery(_p: OtvetA, fd: FormData): Promise<Otvet
   return { ok: 'k.recovery_sent' };
 }
 
+/**
+ * Особый случай: на почту клиента уже есть аккаунт Spotify, и новый
+ * на неё не завести.
+ *
+ * ⚠️ ЭТО ОТДЕЛЬНАЯ ДВЕРЬ, А НЕ ГАЛОЧКА В ОБЩЕЙ ОТМЕНЕ, и причина
+ * тому одна: у оператора это ОДНО нажатие в тот момент, когда он
+ * упёрся, — а не «вернись наверх, напиши причину, поставь галочку».
+ * Причина при этом фиксированная: её видит клиент, и формулировать
+ * её каждый раз заново значило бы получить пять разных формулировок
+ * одного и того же.
+ */
+export async function adminEmailTaken(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+  const s = await ktoSotrudnik();
+  if (!s) return { error: 'e.session' };
+  const zakaz = Number(fd.get('order') ?? 0);
+  if (!(await tolkoSvoy(zakaz, s.id))) return { error: 'e.not_yours' };
+  const r = await otmenitZakaz(zakaz, PRICHINA_POCHTA_ZANYATA, s.id, 'pochta_zanyata');
+  if (!r.ok) return { error: 'e.cancel_fail' };
+  revalidatePath('/admin');
+  return { ok: 'k.order_cancelled' };
+}
+
 export async function adminCancel(_p: OtvetA, fd: FormData): Promise<OtvetA> {
   const s = await ktoSotrudnik();
   if (!s) return { error: 'e.session' };
@@ -206,7 +231,93 @@ export async function adminCancel(_p: OtvetA, fd: FormData): Promise<OtvetA> {
   return { ok: 'k.order_cancelled' };
 }
 
+/**
+ * Частота самообновления очереди.
+ *
+ * ⚠️ ХРАНИТСЯ ЗА СОТРУДНИКОМ, А НЕ В КУКЕ — то же правило, что
+ * у языка (Р-96): выбор обязан переехать с человеком на другую
+ * машину. В Нейролавке он лежит в куке, потому что там у панели
+ * нет ни строки скриптов и настройка вида привязана к браузеру;
+ * у нас очередь и так клиентский компонент, а строка сотрудника
+ * и так читается на каждый заход.
+ *
+ * ⚠️ СПИСОК ЗАКРЫТЫЙ. Значение приходит из формы, а частота опроса
+ * с чужим числом — это либо страница, стучащаяся каждую миллисекунду,
+ * либо очередь, которая не обновляется никогда.
+ */
+export async function adminSetQueueRate(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+  const s = await ktoSotrudnik();
+  if (!s) return { error: 'e.session' };
+  const sek = Number(fd.get('sec') ?? 0);
+  if (!(CHASTOTY_OCHEREDI as readonly number[]).includes(sek)) return { error: 'e.bad_rate' };
+  await zapros('update staff set queue_sec = $2 where id = $1', [s.id, sek]);
+  revalidatePath('/admin');
+  return { ok: 'k.rate_saved' };
+}
+
 /* ── Настройки (только администратор) ──────────────────────────── */
+
+/**
+ * Скидка на пару тариф × срок.
+ *
+ * ⚠️ ЦЕНА ЗАМОРАЖИВАЕТСЯ ПРИ СОЗДАНИИ ЗАКАЗА, и заботиться об этом
+ * отдельно не нужно: `sozdatZakaz` берёт цену из каталога и кладёт
+ * её в `shop_order.total_kop`, а чек и платёж считаются от неё же.
+ * Снятая скидка на уже созданный заказ не влияет никак.
+ */
+export async function adminSetDiscount(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+  const s = await ktoSotrudnik();
+  if (!s || s.role !== 'admin') return { error: 'o.only_admin' };
+  const plan = String(fd.get('plan') ?? '');
+  const period = Number(fd.get('period') ?? 0);
+  if (!plan || !period) return { error: 'e.pick_plan' };
+  const rub = String(fd.get('price') ?? '').replace(',', '.').trim();
+  const doDaty = String(fd.get('until') ?? '').trim();
+  if (rub === '' && doDaty === '') {
+    await zapros('delete from plan_discount where plan_id = $1 and period = $2', [plan, period]);
+    revalidatePath('/');
+    return { ok: 'k.discount_removed' };
+  }
+  const n = Number(rub);
+  if (!Number.isFinite(n) || n < 0) return { error: 'e.price_number' };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(doDaty)) return { error: 'e.bad_date' };
+  await zapros(
+    `insert into plan_discount (plan_id, period, price_kop, until) values ($1, $2, $3, $4::date)
+     on conflict (plan_id, period) do update set price_kop = excluded.price_kop, until = excluded.until`,
+    [plan, period, Math.round(n * 100), doDaty],
+  );
+  revalidatePath('/');
+  return { ok: 'k.discount_saved' };
+}
+
+/**
+ * Доступность пары тариф × срок.
+ *
+ * ⚠️ ВКЛЮЧИТЬ ЯЧЕЙКУ БЕЗ ЦЕНЫ НЕЛЬЗЯ, и отказ честный. «Доступно»
+ * значит «оформляется», а оформить без цены невозможно: включённая
+ * пустая ячейка означала бы карточку, которая на выбранном сроке
+ * молча ничего не показывает.
+ */
+export async function adminToggleCell(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+  const s = await ktoSotrudnik();
+  if (!s || s.role !== 'admin') return { error: 'o.only_admin' };
+  const plan = String(fd.get('plan') ?? '');
+  const period = Number(fd.get('period') ?? 0);
+  const vklyuchit = fd.get('on') === '1';
+  if (!plan || !period) return { error: 'e.pick_plan' };
+  if (vklyuchit) {
+    const est = (await katalogPolny()).find((t) => t.id === plan)?.ceny.some((c) => c.period === period);
+    if (!est) return { error: 'e.no_price_first' };
+    await zapros('delete from plan_off where plan_id = $1 and period = $2', [plan, period]);
+  } else {
+    await zapros(
+      'insert into plan_off (plan_id, period) values ($1, $2) on conflict do nothing',
+      [plan, period],
+    );
+  }
+  revalidatePath('/');
+  return { ok: vklyuchit ? 'k.cell_on' : 'k.cell_off' };
+}
 
 export async function adminSetPrice(_p: OtvetA, fd: FormData): Promise<OtvetA> {
   const s = await ktoSotrudnik();

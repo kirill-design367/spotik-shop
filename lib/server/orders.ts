@@ -14,13 +14,14 @@
 
 import type { PoolClient } from 'pg';
 import { odna, vTranzakcii, zapros } from './db';
-import { shifrGotov, zashifrovat } from './crypto';
+import { otpechatokPochty, shifrGotov, zashifrovat } from './crypto';
 import { log } from './log';
 import { soobshchitKomande } from './notify';
 import { utmVRyad, type Utm } from './utm';
-import { pismoZakazGotov, pismoZakazOplachen, pismoZakazOtmenyon } from './letters';
+import { pismoPochtaZanyata, pismoZakazGotov, pismoZakazOplachen, pismoZakazOtmenyon } from './letters';
 import { vydatSertifikat } from './certificates';
 import { cenaTarifa, katalog, naytiTarif, srokKratko, srokPolno } from './catalog';
+import { parolNeGoditsya, pochtaNeVerna } from '@/lib/proverka';
 
 export type Status = 'new' | 'paid' | 'in_work' | 'done' | 'cancelled';
 export type Rezhim = 'new' | 'renew';
@@ -33,9 +34,22 @@ export const STATUS_SLOVAMI: Record<Status, string> = {
   cancelled: 'Отменён',
 };
 
+/**
+ * Что человек вводит на каждого участника.
+ *
+ * ⚠️ ПОЧТА И ПАРОЛЬ НУЖНЫ В ОБОИХ СЛУЧАЯХ С ТРИДЦАТЬ ЧЕТВЁРТОЙ
+ * ИТЕРАЦИИ. Раньше при «новом аккаунте» человек не вводил ничего,
+ * а логин с паролем придумывал оператор и присылал их в кабинет.
+ * Постановка это отменила: у Spotify нет двухфакторной проверки,
+ * значит аккаунт можно завести прямо на почту клиента — и тогда
+ * доступ остаётся у него с самого начала, а выдавать нечего.
+ *   mode='new'   — почта клиента и пароль, КОТОРЫЙ ОН ХОЧЕТ;
+ *                  оператор заводит аккаунт ровно на эти данные;
+ *   mode='renew' — почта и пароль СВОЕГО аккаунта Spotify.
+ * Хранится и то, и другое одинаково: только шифротекстом (закон 35).
+ */
 export type VvodUchastnika = {
   mode: Rezhim;
-  /** Только при mode='renew': почта и пароль СВОЕГО аккаунта Spotify. */
   login?: string;
   password?: string;
 };
@@ -55,6 +69,28 @@ export function nazvanieZakaza(tarif: string, period: number, kind: 'plan' | 'ce
   return kind === 'certificate'
     ? `Сертификат Spotik Shop: ${tarif}, ${srokKratko(period)}`
     : `Spotify Premium, ${tarif}, ${srokKratko(period)}`;
+}
+
+/**
+ * Проверка участников НА СЕРВЕРЕ, и она не повторяет клиентскую,
+ * а ОПРЕДЕЛЯЕТ её: правила лежат в одном модуле `lib/proverka`
+ * и зовутся с обеих сторон. Форма — это то, что человек правит
+ * в браузере за секунду, поэтому последнее слово здесь.
+ */
+export function proveritUchastnikov(spisok: VvodUchastnika[]): string | null {
+  for (let i = 0; i < spisok.length; i++) {
+    const u = spisok[i]!;
+    const kto = spisok.length > 1 ? `Участник ${i + 1}: ` : '';
+    const bedaPochty = pochtaNeVerna(u.login ?? '');
+    if (bedaPochty) return `${kto}${bedaPochty.toLowerCase()}.`;
+    const bedaParolya = parolNeGoditsya(u.password ?? '');
+    if (bedaParolya) return `${kto}${bedaParolya.toLowerCase()}.`;
+    // ⚠️ БЕЗ КЛЮЧА ЧУЖИЕ ПАРОЛИ НЕ ПРИНИМАЮТСЯ ВОВСЕ. Положить их
+    // открытым текстом «временно» — ровно тот случай, когда
+    // временное живёт годами (закон 35).
+    if (!shifrGotov()) return 'Приём паролей сейчас недоступен. Попробуйте позже.';
+  }
+  return null;
 }
 
 /**
@@ -96,17 +132,8 @@ export async function sozdatZakaz(opts: {
         : 'У сертификата участников не бывает: их выбирает получатель.',
     };
   }
-  for (const u of opts.uchastniki) {
-    if (u.mode === 'renew') {
-      if (!u.login?.trim() || !u.password?.trim()) {
-        return { ok: false, pochemu: 'Для продления укажите почту и пароль своего аккаунта Spotify.' };
-      }
-      // ⚠️ БЕЗ КЛЮЧА ЧУЖИЕ ПАРОЛИ НЕ ПРИНИМАЮТСЯ ВОВСЕ. Положить их
-      // открытым текстом «временно» — ровно тот случай, когда
-      // временное живёт годами.
-      if (!shifrGotov()) return { ok: false, pochemu: 'Приём паролей сейчас недоступен. Попробуйте позже.' };
-    }
-  }
+  const bedaUchastnikov = proveritUchastnikov(opts.uchastniki);
+  if (bedaUchastnikov) return { ok: false, pochemu: bedaUchastnikov };
 
   const itog = await vTranzakcii(async (c) => {
     const u = await c.query<{ balance_kop: string }>('select balance_kop from app_user where id = $1 for update', [
@@ -131,14 +158,19 @@ export async function sozdatZakaz(opts: {
     for (let i = 0; i < opts.uchastniki.length; i++) {
       const uch = opts.uchastniki[i]!;
       await c.query(
-        `insert into order_slot (order_id, idx, mode, in_login_enc, in_password_enc)
-         values ($1, $2, $3, $4, $5)`,
+        `insert into order_slot (order_id, idx, mode, in_login_enc, in_password_enc, login_fp)
+         values ($1, $2, $3, $4, $5, $6)`,
         [
           zakaz,
           i,
           uch.mode,
-          uch.mode === 'renew' ? zashifrovat(uch.login!.trim()) : null,
-          uch.mode === 'renew' ? zashifrovat(uch.password!) : null,
+          /* ⚠️ ШИФРУЕТСЯ И ТО, И ДРУГОЕ, В ОБОИХ РЕЖИМАХ. При «новом
+             аккаунте» это пароль, КОТОРЫЙ ЧЕЛОВЕК ХОЧЕТ, и уже
+             через час он станет паролем от его аккаунта Spotify:
+             ценность у него ровно та же, что у пароля на продлении. */
+          zashifrovat(uch.login!.trim()),
+          zashifrovat(uch.password!),
+          otpechatokPochty(uch.login!),
         ],
       );
     }
@@ -322,7 +354,8 @@ export async function zakazPoSertifikatu(opts: {
   uchastniki: VvodUchastnika[];
   utm?: Utm;
 }): Promise<number> {
-  if (opts.uchastniki.some((u) => u.mode === 'renew') && !shifrGotov()) throw new Error('нет ключа шифрования');
+  const beda = proveritUchastnikov(opts.uchastniki);
+  if (beda) throw new Error(beda);
   const zakaz = await vTranzakcii(async (c) => {
     const pometka = await c.query(
       'update certificate set used_at = now() where id = $1 and used_at is null returning id',
@@ -341,14 +374,9 @@ export async function zakazPoSertifikatu(opts: {
     for (let i = 0; i < opts.uchastniki.length; i++) {
       const u = opts.uchastniki[i]!;
       await c.query(
-        `insert into order_slot (order_id, idx, mode, in_login_enc, in_password_enc) values ($1, $2, $3, $4, $5)`,
-        [
-          zakaz,
-          i,
-          u.mode,
-          u.mode === 'renew' ? zashifrovat(u.login!.trim()) : null,
-          u.mode === 'renew' ? zashifrovat(u.password!) : null,
-        ],
+        `insert into order_slot (order_id, idx, mode, in_login_enc, in_password_enc, login_fp)
+         values ($1, $2, $3, $4, $5, $6)`,
+        [zakaz, i, u.mode, zashifrovat(u.login!.trim()), zashifrovat(u.password!), otpechatokPochty(u.login!)],
       );
     }
     await c.query('update certificate set used_order_id = $2 where id = $1', [opts.certificateId, zakaz]);
@@ -425,9 +453,18 @@ export async function zapisatVydachu(opts: {
   return r.length > 0;
 }
 
+/**
+ * Отметить участника выполненным.
+ *
+ * ⚠️ РАБОТАЕТ В ОБОИХ РЕЖИМАХ С ТРИДЦАТЬ ЧЕТВЁРТОЙ ИТЕРАЦИИ. Пока
+ * при «новом аккаунте» логин с паролем придумывал оператор, слот
+ * закрывался САМ ФАКТОМ выдачи (`zapisatVydachu`), и эта дверь была
+ * только для продления. Теперь оператор заводит аккаунт на данные
+ * КЛИЕНТА и вводить ему нечего — значит закрывают слот одинаково.
+ */
 export async function otmetitSlotGotovym(slotId: number, zakaz: number): Promise<boolean> {
   const r = await zapros(
-    `update order_slot set done_at = now() where id = $1 and order_id = $2 and mode = 'renew' returning id`,
+    `update order_slot set done_at = now() where id = $1 and order_id = $2 returning id`,
     [slotId, zakaz],
   );
   return r.length > 0;
@@ -439,8 +476,14 @@ export async function zavershitZakaz(zakaz: number, staffId: number): Promise<{ 
     [zakaz],
   );
   if (slots.some((s) => !s.done_at)) return { ok: false, pochemu: 'Не все участники заполнены.' };
+  /* ⚠️ ДАТА ОКОНЧАНИЯ СТАВИТСЯ ЗДЕСЬ, А НЕ ПРИ ОПЛАТЕ, и это
+     не мелочь. Доступ начинается тогда, когда его выдали, а между
+     оплатой и выдачей стоит очередь оператора: посчитай мы от оплаты —
+     человек потерял бы эти часы, и потерял бы их по нашей вине.
+     Срок тарифа приходит числом месяцев из той же строки заказа. */
   const r = await zapros(
-    `update shop_order set status = 'done', closed_at = now()
+    `update shop_order set status = 'done', closed_at = now(),
+            expires_at = now() + (period || ' months')::interval
       where id = $1 and status = 'in_work' and operator_id = $2 returning user_id`,
     [zakaz, staffId],
   );
@@ -467,7 +510,19 @@ export async function zavershitZakaz(zakaz: number, staffId: number): Promise<{ 
  * а не обратно на карту: так велит постановка, и так человек может
  * оформить заново в один клик.
  */
-export async function otmenitZakaz(zakaz: number, pochemu: string, staffId: number | null): Promise<{ ok: boolean; pochemuNet?: string }> {
+export const PRICHINA_POCHTA_ZANYATA = 'На эту почту уже есть аккаунт Spotify — новый завести нельзя.';
+
+export async function otmenitZakaz(
+  zakaz: number,
+  pochemu: string,
+  staffId: number | null,
+  /* ⚠️ ВИД ОТМЕНЫ РЕШАЕТ ТОЛЬКО ОДНО — КАКОЕ УЙДЁТ ПИСЬМО. Деньги
+     возвращаются одинаково, причина ложится в ту же колонку и так же
+     видна клиенту. «Почта занята» — это не отказ, а развилка: человеку
+     надо не сочувствие, а слова «оформите заново и выберите
+     „Продлить существующий“». */
+  vid: 'obychno' | 'pochta_zanyata' = 'obychno',
+): Promise<{ ok: boolean; pochemuNet?: string }> {
   const itog = await vTranzakcii(async (c) => {
     const r = await c.query<{ status: Status; user_id: string; balance_kop: string; money_kop: string; certificate_id: string | null }>(
       'select status, user_id, balance_kop, money_kop, certificate_id from shop_order where id = $1 for update',
@@ -500,7 +555,10 @@ export async function otmenitZakaz(zakaz: number, pochemu: string, staffId: numb
 
   if (!itog.ok) return itog;
   const u = await odna<{ email: string }>('select email from app_user where id = $1', [itog.userId]);
-  if (u) await pismoZakazOtmenyon(u.email, zakaz, itog.vernut, pochemu);
+  if (u) {
+    if (vid === 'pochta_zanyata') await pismoPochtaZanyata(u.email, zakaz, itog.vernut);
+    else await pismoZakazOtmenyon(u.email, zakaz, itog.vernut, pochemu);
+  }
   await soobshchitKomande({ vid: 'zakaz_otmenyon', zakaz });
   return { ok: true };
 }

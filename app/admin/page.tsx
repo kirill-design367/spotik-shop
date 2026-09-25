@@ -54,7 +54,7 @@ export default async function AdminHome() {
         </ul>
       </div>
 
-      <Queue rows={rows} me={s.email} y={y} />
+      <Queue rows={rows} me={s.email} y={y} sek={s.queueSec} />
 
       <h2>{t('q.closed')}</h2>
       <div className="ad__scroll">

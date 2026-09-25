@@ -14,6 +14,16 @@ import { DARIMYE, PERIODS, PLANS, formatPrice, savings, type Plan, type PeriodKe
  * лендинг обязан собираться на раннере, где базы нет вовсе.
  */
 export type CenyTarifov = Record<string, Partial<Record<PeriodKey, number>>>;
+/**
+ * Старая цена и дата окончания скидки.
+ *
+ * ⚠️ ОТДЕЛЬНО ОТ ЦЕН, И ЭТО НЕ УДОБСТВО. В `ceny` лежит цена,
+ * по которой платят; сложи мы их в одну структуру — каждому
+ * вычислению (экономия, надпись кнопки, цена сертификата) пришлось бы
+ * выбирать, какое из двух чисел брать, и однажды кто-нибудь выбрал бы
+ * не то. Здесь лежит ровно то, что рисуется зачёркнутым.
+ */
+export type SkidkiTarifov = Record<string, Partial<Record<PeriodKey, { bylo: number; doDaty: string }>>>;
 
 /**
  * БЛОК ТАРИФОВ — ЧЕТЫРЕ ГОЛОГРАФИЧЕСКИЕ КАРТЫ СЕТКОЙ ДВА НА ДВА.
@@ -31,6 +41,8 @@ export type CenyTarifov = Record<string, Partial<Record<PeriodKey, number>>>;
  *     .cards
  *       span.cards__glow — размытый свет ЗА картой, слоем 0
  *       .card            — наклон в перспективе сетки, слой 1
+ *         .card__edge    — кайма в один пиксель; у выбранной она
+ *                          зелёная, и по ней идёт перелив
  *         .card__plate   — поверхность, фольга и блик: четыре слоя
  *                          ОДНОГО фона, смешанные между собой
  *         .card__face    — название, цена и срок, обычный HTML
@@ -62,7 +74,7 @@ export type CenyTarifov = Record<string, Partial<Record<PeriodKey, number>>>;
  * ограничения те же, что у тарифов, потому что это те же тарифы
  * («на троих» — только месяц).
  */
-export default function Pricing({ ceny }: { ceny?: CenyTarifov }) {
+export default function Pricing({ ceny, skidki }: { ceny?: CenyTarifov; skidki?: SkidkiTarifov }) {
   const plans: Plan[] = ceny ? PLANS.map((p) => (ceny[p.id] ? { ...p, prices: ceny[p.id]! } : p)) : PLANS;
   const [period, setPeriod] = useState<PeriodKey>(12);
   const [planId, setPlanId] = useState<string>(PLANS[0].id);
@@ -206,6 +218,9 @@ export default function Pricing({ ceny }: { ceny?: CenyTarifov }) {
             const ist = p.gift ? dar : p;
             const t = ist.prices[period];
             const m = !t ? ist.prices[1] : undefined;
+            /* Скидка идёт за тем же источником, что и цена: у карточки
+               сертификата это скидка ПОДАРЕННОГО тарифа. */
+            const sk = skidki?.[ist.id]?.[t ? period : 1];
             return (
               <button
                 key={p.id}
@@ -217,19 +232,30 @@ export default function Pricing({ ceny }: { ceny?: CenyTarifov }) {
                 data-i={i}
                 onClick={() => setPlanId(p.id)}
               >
+                {/* КАЙМА ИДЁТ ПЕРВОЙ, ПЛИТА ПОВЕРХ НЕЁ И НА ПИКСЕЛЬ УЖЕ:
+                    видимой остаётся ровно рамка в один пиксель. Так кайму
+                    рисует обычная заливка, а не маска — маска внутри карты
+                    заставляла бы перерисовывать её целиком (Р-62). */}
+                <span className="card__edge" aria-hidden="true" />
                 <span className="card__plate" aria-hidden="true" />
                 <span className="card__face">
                   <span className="card__name">{p.short ?? p.name}</span>
                   <span className="card__price tnum">
+                    {/* ⚠️ СТАРАЯ ЦЕНА СТОИТ НАД НОВОЙ И ЗАЧЁРКНУТА,
+                        а срок скидки — рядом с новой. Иначе «до 30.09»
+                        читается как срок тарифа, а не скидки. */}
+                    {sk ? <s className="card__bylo">{formatPrice(sk.bylo)} ₽</s> : null}
                     {t ? (
                       <>
                         <b>{formatPrice(t)} ₽</b>
-                        <span className="card__per">за {period} мес</span>
+                        <span className="card__per">
+                          за {period} мес{sk ? ` · до ${sk.doDaty}` : ''}
+                        </span>
                       </>
                     ) : (
                       <>
                         <b>{formatPrice(m!)} ₽</b>
-                        <span className="card__per">за месяц</span>
+                        <span className="card__per">за месяц{sk ? ` · до ${sk.doDaty}` : ''}</span>
                       </>
                     )}
                   </span>

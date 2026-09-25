@@ -14,10 +14,16 @@
  * Заодно убираются просроченные коды входа, попытки ввода кода
  * сертификата и мёртвые сессии: они копятся по строке на каждый
  * вход и ничего не стоят, кроме места.
+ *
+ * ⚠️ ЗДЕСЬ ЖЕ ЕДУТ НАПОМИНАНИЯ ОБ ОКОНЧАНИИ ПОДПИСКИ. Своего
+ * будильника им не заводится: часовой ход для письма, которое уходит
+ * за три дня до конца срока, — это точность с запасом в семьдесят
+ * два раза (см. `napominaniya.ts`).
  */
 
 import { bazaEst, zapros } from './db';
 import { log } from './log';
+import { napomnitObOkonchanii } from './napominaniya';
 
 const CHAS = 3_600_000;
 
@@ -47,6 +53,9 @@ export async function ubrat(): Promise<void> {
     // всё старше суток для дела не нужно вовсе. Двое суток держим
     // затем же, зачем и коды входа, — чтобы разбор беды застал след.
     await zapros(`delete from cert_try where created_at < now() - interval '2 days'`);
+    // Попытки отправить обращение в поддержку — тот же счётчик и тот
+    // же срок, что у кода сертификата.
+    await zapros(`delete from support_try where created_at < now() - interval '2 days'`);
     await zapros('delete from session where expires_at < now()');
     // Ушедшие уведомления держать незачем: разбор беды идёт
     // по журналу, а неушедшие остаются в очереди до последней попытки.
@@ -54,6 +63,12 @@ export async function ubrat(): Promise<void> {
   } catch (e) {
     log.error('уборка не прошла', { text: String((e as Error).message) });
   }
+  /* ⚠️ НАПОМИНАНИЯ ЕДУТ НА ТОМ ЖЕ БУДИЛЬНИКЕ, а не на своём —
+     прямое требование постановки, и оно разумно: заводить второй
+     таймер ради письма, которое уходит раз в три месяца на заказ,
+     незачем. Стоит ПОСЛЕ уборки и в своём `try`: упавшая рассылка
+     не должна отменять стирание доступов по сроку. */
+  await napomnitObOkonchanii();
 }
 
 type Global = typeof globalThis & { __spotikUpkeep?: NodeJS.Timeout };

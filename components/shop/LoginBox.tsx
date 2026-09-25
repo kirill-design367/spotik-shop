@@ -35,6 +35,14 @@ export default function LoginBox({ next, zagolovok }: { next: string; zagolovok?
             <span className="field__label">Почта</span>
             <input type="email" name="email" required autoComplete="email" className={BEZ_ZAPISI} defaultValue={email} placeholder="you@example.com" />
           </label>
+          {/* ⚠️ СТРОКА СТОИТ ПОД ПОЛЕМ ПОЧТЫ, А НЕ ГАЛОЧКОЙ. Вход
+              по коду — это не оформление заказа: галочку здесь человек
+              снять не может, и превращать её в препятствие незачем.
+              Мелким набором, ссылкой на сам документ. */}
+          <p className="panel__note">
+            Продолжая, вы соглашаетесь с{' '}
+            <a href="/politika/" target="_blank" rel="noreferrer">политикой конфиденциальности</a>.
+          </p>
           <button type="submit" className="btn btn--wide" disabled={idyot1}>
             {idyot1 ? 'Отправляем…' : 'Получить код'}
           </button>

@@ -1024,8 +1024,12 @@ jobs:
           # Поймано прогоном на своей машине — на сервере это
           # выглядело бы как «проверка сломана», а сломан был бы вызов.
           metka="$(date -u '+%Y-%m-%d %H:%M:%S') UTC"
-          tekst="Spotik Shop: проверка связи, $metka.
-          Это тестовое уведомление прогона настройки сервера — заказа за ним нет."
+          # ⚠️ ТЕКСТ АНГЛИЙСКИЙ, как и все рабочие сообщения бота
+          # с тридцать четвёртой итерации (постановка). Русским
+          # остаётся одно — обращение в поддержку, там внутри текст
+          # клиента.
+          tekst="Spotik Shop: connection check, $metka.
+          This is a test notification from the server setup run — there is no order behind it."
           nomer=$(sudo -u postgres psql -tAq -v t="$tekst" spotik <<'SQL'
           insert into notify_outbox (vid, tekst, popytok, sleduyushchaya_v)
           values ('proverka', :'t', 0, now()) returning id;

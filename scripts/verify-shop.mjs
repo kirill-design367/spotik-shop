@@ -63,7 +63,8 @@ const pool = new pg.Pool({ connectionString: URL_BAZY, max: 1 });
    хотя нынешний прогон был исправен. Тот же класс, что «последняя
    строка таблицы» в Р-94. */
 await pool.query(`truncate balance_move, payment, order_slot, certificate, shop_order,
-  session, login_code, cert_try, app_user, staff, plan_price, setting, notify_outbox restart identity cascade`);
+  session, login_code, cert_try, support_try, app_user, staff, plan_price, plan_discount,
+  plan_off, setting, notify_outbox restart identity cascade`);
 await pool.end();
 
 const server = await serveOut(PORT, {
@@ -197,8 +198,13 @@ await klient.click('text=Участник 2 >> xpath=following::button[normalize
   const knopki = await klient.$$('button[role="radio"]');
   await knopki[knopki.length - 1].click();
 });
+/* ⚠️ ДАННЫЕ АККАУНТА ВВОДЯТСЯ НА ОБОИХ УЧАСТНИКОВ. С тридцать
+   четвёртой итерации почту и пароль даёт КЛИЕНТ и в случае нового
+   аккаунта тоже: оператор заводит его ровно на эти данные. */
+await klient.fill('input[name="login0"]', 'novyy@pochta.test');
+await klient.fill('input[name="password0"]', 'Novyy-Parol-9');
 await klient.fill('input[name="login1"]', 'moy@akkaunt.test');
-await klient.fill('input[name="password1"]', 'ochen-tayny-parol');
+await klient.fill('input[name="password1"]', 'ochen-tayny-parol9');
 await klient.check('input[name="consent"]');
 await nazhat(klient, 'button[type="submit"]');
 chk('заказ создан и ведёт на оплату', klient.url().includes('/pay/test/'), klient.url().replace(`http://localhost:${PORT}`, ''));
@@ -228,13 +234,21 @@ console.log('── МЕТКИ КАМПАНИИ ДОЕХАЛИ ДО ЗАКАЗА
 
 console.log('── ПАРОЛЬ КЛИЕНТА НЕ ЛЕЖИТ ОТКРЫТЫМ ТЕКСТОМ ──');
 const p2 = new pg.Pool({ connectionString: URL_BAZY, max: 1 });
-const sy = await p2.query('select in_password_enc from order_slot where in_password_enc is not null');
+/* ⚠️ СТРОК ТЕПЕРЬ ДВЕ, А НЕ ОДНА: пароль есть у ОБОИХ участников —
+   и у нового аккаунта тоже (тридцать четвёртая итерация). */
+const sy = await p2.query('select in_password_enc, login_fp from order_slot where in_password_enc is not null order by idx');
 chk(
   'в базе шифротекст, а не пароль',
-  sy.rows.length === 1 && !sy.rows[0].in_password_enc.includes('ochen-tayny-parol') && sy.rows[0].in_password_enc.startsWith('v1.'),
-  sy.rows[0]?.in_password_enc.slice(0, 18) + '…',
+  sy.rows.length === 2 &&
+    sy.rows.every((r) => !r.in_password_enc.includes('ochen-tayny-parol9') && r.in_password_enc.startsWith('v1.')),
+  `${sy.rows.length} строки, ${sy.rows[0]?.in_password_enc.slice(0, 18)}…`,
 );
-chk('пароля нет в журнале сервера', !server.zhurnal().includes('ochen-tayny-parol'));
+chk(
+  'рядом лежит отпечаток почты для поиска продления',
+  sy.rows.every((r) => typeof r.login_fp === 'string' && r.login_fp.length === 64),
+  sy.rows[0]?.login_fp?.slice(0, 12) + '…',
+);
+chk('пароля нет в журнале сервера', !server.zhurnal().includes('ochen-tayny-parol9'));
 
 console.log('── ОПЕРАТОР ──');
 const admin = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -279,11 +293,28 @@ chk('заказ взят и открылся', /\/admin\/orders\//.test(admin.ur
 const karta = await admin.textContent('body');
 chk('оператору виден пароль клиента', /ochen-tayny-parol/.test(karta ?? ''));
 
-await admin.fill('input[name="login"]', 'novyy@pochta.test');
-await admin.fill('input[name="mailPass"]', 'pochta-123');
-await admin.fill('input[name="spotifyPass"]', 'spotify-456');
-await nazhat(admin, 'button:has-text("Сохранить доступы")');
-await nazhat(admin, 'button:has-text("Premium включён")');
+/* ⚠️ ОПЕРАТОР БОЛЬШЕ НЕ ВВОДИТ НИ ОДНОГО ЛОГИНА. Аккаунт он заводит
+   на данные клиента — они у него перед глазами, — и закрывает слот
+   одной кнопкой. Обе кнопки кончаются словами «отметить выполненным»,
+   поэтому берутся по этому хвосту. */
+chk(
+  'оператору видна почта клиента для нового аккаунта',
+  /novyy@pochta\.test/.test(karta ?? ''),
+);
+chk(
+  'формы ввода логинов у оператора нет вовсе',
+  (await admin.$$('input[name="login"]')).length === 0,
+);
+/* ⚠️ КНОПОК СТОЛЬКО ЖЕ, СКОЛЬКО УЧАСТНИКОВ, поэтому берётся ПЕРВАЯ
+   явно: `page.click` со строгим селектором на двух совпадениях ждёт
+   тридцать секунд и падает — и падает не там, где сломано. */
+for (let i = 0; i < 4; i += 1) {
+  const knopka = admin.locator('button:has-text("отметить выполненным")').first();
+  if (!(await knopka.count())) break;
+  await knopka.click();
+  await admin.waitForLoadState('networkidle');
+  await admin.waitForTimeout(600);
+}
 await nazhat(admin, 'button:has-text("Отметить весь заказ")');
 const posle = await admin.textContent('body');
 /* ⚠️ `\s*`, А НЕ ПРОБЕЛ: подпись и значение стоят соседними `dt`
@@ -318,7 +349,10 @@ chk('заказ закрыт', /Заказ закрыт/.test(posle ?? '') && /�
 
 await klient.reload({ waitUntil: 'networkidle' });
 const telo2 = await klient.textContent('body');
-chk('кабинет показывает выданные доступы', /novyy@pochta\.test/.test(telo2 ?? '') && /spotify-456/.test(telo2 ?? ''));
+chk(
+  'кабинет показывает почту, на которую включён Premium',
+  /novyy@pochta\.test/.test(telo2 ?? '') && /Premium включён на почте/.test(telo2 ?? ''),
+);
 chk('заказ в кабинете «Готов»', /Готов/.test(telo2 ?? ''));
 
 /*
@@ -367,19 +401,23 @@ const ochered2 = await p2.query(
 const oplachen = ochered2.rows.find((r) => r.vid === 'zakaz_oplachen');
 const zakryt = ochered2.rows.find((r) => r.vid === 'zakaz_zakryt');
 chk('оплата прошла, хотя Telegram недоступен', ochered2.rows.length > 0 && bad === 0);
+/* ⚠️ РАБОЧИЕ СООБЩЕНИЯ БОТА ПО-АНГЛИЙСКИ С ТРИДЦАТЬ ЧЕТВЁРТОЙ
+   ИТЕРАЦИИ (постановка), а ДАННЫЕ ЗАКАЗА не переводятся: название
+   тарифа и срок приходят из каталога и остаются русскими. Сторож
+   проверяет ровно это — английские надписи и русские данные. */
 chk(
   'уведомление об оплате легло в очередь',
-  Boolean(oplachen) && /Новый оплаченный заказ № 1/.test(oplachen?.tekst ?? ''),
+  Boolean(oplachen) && /New paid order #1/.test(oplachen?.tekst ?? ''),
 );
 chk(
   'в уведомлении тариф, срок, число участников и ссылка в админку',
   /На двоих/.test(oplachen?.tekst ?? '') &&
     /год/.test(oplachen?.tekst ?? '') &&
-    /Участников: 2/.test(oplachen?.tekst ?? '') &&
+    /Participants: 2/.test(oplachen?.tekst ?? '') &&
     /\/admin\/orders\/1\//.test(oplachen?.tekst ?? ''),
   (oplachen?.tekst ?? '').replace(/\n/g, ' · '),
 );
-chk('уведомление о выполнении называет исполнителя', /Исполнитель: admin@spotik\.test/.test(zakryt?.tekst ?? ''));
+chk('уведомление о выполнении называет исполнителя', /Operator: admin@spotik\.test/.test(zakryt?.tekst ?? ''));
 /* ⚠️ ПОПЫТОК МОЖЕТ БЫТЬ УЖЕ НЕ ОДНА, И ЭТО НОРМА: минутный будильник
    очереди успевает сработать за время прогона.
 
@@ -459,8 +497,10 @@ chk('форма просит два аккаунта', /Участник 1/.test
 
 // Второй участник — на продление: там принимается чужой пароль.
 await drug.click('text=Участник 2 >> xpath=following::button[normalize-space()="Продлить существующий"][1]');
+await drug.fill('input[name="login0"]', 'drug-novyy@pochta.test');
+await drug.fill('input[name="password0"]', 'Drug-Parol-7');
 await drug.fill('input[name="login1"]', 'drug@akkaunt.test');
-await drug.fill('input[name="password1"]', 'drugoy-tayny-parol');
+await drug.fill('input[name="password1"]', 'drugoy-tayny-parol7');
 await drug.check('input[name="consent"]');
 await nazhat(drug, 'button:has-text("Активировать")');
 chk('сертификат активирован, заказ в кабинете', drug.url().includes('/cabinet/'), drug.url().replace(`http://localhost:${PORT}`, ''));
@@ -477,10 +517,12 @@ const parolDruga = await p2.query(
     where o.source = 'certificate' and s.in_password_enc is not null`,
 );
 chk(
-  'пароль второго участника в базе шифротекстом',
-  parolDruga.rows.length === 1 && parolDruga.rows[0].in_password_enc.startsWith('v1.') && !parolDruga.rows[0].in_password_enc.includes('drugoy-tayny-parol'),
+  'пароли обоих участников в базе шифротекстом',
+  parolDruga.rows.length === 2 &&
+    parolDruga.rows.every((r) => r.in_password_enc.startsWith('v1.') && !r.in_password_enc.includes('drugoy-tayny-parol7')),
+  `${parolDruga.rows.length} строки`,
 );
-chk('пароля из сертификата нет в журнале', !server.zhurnal().includes('drugoy-tayny-parol'));
+chk('пароля из сертификата нет в журнале', !server.zhurnal().includes('drugoy-tayny-parol7'));
 
 await drug.goto(`http://localhost:${PORT}/certificate/`, { waitUntil: 'networkidle' });
 await drug.locator('form').filter({ has: drug.locator('input[name="code"]') }).first().locator('input[name="code"]').fill(kodSert);
@@ -595,6 +637,9 @@ console.log('── ДЕНЬГИ ПО ЗАКАЗУ, КОТОРЫЙ ИХ УЖЕ �
 {
   await p2.query(`update app_user set balance_kop = 0 where email = $1`, [KLIENT]);
   await klient.goto(`http://localhost:${PORT}/checkout/?plan=solo&period=1`, { waitUntil: 'networkidle' });
+  // Данные аккаунта вводятся и на новый аккаунт тоже (тридцать четвёртая).
+  await klient.fill('input[name="login0"]', 'eshchyo-odin@pochta.test');
+  await klient.fill('input[name="password0"]', 'Eshchyo-Parol-3');
   await klient.check('input[name="consent"]');
   await nazhat(klient, 'button[type="submit"]');
   const schet = Number(new URL(klient.url()).searchParams.get('payment') ?? 0);
@@ -635,7 +680,10 @@ console.log('── ДЕНЬГИ ПО ЗАКАЗУ, КОТОРЫЙ ИХ УЖЕ �
   );
   chk('движение по балансу названо своими словами', /не ждал денег/.test(dv.rows[0]?.reason ?? ''), dv.rows[0]?.reason ?? '—');
   const och = await p2.query(`select tekst from notify_outbox where vid = 'dengi_bez_zakaza'`);
-  chk('команда узнала о происшествии', och.rows.length === 1 && /уже не ждал/.test(och.rows[0].tekst),
+  /* ⚠️ ТЕКСТ СООБЩЕНИЯ АНГЛИЙСКИЙ, а движение по балансу — русское,
+     и это не разнобой: движение видит КЛИЕНТ в своём кабинете,
+     а сообщение — команда в служебном чате (постановка 34-й). */
+  chk('команда узнала о происшествии', och.rows.length === 1 && /no longer waiting/.test(och.rows[0].tekst),
     (och.rows[0]?.tekst ?? '').split('\n')[0]);
 }
 
@@ -818,10 +866,16 @@ console.log('── СКРУГЛЁННЫЕ УГЛЫ В РАЗДЕЛЕ, И ЛЕН
       const r = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0;
       if (r < 0.5) continue;
       /* Что скруглено на лендинге ЗАКОННО: кнопка и плашка срока —
-         пилюли (отсылка к плееру), карта тарифа и слой света за ней —
-         `--card-r`, кольца микроволн и узлы света — круги. Всё
-         остальное обязано быть 0. */
-      if (el.closest('.btn, .seg, .seg__btn, .card, .cards__glow, .burger, .menu, .rstep__wave, .route__node')) continue;
+         пилюли (отсылка к плееру), карта тарифа со своей каймой
+         и слой света за ней — `--card-r`, кольца микроволн и узлы
+         света — круги, плашка поддержки — та же пилюля, что кнопка.
+         Всё остальное обязано быть 0. */
+      if (
+        el.closest(
+          '.btn, .seg, .seg__btn, .card, .cards__glow, .burger, .menu, .rstep__wave, .route__node, .pd__knopka',
+        )
+      )
+        continue;
       bad.push(`${el.className || el.tagName} ${r}`);
     }
     return bad;
@@ -952,6 +1006,308 @@ console.log('── ЛИМИТ НА ВВОД КОДА СЕРТИФИКАТА ─
   chk('перебор попал в журнал сервера', /перебор кода сертификата/.test(server.zhurnal()));
 
   for (const c of [a.ctx, b.ctx, d.ctx, e.ctx, f.ctx]) await c.close();
+}
+
+
+console.log('── ФОРМА ОТКАЗЫВАЕТ СВОИМИ СЛОВАМИ, А НЕ ПОДСКАЗКОЙ БРАУЗЕРА ──');
+{
+  /* Постановка тридцать четвёртой итерации: «проверка на клиенте
+     и на сервере; правила пароля показаны под полем ЗАРАНЕЕ;
+     сообщения об ошибке в визуальном языке сайта, а не системными
+     подсказками браузера».
+
+     ⚠️ СУДИМ ПО ТОМУ, ЧТО ВИДНО НА СТРАНИЦЕ, и по тому, что браузер
+     НИКУДА НЕ УШЁЛ. Подсказку браузера со страницы не прочитать
+     вовсе — она рисуется вне документа; зато видно, что у формы
+     стоит `noValidate`, то есть браузер её и не показывает. */
+  await klient.goto(`http://localhost:${PORT}/checkout/?plan=solo&period=1`, { waitUntil: 'networkidle' });
+  const pravilo = (await klient.textContent('body')) ?? '';
+  chk(
+    'правило пароля стоит под полем ЗАРАНЕЕ',
+    /Не меньше 10 знаков/.test(pravilo),
+    pravilo.match(/Не меньше 10 знаков[^<]{0,60}/)?.[0] ?? '',
+  );
+  chk('форма не отдана браузеру на проверку', await klient.$eval('form', (f) => f.noValidate));
+
+  await klient.fill('input[name="login0"]', 'ne-pochta');
+  await klient.fill('input[name="password0"]', '123');
+  await klient.check('input[name="consent"]');
+  await klient.click('button[type="submit"]');
+  await klient.waitForTimeout(400);
+  const otkaz = (await klient.textContent('body')) ?? '';
+  chk('неверная почта названа своими словами', /Проверьте адрес/.test(otkaz));
+  chk('короткий пароль назван своими словами', /Пароль короче десяти знаков/.test(otkaz));
+  chk('со страницы никуда не ушли', klient.url().includes('/checkout/'), klient.url().replace(`http://localhost:${PORT}`, ''));
+
+  /* ⚠️ И ЗАКАЗА ОТ ЭТОГО НЕ ЗАВЕЛОСЬ. «Форма показала отказ» само
+     по себе ничего не стоит: важно, что дальше ничего не случилось.
+     Правила при этом лежат в ОДНОМ модуле и зовутся и с клиента,
+     и с сервера — второй копии, которая могла бы разойтись,
+     не существует. */
+  const skolkoBylo = (await p2.query('select count(*)::int n from shop_order')).rows[0].n;
+  await klient.waitForTimeout(300);
+  const skolkoStalo = (await p2.query('select count(*)::int n from shop_order')).rows[0].n;
+  chk('заказ на слабом пароле не завёлся', skolkoStalo === skolkoBylo, `${skolkoBylo} → ${skolkoStalo}`);
+}
+
+console.log('── СКИДКА И ВЫКЛЮЧЕННАЯ ЯЧЕЙКА: ЧЕРЕЗ АДМИНКУ И НА САЙТЕ ──');
+{
+  /* ⚠️ ЗАДАЁТСЯ ЧЕРЕЗ АДМИНКУ, А НЕ ВСТАВКОЙ В БАЗУ. Лендинг
+     статический с `revalidate`, и правка ценой в обход админки
+     до него просто не доехала бы: `revalidatePath('/')` зовёт
+     действие, а не запрос. То есть вставкой мы проверяли бы
+     не то, что делает человек. */
+  const zavtra = new Date(Date.now() + 7 * 86400_000).toISOString().slice(0, 10);
+  await admin.goto(`http://localhost:${PORT}/admin/settings/`, { waitUntil: 'networkidle' });
+
+  const skidkaForma = admin
+    .locator('form')
+    .filter({ has: admin.locator('input[name="until"]') })
+    .nth(8); // trio · 1 мес: три тарифа по четыре срока, trio идёт девятым
+  await skidkaForma.locator('input[name="price"]').fill('690');
+  await skidkaForma.locator('input[name="until"]').fill(zavtra);
+  /* Серверное действие адреса не меняет, поэтому обычный клик
+     с ожиданием отрисовки, а не `nazhat` (он ждал бы перехода). */
+  await skidkaForma.locator('button[type="submit"]').click();
+  await admin.waitForTimeout(1200);
+
+  const telaSk = (await admin.textContent('body')) ?? '';
+  chk('админка сохранила скидку', /Скидка сохранена/.test(telaSk));
+
+  await klient.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' });
+  const lend = (await klient.textContent('body')) ?? '';
+  chk('на карточке зачёркнута старая цена и назван срок скидки',
+    /890/.test(lend) && /690/.test(lend) && /до \d\d\.\d\d/.test(lend),
+    lend.match(/до \d\d\.\d\d/)?.[0] ?? '');
+  const zachyorknuto = await klient.$$eval('.card__bylo', (e) => e.map((x) => x.textContent ?? ''));
+  chk('старая цена именно зачёркнута, а не просто напечатана',
+    zachyorknuto.some((v) => v.includes('890')), zachyorknuto.join(' · '));
+
+  /* Цена замораживается при создании заказа: заказ на «На троих»
+     обязан стоить ровно столько, сколько стоил в момент оформления. */
+  await klient.goto(`http://localhost:${PORT}/checkout/?plan=trio&period=1`, { waitUntil: 'networkidle' });
+  const chek = (await klient.textContent('body')) ?? '';
+  chk('оформление считает по цене со скидкой', /690/.test(chek) && !/890/.test(chek));
+
+  // Выключаем «на одного · три месяца» и смотрим, что срока не стало.
+  await admin.goto(`http://localhost:${PORT}/admin/settings/`, { waitUntil: 'networkidle' });
+  await admin.locator('form').filter({ has: admin.locator('input[name="on"]') }).nth(1)
+    .locator('button[type="submit"]').click();
+  await admin.waitForTimeout(1200);
+  const posleVykl = (await admin.textContent('body')) ?? '';
+  chk('админка выключила ячейку', /Срок выключен/.test(posleVykl));
+  await klient.goto(`http://localhost:${PORT}/checkout/?plan=solo`, { waitUntil: 'networkidle' });
+  const sroki = await klient.$$eval('.pick__btn', (e) => e.map((x) => x.textContent ?? ''));
+  chk('выключенного срока нет в оформлении',
+    sroki.length > 0 && !sroki.some((v) => /Три месяца/.test(v)), sroki.join(' · '));
+}
+
+
+console.log('── ПОЧТА ЗАНЯТА: ОТМЕНА, ДЕНЬГИ НА БАЛАНС, ПИСЬМО О ПОВТОРНОМ ЗАКАЗЕ ──');
+{
+  /* Особый случай из постановки: на почту клиента уже есть аккаунт
+     Spotify, и новый на неё не завести. Это НЕ ОТКАЗ, а развилка:
+     заказ закрывается, деньги идут на баланс, а человеку уходит
+     письмо с просьбой оформить заново, выбрав «Продлить
+     существующий». */
+  await klient.goto(`http://localhost:${PORT}/checkout/?plan=solo&period=1`, { waitUntil: 'networkidle' });
+  const galka = klient.locator('input[name="balance"]');
+  if (await galka.count()) await galka.uncheck();
+  await klient.fill('input[name="login0"]', 'zanyataya@pochta.test');
+  await klient.fill('input[name="password0"]', 'Zanyataya-8');
+  await klient.check('input[name="consent"]');
+  await nazhat(klient, 'button[type="submit"]');
+  await nazhat(klient, 'button[type="submit"]');
+  const zz = await p2.query(`select id, user_id, money_kop from shop_order where status = 'paid' order by id desc limit 1`);
+  const nomerZ = Number(zz.rows[0].id);
+  const balansBylo = Number(
+    (await p2.query('select balance_kop from app_user where id = $1', [zz.rows[0].user_id])).rows[0].balance_kop,
+  );
+
+  await admin.goto(`http://localhost:${PORT}/admin/orders/${nomerZ}/`, { waitUntil: 'networkidle' });
+  await nazhat(admin, 'button:has-text("Взять")');
+  await admin.locator('button:has-text("уже есть аккаунт Spotify")').first().click();
+  await admin.waitForTimeout(1200);
+
+  const posleZ = await p2.query('select status, cancel_reason from shop_order where id = $1', [nomerZ]);
+  chk('заказ закрыт с причиной «почта занята»',
+    posleZ.rows[0].status === 'cancelled' && /уже есть аккаунт Spotify/.test(posleZ.rows[0].cancel_reason ?? ''),
+    `${posleZ.rows[0].status} · ${posleZ.rows[0].cancel_reason}`);
+  const balansStal = Number(
+    (await p2.query('select balance_kop from app_user where id = $1', [zz.rows[0].user_id])).rows[0].balance_kop,
+  );
+  chk('деньги вернулись на баланс',
+    balansStal === balansBylo + Number(zz.rows[0].money_kop),
+    `${balansBylo / 100} → ${balansStal / 100} ₽`);
+  chk('клиенту ушло письмо «оформите заново, выбрав продление»',
+    server.zhurnal().includes('на эту почту уже есть аккаунт Spotify') &&
+      server.zhurnal().includes('Продлить существующий'));
+}
+
+console.log('── ДАТА ОКОНЧАНИЯ И НАПОМИНАНИЕ ЗА ТРИ ДНЯ ──');
+{
+  const srok = await p2.query(
+    `select id, closed_at, expires_at, period,
+            extract(epoch from (expires_at - closed_at)) / 86400 as dney
+       from shop_order where status = 'done' and expires_at is not null order by id limit 1`,
+  );
+  chk('дата окончания поставлена при закрытии заказа',
+    srok.rows.length === 1 && Number(srok.rows[0].dney) > 360 && Number(srok.rows[0].dney) < 372,
+    `${Math.round(Number(srok.rows[0]?.dney ?? 0))} дней на ${srok.rows[0]?.period} мес`);
+
+  await klient.goto(`http://localhost:${PORT}/cabinet/`, { waitUntil: 'networkidle' });
+  const kab = (await klient.textContent('body')) ?? '';
+  chk('в кабинете стоит строка про срок доступа', /Доступ действует до \d\d\.\d\d\.\d{4}/.test(kab),
+    kab.match(/Доступ действует до [\d.]+/)?.[0] ?? '');
+
+  const zakazN = Number(srok.rows[0].id);
+  /* ⚠️ БУДИЛЬНИК ЗОВЁТ УБОРКУ И НАПОМИНАНИЯ ПРИ СТАРТЕ СЛУЖБЫ,
+     поэтому проверка поднимает ВТОРОЙ сервер: ждать часа нечем,
+     а стучаться в рассылку в обход её собственного пути значило бы
+     проверять не то, что работает на бою (Р-98). */
+  const ehoFp = await p2.query(
+    `select login_fp from order_slot where order_id = $1 and login_fp is not null order by idx limit 1`,
+    [zakazN],
+  );
+
+  const podnyat = async () => {
+    const vtoroy = await serveOut(PORT + 7, {
+      env: {
+        DATABASE_URL: URL_BAZY,
+        SPOTIK_CRYPTO_KEY: KLYUCH,
+        SPOTIK_SITE_URL: `http://localhost:${PORT}`,
+        TELEGRAM_BOT_TOKEN: 'proverochnyy-token',
+        TELEGRAM_CHAT_ID: '-1001',
+        TELEGRAM_API_BASE: 'https://127.0.0.1:9',
+        TELEGRAM_IP_FAMILY: '0',
+      },
+    });
+    /* Ждём СОБЫТИЯ, а не секунд: отметки в базе. */
+    const do_ = Date.now() + 30_000;
+    while (Date.now() < do_) {
+      const r = await p2.query('select reminded_at from shop_order where id = $1', [zakazN]);
+      if (r.rows[0].reminded_at) break;
+      await new Promise((t) => setTimeout(t, 500));
+    }
+    await new Promise((t) => setTimeout(t, 500));
+    const log = vtoroy.zhurnal();
+    vtoroy.close();
+    return log;
+  };
+
+  /* Ветка «продление уже оформлено»: письма быть не должно.
+     ⚠️ ПРОДЛЕНИЕ ЗАВОДИТСЯ ОТДЕЛЬНОЙ СТРОКОЙ, А НЕ БЕРЁТСЯ ИЗ ТОГО,
+     ЧТО УЖЕ ЕСТЬ В БАЗЕ. Первая редакция искала «любой другой
+     незакрытый заказ со слотами» — и падала на пустом месте: к этому
+     шагу все остальные заказы с участниками уже отменены ходом самой
+     проверки, а сертификатные слотов не имеют вовсе. Условие ветки
+     точное — заказ ПОЗЖЕ закрытия этого, не отменённый, с тем же
+     отпечатком почты, — и завести его надо именно таким. */
+  await p2.query(
+    `update shop_order set expires_at = now() + interval '2 days', reminded_at = null where id = $1`,
+    [zakazN],
+  );
+  const prodlenie = await p2.query(
+    `insert into shop_order (user_id, kind, plan_id, period, status, total_kop, money_kop, created_at)
+     select user_id, 'plan', plan_id, period, 'new', total_kop, 0, now()
+       from shop_order where id = $1 returning id`,
+    [zakazN],
+  );
+  const nomerProdleniya = Number(prodlenie.rows[0].id);
+  await p2.query(
+    `insert into order_slot (order_id, idx, mode, login_fp) values ($1, 0, 'renew', $2)`,
+    [nomerProdleniya, ehoFp.rows[0].login_fp],
+  );
+  const log1 = await podnyat();
+  chk('при уже оформленном продлении письма нет',
+    /напоминание не нужно: продление уже оформлено/.test(log1) &&
+      !/Подписка Spotify Premium заканчивается/.test(log1));
+  const zashchyolka = await p2.query('select reminded_at from shop_order where id = $1', [zakazN]);
+  chk('защёлка всё равно поставлена', Boolean(zashchyolka.rows[0].reminded_at));
+
+  // Ветка «продления нет»: письмо со ссылкой на продление.
+  await p2.query('delete from shop_order where id = $1', [nomerProdleniya]);
+  await p2.query('update shop_order set reminded_at = null where id = $1', [zakazN]);
+  const log2 = await podnyat();
+  chk('за три дня уходит письмо с датой окончания',
+    /Подписка Spotify Premium заканчивается/.test(log2),
+    log2.match(/Подписка Spotify Premium заканчивается [\d.]+/)?.[0] ?? '');
+  chk('в письме ссылка «Продлить» с тарифом, сроком и номером заказа',
+    new RegExp(`/checkout/\\?plan=[a-z]+&period=\\d+&renew=${zakazN}`).test(log2),
+    log2.match(/\/checkout\/\?plan=[^\s]+/)?.[0] ?? '');
+}
+
+console.log('── ОБРАЩЕНИЕ В ПОДДЕРЖКУ ──');
+{
+  /* Плашка на лендинге появляется после первого экрана — значит
+     сначала надо туда доехать. */
+  await klient.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' });
+  await klient.evaluate(() => {
+    const sc = document.getElementById('scroller');
+    if (sc) sc.scrollTop = window.innerHeight * 1.5;
+  });
+  await klient.waitForTimeout(400);
+  chk('плашка «Поддержка» появилась после первого экрана',
+    await klient.$eval('.pd__knopka', (e) => e.hasAttribute('data-vidna')));
+
+  await klient.click('.pd__knopka');
+  await klient.waitForSelector('textarea[name="tekst"]', { timeout: 15000 });
+  await klient.fill('textarea[name="tekst"]', 'Не приходит письмо с кодом входа, проверьте пожалуйста.');
+  await klient.fill('input[name="svyaz"]', '@spotik_klient');
+  /* ⚠️ ПАУЗА ПЕРЕД ОТПРАВКОЙ ОБЯЗАТЕЛЬНА, И ЭТО НЕ ПОДГОНКА. Форма
+     отсекает отправку, случившуюся раньше секунды с небольшим после
+     открытия: обходчик шлёт её, не открывая. Сторож заполняет поля
+     мгновенно, то есть выглядит ровно как обходчик. */
+  await klient.waitForTimeout(1500);
+  await klient.click('.pd__okno button[type="submit"]');
+  await klient.waitForTimeout(800);
+  const prinyato = (await klient.textContent('body')) ?? '';
+  chk('ответ спокойный: обращение принято', /Обращение принято/.test(prinyato));
+
+  const obr = await p2.query(`select tekst from notify_outbox where vid = 'obrashchenie' order by id desc limit 1`);
+  chk('обращение ушло в служебный чат через очередь уведомлений',
+    obr.rows.length === 1 && /Обращение в поддержку/.test(obr.rows[0].tekst),
+    (obr.rows[0]?.tekst ?? '').replace(/\n/g, ' · ').slice(0, 90));
+  /* ⚠️ ОБРАЩЕНИЕ ОСТАЁТСЯ РУССКИМ, хотя рабочие сообщения бота
+     переведены: внутри текст, который написал клиент. */
+  chk('обращение по-русски, а рабочие сообщения по-английски',
+    /Связь: @spotik_klient/.test(obr.rows[0]?.tekst ?? ''));
+  chk('текста обращения нет в журнале сервера',
+    !server.zhurnal().includes('Не приходит письмо с кодом входа'));
+
+  // Лимит: три обращения за десять минут, четвёртое отбито.
+  const poslat = async (tekst) => {
+    /* Окно после удачной отправки показывает подтверждение — закрываем
+       его крестиком и открываем заново, как это делает человек. */
+    await klient.click('.pd__krest');
+    await klient.waitForTimeout(300);
+    await klient.click('.pd__knopka');
+    await klient.waitForSelector('textarea[name="tekst"]', { timeout: 15000 });
+    await klient.fill('textarea[name="tekst"]', tekst);
+    await klient.fill('input[name="svyaz"]', '@spotik_klient');
+    await klient.waitForTimeout(1500);
+    await klient.click('.pd__okno button[type="submit"]');
+    await klient.waitForTimeout(700);
+  };
+  await poslat('Ещё одно обращение номер два, всё подробно.');
+  await poslat('Ещё одно обращение номер три, всё подробно.');
+  await poslat('Четвёртое подряд обращение, его пора отбить.');
+  const chetvyortoe = (await klient.textContent('body')) ?? '';
+  chk('четвёртое подряд обращение отбито по частоте',
+    /Обращение уже отправлено/.test(chetvyortoe));
+
+  // Ловушка: заполненное скрытое поле отвечает «принято», а в чат
+  // не уходит ничего.
+  const bylo = (await p2.query(`select count(*)::int n from notify_outbox where vid = 'obrashchenie'`)).rows[0].n;
+  await klient.evaluate(() => {
+    const f = document.querySelector('.pd__okno form');
+    const l = f?.querySelector('input[name="website"]');
+    if (l) (l).value = 'http://spam.example';
+  });
+  chk('ловушка для обходчика есть на форме',
+    await klient.$eval('.pd__okno input[name="website"]', (e) => e.getAttribute('tabindex') === '-1'));
+  const stalo = (await p2.query(`select count(*)::int n from notify_outbox where vid = 'obrashchenie'`)).rows[0].n;
+  chk('отбитые обращения в чат не попали', stalo === bylo, `${bylo} → ${stalo}`);
 }
 
 chk('ни одной ошибки JavaScript', oshibkiJS.length === 0, oshibkiJS.slice(0, 3).join(' | '));

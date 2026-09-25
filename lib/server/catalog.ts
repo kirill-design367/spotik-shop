@@ -15,7 +15,16 @@
 import { DARIMYE, PERIODS, type Plan, type PeriodKey } from '@/lib/plans';
 import { tikho, zapros } from './db';
 
-export type Cena = { period: PeriodKey; kop: number };
+/**
+ * Цена на срок.
+ *
+ * ⚠️ `kop` — ЭТО ВСЕГДА ЦЕНА, ПО КОТОРОЙ ПЛАТЯТ. Скидка не лежит
+ * рядом «на выбор»: она уже применена, и весь остальной код —
+ * оформление, чек, письмо, статистика — о ней вообще не знает.
+ * Знать о ней должен ровно один: тот, кто рисует зачёркнутую
+ * старую цену.
+ */
+export type Cena = { period: PeriodKey; kop: number; bezSkidki?: number; doDaty?: string };
 
 export type TarifSCenami = {
   id: string;
@@ -68,7 +77,55 @@ export async function katalog(): Promise<TarifSCenami[]> {
     m.set(Number(r.period), Number(r.price_kop));
     ceny.set(r.plan_id, m);
   }
-  return DARIMYE.map((p) => svesti(p, ceny.get(p.id)));
+
+  /* ⚠️ СКИДКА СНИМАЕТСЯ САМА, И СНИМАЕТ ЕЁ ЗАПРОС, А НЕ БУДИЛЬНИК.
+     `until >= current_date` — это и есть «после даты окончания скидка
+     снимается»: ни уборки, ни таймера для этого не нужно, и забыть
+     его негде. Лендинг статический, но у него стоит `revalidate`,
+     поэтому новая цена доезжает сама (Р-85). */
+  const skidki = await tikho(
+    () =>
+      zapros<{ plan_id: string; period: number; price_kop: string; until: Date }>(
+        'select plan_id, period, price_kop, until from plan_discount where until >= current_date',
+      ),
+    [] as { plan_id: string; period: number; price_kop: string; until: Date }[],
+  );
+  /* ⚠️ В `plan_off` ЛЕЖАТ ТОЛЬКО ВЫКЛЮЧЕННЫЕ ПАРЫ. «Ничего не
+     сказано» значит «доступно, если есть цена», — то самое поведение,
+     которое было до сетки доступности. */
+  const vyklyucheny = await tikho(
+    () => zapros<{ plan_id: string; period: number }>('select plan_id, period from plan_off'),
+    [] as { plan_id: string; period: number }[],
+  );
+
+  return DARIMYE.map((p) => svesti(p, ceny.get(p.id), skidki, vyklyucheny));
+}
+
+/** Скидки и выключенные пары — для админки, без наложения на цены. */
+export async function skidkiIVyklyuchennye(): Promise<{
+  skidki: { planId: string; period: number; kop: number; until: string }[];
+  vyklyucheny: { planId: string; period: number }[];
+}> {
+  const s = await tikho(
+    () =>
+      zapros<{ plan_id: string; period: number; price_kop: string; until: Date }>(
+        'select plan_id, period, price_kop, until from plan_discount',
+      ),
+    [] as { plan_id: string; period: number; price_kop: string; until: Date }[],
+  );
+  const v = await tikho(
+    () => zapros<{ plan_id: string; period: number }>('select plan_id, period from plan_off'),
+    [] as { plan_id: string; period: number }[],
+  );
+  return {
+    skidki: s.map((r) => ({
+      planId: r.plan_id,
+      period: Number(r.period),
+      kop: Number(r.price_kop),
+      until: new Date(r.until).toISOString().slice(0, 10),
+    })),
+    vyklyucheny: v.map((r) => ({ planId: r.plan_id, period: Number(r.period) })),
+  };
 }
 
 /** Тот же каталог, но без единого обращения к базе. */
@@ -77,11 +134,48 @@ export function katalogPoUmolchaniyu(): TarifSCenami[] {
   return DARIMYE.map((p) => svesti(p, ceny.get(p.id)));
 }
 
-function svesti(p: Plan, ceny: Map<number, number> | undefined): TarifSCenami {
+/**
+ * Каталог со ВСЕМИ ценами, без учёта выключенных пар, — для админки.
+ * Сетка доступности обязана показывать и выключенные ячейки: иначе
+ * включить их обратно было бы нечем.
+ */
+export async function katalogPolny(): Promise<TarifSCenami[]> {
+  const ceny = umolchaniya();
+  const rows = await tikho(
+    () => zapros<{ plan_id: string; period: number; price_kop: string }>('select plan_id, period, price_kop from plan_price'),
+    [] as { plan_id: string; period: number; price_kop: string }[],
+  );
+  for (const r of rows) {
+    const m = ceny.get(r.plan_id) ?? new Map<number, number>();
+    m.set(Number(r.period), Number(r.price_kop));
+    ceny.set(r.plan_id, m);
+  }
+  return DARIMYE.map((p) => svesti(p, ceny.get(p.id)));
+}
+
+function svesti(
+  p: Plan,
+  ceny: Map<number, number> | undefined,
+  skidki: { plan_id: string; period: number; price_kop: string; until: Date }[] = [],
+  vyklyucheny: { plan_id: string; period: number }[] = [],
+): TarifSCenami {
   const spisok: Cena[] = [];
   for (const s of PERIODS) {
     const kop = ceny?.get(s.key);
-    if (typeof kop === 'number') spisok.push({ period: s.key, kop });
+    if (typeof kop !== 'number') continue;
+    if (vyklyucheny.some((v) => v.plan_id === p.id && Number(v.period) === s.key)) continue;
+    const sk = skidki.find((x) => x.plan_id === p.id && Number(x.period) === s.key);
+    if (sk && Number(sk.price_kop) < kop) {
+      const d = new Date(sk.until);
+      spisok.push({
+        period: s.key,
+        kop: Number(sk.price_kop),
+        bezSkidki: kop,
+        doDaty: `${String(d.getUTCDate()).padStart(2, '0')}.${String(d.getUTCMonth() + 1).padStart(2, '0')}`,
+      });
+      continue;
+    }
+    spisok.push({ period: s.key, kop });
   }
   return {
     id: p.id,

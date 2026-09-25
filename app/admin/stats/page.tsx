@@ -1,4 +1,6 @@
 import { redirect } from 'next/navigation';
+import UtmGen from '@/components/admin/UtmGen';
+import { env } from '@/lib/server/env';
 import { ktoSotrudnik } from '@/lib/server/auth';
 import { bazaEst } from '@/lib/server/db';
 import { svodka } from '@/lib/server/stats';
@@ -24,6 +26,7 @@ export default async function AdminStats() {
   const s = await ktoSotrudnik();
   const y = await yazykSotrudnika(s);
   const t = slovar(y);
+  const adres = env.siteUrl;
   if (!bazaEst()) return <p className="err">{t('o.no_db')}</p>;
   if (!s) redirect('/admin/login/');
   if (s.role !== 'admin') return <p className="err">{t('o.only_admin')}</p>;
@@ -143,6 +146,12 @@ export default async function AdminStats() {
           </div>
         )}
       </div>
+
+      {/* ⚠️ ГЕНЕРАТОР СТОИТ В СТАТИСТИКЕ, А НЕ В НАСТРОЙКАХ, и это
+          не случайность: метки из собранной ссылки приезжают ровно
+          в ту таблицу источников, что выше. Ссылку собирают, глядя
+          на то, что уже работает. */}
+      <UtmGen y={y} adres={adres} />
     </>
   );
 }

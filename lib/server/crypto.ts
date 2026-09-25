@@ -99,6 +99,27 @@ export function otpechatok(secret: string): string {
   return createHash('sha256').update(secret, 'utf8').digest('hex');
 }
 
+/**
+ * Отпечаток ПОЧТЫ для поиска по базе.
+ *
+ * ⚠️ СОЛИТСЯ КЛЮЧОМ ШИФРОВАНИЯ, И ЭТО НЕ ПРИДИРКА. Простой sha256
+ * от адреса подбирается словарём за минуты: адресов мало и они
+ * предсказуемы, в отличие от кода сертификата, у которого 59 бит
+ * случайности. Соль ключом делает отпечаток бесполезным для того,
+ * кто унёс базу, но не ключ (Р-87).
+ *
+ * Нужен он ровно для одного: понять, не оформлено ли по этой же почте
+ * продление, — не расшифровывая при этом ни одной строки. Расшифровка
+ * остаётся там, где была, и читателей у неё по-прежнему два (закон 35).
+ */
+export function otpechatokPochty(pochta: string): string {
+  const k = klyuch();
+  const chistaya = pochta.trim().toLowerCase();
+  return createHash('sha256')
+    .update(k ? Buffer.concat([k, Buffer.from(chistaya, 'utf8')]) : Buffer.from(chistaya, 'utf8'))
+    .digest('hex');
+}
+
 /** Сравнение постоянного времени: по времени секрет не подобрать. */
 export function sovpali(a: string, b: string): boolean {
   const x = Buffer.from(a, 'utf8');

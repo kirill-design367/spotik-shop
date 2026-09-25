@@ -39,7 +39,9 @@ export async function otpechatokKabineta(userId: number): Promise<OtpechatokKabi
          пересчитаться, а статус при этом прежний;
        • у закрытого заказа стёрлись секреты: доступов там могло
          не быть вовсе (renew), статус не менялся, а примечание
-         «доступы стёрты» должно встать.
+         «доступы стёрты» должно встать;
+       • появилась дата окончания доступа — это отдельная строка
+         в карточке заказа (тридцать четвёртая итерация).
 
      ⚠️ И НИ ОДНОГО РАСШИФРОВАННОГО ПОЛЯ: берётся только ЕСТЬ ЛИ
      значение, а не какое оно. Отпечаток уходит в браузер каждые
@@ -59,7 +61,8 @@ export async function otpechatokKabineta(userId: number): Promise<OtpechatokKabi
        (select coalesce(string_agg(
                  o.id || ':' || o.status || ':' || coalesce(o.cancel_reason, '')
                       || ':' || o.total_kop || ':' || o.balance_kop || ':' || o.money_kop
-                      || ':' || (o.secrets_wiped_at is not null)::int,
+                      || ':' || (o.secrets_wiped_at is not null)::int
+                      || ':' || (o.expires_at is not null)::int,
                  ',' order by o.id), '')
           from shop_order o where o.user_id = $1) as zakazy,
        (select coalesce(string_agg(
@@ -71,9 +74,15 @@ export async function otpechatokKabineta(userId: number): Promise<OtpechatokKabi
                  ',' order by s.order_id, s.idx), '')
           from order_slot s join shop_order o on o.id = s.order_id
          where o.user_id = $1) as sloty,
+       /* ⚠️ СЧИТАЮТСЯ ВЫПОЛНЕННЫЕ СЛОТЫ, А НЕ ВЫДАННЫЕ ЛОГИНЫ.
+          До тридцать четвёртой итерации «доступ выдан» и «оператор
+          записал логин» были одним и тем же; теперь оператор заводит
+          аккаунт на данные клиента и не записывает ничего, а видимое
+          событие — закрытый слот. У старых заказов одно влечёт другое,
+          поэтому им ничего не меняется. */
        (select count(*)::text
           from order_slot s join shop_order o on o.id = s.order_id
-         where o.user_id = $1 and s.out_login_enc is not null) as dostupov,
+         where o.user_id = $1 and s.done_at is not null) as dostupov,
        (select balance_kop::text from app_user where id = $1) as balans,
        (select coalesce(string_agg(c.id || ':' || (c.used_at is not null)::int, ',' order by c.id), '')
           from certificate c where c.buyer_id = $1) as serty`,

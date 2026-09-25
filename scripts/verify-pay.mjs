@@ -82,7 +82,8 @@ const pool = new pg.Pool({ connectionString: URL_BAZY, max: 1 });
    прошла бы по чужому следу (тот же класс, что «последняя строка
    таблицы» в Р-94). */
 await pool.query(`truncate balance_move, payment, order_slot, certificate, shop_order,
-  session, login_code, app_user, staff, plan_price, setting, notify_outbox restart identity cascade`);
+  session, login_code, cert_try, support_try, app_user, staff, plan_price, plan_discount,
+  plan_off, setting, notify_outbox restart identity cascade`);
 
 const server = await serveOut(PORT, {
   env: {
@@ -161,7 +162,7 @@ const uvedomlenieOZakaze = async (zakaz) => {
   const { rows } = await pool.query(
     `select count(*)::int as n from notify_outbox
       where vid = 'zakaz_oplachen' and tekst like $1`,
-    [`Новый оплаченный заказ № ${zakaz}%`],
+    [`New paid order #${zakaz}%`],
   );
   return Number(rows[0]?.n ?? 0) > 0;
 };
@@ -210,6 +211,13 @@ async function novyZakaz(plan, period, port = PORT) {
     await page.locator('form').filter({ has: kodovoe }).first().locator('button[type="submit"]').click();
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(400);
+  }
+  /* Данные аккаунта человек вводит в обоих случаях с тридцать
+     четвёртой итерации: оператор заводит аккаунт ровно на них. */
+  const polya = await page.$$('input[name^="login"]');
+  for (let i = 0; i < polya.length; i += 1) {
+    await page.fill(`input[name="login${i}"]`, `oplata${i}@pochta.test`);
+    await page.fill(`input[name="password${i}"]`, `Oplata-Parol-${i}1`);
   }
   await page.check('input[name="consent"]');
   await page.click('button[type="submit"]');

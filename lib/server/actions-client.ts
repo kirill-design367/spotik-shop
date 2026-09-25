@@ -24,6 +24,7 @@ import { utmIzKuki } from './utm';
 import { vystavitSchet } from './payments';
 import { nayti, POCHEMU_KOD } from './certificates';
 import { katalog, naytiTarif } from './catalog';
+import { prinyatObrashchenie } from './podderzhka';
 
 export type Otvet = {
   oshibka?: string;
@@ -40,6 +41,48 @@ export type Otvet = {
 };
 
 const NET_BAZY = 'Сервис временно недоступен. Попробуйте чуть позже.';
+
+/**
+ * Кто сейчас вошёл — только почта и только для подстановки в форму
+ * поддержки.
+ *
+ * ⚠️ ЭТО ДЕЙСТВИЕ, А НЕ ЧТЕНИЕ КУКИ В РАСКЛАДКЕ, и причина одна:
+ * `cookies()` в корневой раскладке перевёл бы НА ПОСЧИТАННЫЙ ОТВЕТ
+ * все страницы сайта, включая лендинг, — то есть отменил бы закон 36
+ * ради подстановки одного поля. Действие зовётся, только когда
+ * человек открыл форму, и на скорость первого экрана не влияет
+ * никак.
+ */
+export async function deystvieKtoYa(): Promise<{ email: string | null }> {
+  if (!bazaEst()) return { email: null };
+  const kto = await ktoKlient();
+  return { email: kto?.email ?? null };
+}
+
+/**
+ * Обращение в поддержку.
+ *
+ * ⚠️ ОТВЕТ СПОКОЙНЫЙ И ОДИН И ТОТ ЖЕ. Человек написал в поддержку
+ * не затем, чтобы узнать, что у него не то в поле; всё, что мы можем
+ * честно сказать, — «принято, ответим в рабочее время».
+ *
+ * ⚠️ ПОЧТА АККАУНТА ПОДСТАВЛЯЕТСЯ САМА, но «от кого» берётся
+ * НЕ ИЗ ФОРМЫ, а из сессии: поле формы правится в браузере, а подпись
+ * под обращением должна значить то, что она значит.
+ */
+export async function deystvieObrashchenie(_prosh: Otvet, fd: FormData): Promise<Otvet> {
+  const kto = await ktoKlient();
+  const itog = await prinyatObrashchenie({
+    tekst: String(fd.get('tekst') ?? ''),
+    svyaz: String(fd.get('svyaz') ?? ''),
+    lovushka: String(fd.get('website') ?? ''),
+    otkryto: Number(fd.get('otkryto') ?? 0),
+    ot: kto?.email ?? null,
+    userId: kto?.userId ?? null,
+  });
+  if (!itog.ok) return { oshibka: itog.pochemu };
+  return { shag: 'prinyato' };
+}
 
 export async function deystviePrositKod(_prosh: Otvet, fd: FormData): Promise<Otvet> {
   if (!bazaEst()) return { oshibka: NET_BAZY };

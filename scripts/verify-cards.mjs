@@ -59,6 +59,13 @@ for (const [w, h, dpr] of [
     deviceScaleFactor: dpr,
   });
   await page.goto(`http://localhost:${PORT}${PREFIX}/`, { waitUntil: 'networkidle' });
+  /* ⚠️ ПЕРЕЛИВ ПО КАЙМЕ ЗАМОРОЖЕН НА ВСЁ ВРЕМЯ РАСТРОВЫХ ПРОВЕРОК.
+     Свет за картой и кромку судят РАЗНОСТЬЮ двух кадров, а перелив
+     движется — между кадрами он успевает уехать, и разность
+     наполняется его следом. Это ровно то же правило, по которому
+     на время снимка гасится сам свет: сравнивать надо один предмет,
+     а не два. Сам перелив проверяется отдельно и с живой анимацией. */
+  await page.addStyleTag({ content: '.card__edge::before{animation:none!important}' });
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(600);
   await page.evaluate(() => {
@@ -120,12 +127,41 @@ for (const [w, h, dpr] of [
       for (let x = x0; x < x0 + 4; x += 1) v.push(png.data[(y * png.width + x) * 4 + 1]);
     return v.sort((p, q) => p - q)[v.length >> 1];
   };
+  /* ⚠️ ВЕРХНЯЯ ПОЛКА БЕРЁТСЯ С КАЙМЫ, А НЕ С ПЛИТЫ. С тридцать
+     четвёртой итерации внешний контур карты — это КАЙМА в один
+     пиксель, и она СВЕТЛЕЕ плиты: переход снаружи внутрь идёт
+     фон → кайма, а не фон → плита. Полка, снятая в теле плиты,
+     лежала бы НИЖЕ каймы, полоса 20…80 % уезжала бы под неё,
+     и сглаженные пиксели в счёт не попадали бы вовсе — сторож
+     докладывал бы ступеньку на исправной кромке.
+
+     Полка снимается из САМОГО КАДРА: в каждой строке окна берётся
+     самый светлый пиксель (это и есть кайма), и по строкам берётся
+     медиана. Модели предмета здесь нет (Р-47) — только то,
+     что нарисовано. */
   const lo = patch(0, 0);
-  const hi = patch(png.width - 5, png.height - 5);
+  const rowMax = [];
+  for (let y = 0; y < png.height; y += 1) {
+    let m = 0;
+    for (let x = 0; x < png.width; x += 1) m = Math.max(m, png.data[(y * png.width + x) * 4 + 1]);
+    rowMax.push(m);
+  }
+  const hi = [...rowMax].sort((p, q) => p - q)[rowMax.length >> 1];
+  /* ⚠️ СЧИТАЕТСЯ ТОЛЬКО ВНЕШНИЙ СКАТ, ДО ГРЕБНЯ КАЙМЫ. За каймой
+     идёт плита, и её яркость лежит МЕЖДУ фоном и каймой — то есть
+     попала бы в полосу целиком и дала бы сотни «сглаженных»
+     пикселей на ровном месте. */
   let soft = 0;
-  for (let i = 0; i < png.data.length; i += 4) {
-    const g = png.data[i + 1];
-    if (g > lo + (hi - lo) * 0.2 && g < lo + (hi - lo) * 0.8) soft += 1;
+  for (let y = 0; y < png.height; y += 1) {
+    if (rowMax[y] < lo + (hi - lo) * 0.5) continue;
+    let greben = 0;
+    for (let x = 0; x < png.width; x += 1) {
+      if (png.data[(y * png.width + x) * 4 + 1] === rowMax[y]) { greben = x; break; }
+    }
+    for (let x = 0; x < greben; x += 1) {
+      const g = png.data[(y * png.width + x) * 4 + 1];
+      if (g > lo + (hi - lo) * 0.2 && g < lo + (hi - lo) * 0.8) soft += 1;
+    }
   }
   /* ПОРОГ РАЗЛИЧАЕТ СТУПЕНЬКУ ОТ СГЛАЖИВАНИЯ, А НЕ ОДНО
      сглаживание от другого. У ступеньки промежуточных
@@ -135,7 +171,12 @@ for (const [w, h, dpr] of [
      честно сглаженный растр даёт переход в ОДИН пиксель
      без промежуточной яркости. Поэтому считается СУММА вдоль
      всей дуги, а порог взят с запасом к квантованию. */
-  const softMin = Math.round(r * dpr * 0.6);
+  /* ⚠️ ПОРОГ ПЕРЕСЧИТАН ПОД ВНЕШНИЙ СКАТ. Прежний считал пиксели
+     по всей дуге и брал 0.6 её длины; теперь считается ОДИН скат
+     на строку, и у честно сглаженной кромки он даёт около пикселя
+     на строку. Порог — треть строк окна: у ступеньки промежуточных
+     пикселей нет ВОВСЕ, так что различать надо ноль и «есть». */
+  const softMin = Math.max(6, Math.round(png.height * 0.33));
   const okSoft = hi - lo > 6 && soft >= softMin;
   await page.evaluate(() => {
     for (const st of document.querySelectorAll('style')) {
@@ -493,7 +534,71 @@ for (const [w, h, dpr] of [
   });
   const okGeo = geo[0] === geo[1];
 
+  // ── 6. КАЙМА У КАЖДОЙ КАРТЫ, И У ВЫБРАННОЙ ОНА ЗЕЛЁНАЯ ──────────────
+  /* Постановка тридцать четвёртой итерации: «карточки сливаются
+     с фоном; у каждой тонкая светлая кайма в один пиксель, у ВЫБРАННОЙ
+     кайма зелёная». Судится по РАСТРУ левой кромки на середине высоты:
+     берётся полоска, накрывающая фон, кайму и начало плиты, и в ней
+     ищется самый светлый столбец. Свет на время снимка гасится — он
+     поднимает яркость снаружи карты и смазал бы разницу «фон — кайма».
+
+     ⚠️ ЗЕЛЕНЬ СУДИТСЯ РАЗНОСТЬЮ КАНАЛОВ, А НЕ ПОХОЖЕСТЬЮ НА ЦВЕТ.
+     У светлой каймы каналы равны, у зелёной зелёный заметно выше
+     красного — и это верно при любой яркости, то есть не зависит
+     ни от подложки, ни от того, что мы написали в CSS. */
+  await page.addStyleTag({ content: '.cards__glow{display:none!important}' });
+  await page.waitForTimeout(250);
+  const vybrana = await page.evaluate(() =>
+    [...document.querySelectorAll('.card')].findIndex((e) => e.getAttribute('aria-checked') === 'true'),
+  );
+  const kaymy = [];
+  for (let i = 0; i < 4; i += 1) {
+    const b = await box(i);
+    const clip = {
+      x: Math.round(b.x - 3),
+      y: Math.round(b.y + b.h / 2 - 2),
+      width: 10,
+      height: 5,
+    };
+    const im = PNG.sync.read(await page.screenshot({ clip }));
+    const stolb = (x) => {
+      const v = [];
+      for (let y = 0; y < im.height; y += 1) {
+        const o = (y * im.width + x) * 4;
+        v.push([im.data[o], im.data[o + 1], im.data[o + 2]]);
+      }
+      v.sort((p, q) => p[1] - q[1]);
+      return v[v.length >> 1];
+    };
+    let luch = null;
+    for (let x = 0; x < im.width; x += 1) {
+      const c = stolb(x);
+      if (!luch || c[1] > luch[1]) luch = c;
+    }
+    const fon = stolb(0);
+    const plita = stolb(im.width - 1);
+    kaymy.push({
+      vyshe: Math.min(luch[1] - fon[1], luch[1] - plita[1]),
+      zelen: luch[1] - luch[0],
+    });
+  }
+  /* Кайма обязана быть светлее И фона, И плиты — иначе это
+     не кайма, а просто край плиты. */
+  const okKayma = kaymy.length === 4 && kaymy.every((k) => k.vyshe >= 8);
+  const okZelen =
+    vybrana >= 0 &&
+    kaymy[vybrana].zelen >= 25 &&
+    kaymy.every((k, i) => i === vybrana || Math.abs(k.zelen) <= 8);
+  await page.evaluate(() => {
+    for (const st of document.querySelectorAll('style')) {
+      if (st.textContent.includes('.cards__glow{display:none')) st.remove();
+    }
+  });
+  await page.waitForTimeout(200);
+
   if (
+    !okKayma ||
+    !okZelen ||
     !okSoft ||
     !okBleed ||
     !okSpring ||
@@ -517,6 +622,13 @@ for (const [w, h, dpr] of [
       (okBreath ? '' : '   !!! ДЫХАНИЕ НЕ ЖИВОЕ'),
   );
   console.log(
+    `            кайма: светлее фона и плиты на ${kaymy.map((k) => k.vyshe).join('/')} уровня ` +
+      `(порог 8), зелень выбранной ${vybrana >= 0 ? kaymy[vybrana].zelen : '—'} ` +
+      `против ${kaymy.filter((_, i) => i !== vybrana).map((k) => k.zelen).join('/')} у остальных` +
+      (okKayma ? '' : '   !!! КАЙМЫ НЕТ') +
+      (okZelen ? '' : '   !!! КАЙМА ВЫБРАННОЙ НЕ ЗЕЛЁНАЯ'),
+  );
+  console.log(
     `            свет вокруг сетки: ${lit} светлых пикселей, ` +
       `амплитуда ${peak.toFixed(0)}, наибольший скачок ${jump.toFixed(1)} уровня ` +
       `(порог ${edgeMax.toFixed(1)}), ` +
@@ -532,6 +644,104 @@ for (const [w, h, dpr] of [
       (okRound ? '' : '   !!! СВЕТ ОБРЫВАЕТСЯ ПРЯМЫМ УГЛОМ'),
   );
   await page.close();
+}
+
+// ── 7. ПЕРЕЛИВ ИДЁТ ПО КОНТУРУ, А ПРИ «УМЕНЬШИТЬ ДВИЖЕНИЕ» СТОИТ ──────
+/* Постановка: «по кайме выбранной медленно идёт светлый зелёный блик».
+   Судится по РАСТРУ и по ПОРЯДКУ, а не по тому, что написано в CSS:
+   снимается серия кадров за один круг, в каждом берутся четыре точки
+   каймы — верх, низ, лево, право, — и смотрится, КАКАЯ из них сейчас
+   самая светлая. У блика, идущего по контуру, эта точка обязана
+   смениться: за круг он проходит все четыре стороны. У неподвижной
+   каймы она одна и та же на всех кадрах — и это ровно то, что
+   требуется при «уменьшить движение».
+
+   ⚠️ ТОЧКИ БЕРУТСЯ ОТ ЖИВОГО БОКСА НА КАЖДОМ КАДРЕ. Карта дышит,
+   и за восемь секунд её кромка успевает уехать на пиксель: точки,
+   посчитанные один раз, съехали бы с каймы на фон. */
+{
+  const zamer = async (reduced) => {
+    const page = await browser.newPage({
+      viewport: { width: 1920, height: 1080 },
+      deviceScaleFactor: 1,
+      reducedMotion: reduced ? 'reduce' : 'no-preference',
+    });
+    await page.goto(`http://localhost:${PORT}${PREFIX}/`, { waitUntil: 'networkidle' });
+    await page.evaluate(() => document.fonts.ready);
+    await page.evaluate(() => {
+      const el = document.querySelector('.cards');
+      const sc = document.getElementById('scroller');
+      sc.scrollTop += el.getBoundingClientRect().top - sc.clientHeight * 0.16;
+    });
+    /* Свет за картой гасится: он ярче блика и при поиске самой
+       светлой точки каймы победил бы всегда. */
+    await page.addStyleTag({ content: '.cards__glow{display:none!important}' });
+    await page.waitForTimeout(700);
+
+    const storony = [];
+    const zelen = [];
+    for (let k = 0; k < 14; k += 1) {
+      const b = await page.evaluate(() => {
+        const el =
+          document.querySelector(".card[aria-checked='true']") || document.querySelector('.card');
+        const r = el.getBoundingClientRect();
+        return { x: r.x, y: r.y, w: r.width, h: r.height };
+      });
+      const im = PNG.sync.read(
+        await page.screenshot({
+          clip: {
+            x: Math.round(b.x - 2),
+            y: Math.round(b.y - 2),
+            width: Math.round(b.w + 4),
+            height: Math.round(b.h + 4),
+          },
+        }),
+      );
+      /* Самый светлый пиксель в окне 5×5 вокруг точки каймы. Окно
+         нужно ровно затем, чтобы пережить дыхание: оно двигает
+         кромку на доли пикселя. */
+      const yark = (px, py) => {
+        let best = [0, 0, 0];
+        for (let y = py - 2; y <= py + 2; y += 1) {
+          for (let x = px - 2; x <= px + 2; x += 1) {
+            if (x < 0 || y < 0 || x >= im.width || y >= im.height) continue;
+            const o = (y * im.width + x) * 4;
+            if (im.data[o + 1] > best[1]) best = [im.data[o], im.data[o + 1], im.data[o + 2]];
+          }
+        }
+        return best;
+      };
+      const mid = [
+        yark(Math.round(im.width / 2), 2),
+        yark(im.width - 3, Math.round(im.height / 2)),
+        yark(Math.round(im.width / 2), im.height - 3),
+        yark(2, Math.round(im.height / 2)),
+      ];
+      let luchshaya = 0;
+      for (let i = 1; i < 4; i += 1) if (mid[i][1] > mid[luchshaya][1]) luchshaya = i;
+      storony.push(luchshaya);
+      zelen.push(mid[luchshaya][1] - mid[luchshaya][0]);
+      await page.waitForTimeout(520);
+    }
+    await page.close();
+    return { storon: new Set(storony).size, zelen: Math.min(...zelen) };
+  };
+
+  const zhivoy = await zamer(false);
+  const tikho = await zamer(true);
+  /* Круг идёт семь секунд, серия — 14 кадров по 0.52 с плюс время
+     самих снимков, то есть заведомо больше круга. Блик обязан
+     побывать не меньше чем на трёх сторонах из четырёх. */
+  const okBeg = zhivoy.storon >= 3;
+  const okTikho = tikho.storon === 1 && tikho.zelen >= 25;
+  if (!okBeg || !okTikho) failed = true;
+  console.log(
+    `\n  перелив по кайме: за круг блик побывал на ${zhivoy.storon} сторонах из 4 ` +
+      `(порог 3); при «уменьшить движение» сторон ${tikho.storon} (нужна 1), ` +
+      `кайма остаётся зелёной на ${tikho.zelen} уровня (порог 25)` +
+      (okBeg ? '' : '   !!! ПЕРЕЛИВ НЕ ИДЁТ') +
+      (okTikho ? '' : '   !!! ПРИ «УМЕНЬШИТЬ ДВИЖЕНИЕ» ПЕРЕЛИВ НЕ ЗАМЕР'),
+  );
 }
 
 await browser.close();

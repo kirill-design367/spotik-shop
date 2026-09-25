@@ -98,6 +98,39 @@
 .field input:focus-visible,
 .field select:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 
+/* ── ПОЛЕ С ГЛАЗОМ И СВОИ СООБЩЕНИЯ ОБ ОШИБКЕ ───────────────────────────
+   ⚠️ ГЛАЗ ЛЕЖИТ ПОВЕРХ ПОЛЯ, А НЕ РЯДОМ С НИМ. Рядом он отнял бы
+   у ввода полсотни пикселей ширины, а на 320 её и так нет.
+   Поле при этом получает отбой справа ровно под кнопку, чтобы текст
+   под неё не заезжал. */
+.field__box { position: relative; }
+.field__vvod--sglazom { padding-right: 52px !important; }
+.field__glaz {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  translate: 0 -50%;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--ui-r);
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+}
+.field__glaz:hover { color: #fff; }
+.field__glaz:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
+/* Подсказка стоит под полем ЗАРАНЕЕ, а не после отказа: правило
+   пароля человек обязан узнать до того, как придумает его. */
+.field__hint { margin: 6px 0 0; font-size: 12px; line-height: 1.45; color: var(--dim-2); }
+/* Отказ — тот же кегль, но цветом и с тяжелее набранной строкой.
+   Красная плашка `err` здесь не годится: она про весь экран,
+   а это про одно поле. */
+.field__beda { margin: 6px 0 0; font-size: 12px; line-height: 1.45; color: #ff8f8f; }
+.field input[aria-invalid='true'] { box-shadow: inset 0 0 0 1px rgba(255, 90, 90, 0.75); }
+
 .check { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 14px; font-size: 14px; color: var(--dim); }
 .check input { width: 22px; height: 22px; accent-color: var(--green); flex: 0 0 auto; margin-top: 1px; }
 .check a { color: #fff; text-decoration: underline; }
@@ -212,3 +245,115 @@
    несколько секунд плашка заметна ровно тому, кто в этот момент
    смотрел на экран. Убирает её перезагрузка страницы. */
 .cab__novoe { margin: 0 0 20px; }
+
+
+/* ── ПОДДЕРЖКА: ПЛАШКА В УГЛУ И НАКЛАДКА С ФОРМОЙ ───────────────────────
+   Постановка тридцать четвёртой итерации: «небольшая кнопка-плашка
+   „Поддержка“ в правом нижнем углу, на всех страницах; на лендинге
+   появляется после первого экрана, чтобы не перекрывать вордмарк».
+
+   ⚠️ ПЛАШКА ПРИБИТА К ВЬЮПОРТУ, И ЭТО ЗАКОННО. Закон 19 запрещает
+   `fixed` тому, что лежит НАД ПРОКРУЧИВАЕМЫМ СОДЕРЖИМЫМ: у такого
+   элемента цепочка прокрутки идёт в документ, а документ неподвижен,
+   и место под ним становится мёртвой зоной. Здесь плашка размером
+   с кнопку и стоит в углу — мёртвой зоной становится сама кнопка,
+   что для кнопки и правильно. */
+.pd__knopka {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 40;
+  min-height: 44px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18), 0 8px 28px rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font: inherit;
+  font-size: 14px;
+  font-variation-settings: 'wght' 620;
+  cursor: pointer;
+  /* Появляется прозрачностью и сдвигом — обе величины композитные. */
+  opacity: 0;
+  translate: 0 12px;
+  pointer-events: none;
+  transition: opacity 260ms var(--ease), translate 260ms var(--ease);
+}
+.pd__knopka[data-vidna] { opacity: 1; translate: 0 0; pointer-events: auto; }
+.pd__knopka:hover { background: color-mix(in srgb, var(--surface) 80%, #fff); }
+.pd__knopka:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .pd__knopka { transition: none; }
+}
+
+.pd__nakladka {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: end center;
+  padding: 16px;
+}
+@media (min-width: 720px) { .pd__nakladka { place-items: center; } }
+/* Фон лежит ПОД окном и ловит клик мимо. Кнопкой, а не div: клик
+   мимо накладки обязан работать и с клавиатуры тоже. */
+.pd__fon {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border: 0;
+  background: rgba(0, 0, 0, 0.62);
+  cursor: default;
+}
+.pd__okno {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 520px);
+  max-height: min(86svh, 720px);
+  overflow-y: auto;
+  padding: 20px;
+  border-radius: var(--ui-r-lg);
+  background: var(--surface);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+.pd__shapka { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.pd__krest {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: var(--ui-r);
+  background: transparent;
+  color: var(--dim);
+  font-size: 18px;
+  cursor: pointer;
+}
+.pd__krest:hover { color: #fff; }
+.pd__krest:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
+
+.pd__okno textarea,
+.pd__pomoshch textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: var(--ui-r);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.34);
+  background: var(--ink);
+  color: #fff;
+  font: inherit;
+  font-size: 16px;
+  resize: vertical;
+}
+.pd__okno textarea:focus-visible,
+.pd__pomoshch textarea:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+
+/* Ловушка для обходчика: её не видно и не слышно, но она заполняема.
+   `display: none` не годится — часть обходчиков его понимает. */
+.lovushka {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}

@@ -4,6 +4,7 @@ import { useActionState } from 'react';
 import type { ZakazOperatoru, SlotOperatoru } from '@/lib/server/views';
 import {
   adminCancel,
+  adminEmailTaken,
   adminFinish,
   adminIssue,
   adminRelease,
@@ -169,6 +170,7 @@ function SlotCard({ z, s, n, t }: { z: ZakazOperatoru; s: SlotOperatoru; n: numb
   const [iss, issue, busy1] = useActionState<OtvetA, FormData>(adminIssue, {});
   const [don, done, busy2] = useActionState<OtvetA, FormData>(adminRenewDone, {});
   const [rec, recovery, busy3] = useActionState<OtvetA, FormData>(adminSendRecovery, {});
+  const [zan, zanyata, busy4] = useActionState<OtvetA, FormData>(adminEmailTaken, {});
   const zakryt = z.status === 'done' || z.status === 'cancelled';
 
   return (
@@ -215,9 +217,49 @@ function SlotCard({ z, s, n, t }: { z: ZakazOperatoru; s: SlotOperatoru; n: numb
             ) : null}
           </div>
         </>
-      ) : (
+      ) : s.clientLogin || s.clientPassword ? (
+        /* НОВЫЙ ПОРЯДОК: почту и пароль дал КЛИЕНТ, оператор заводит
+           аккаунт ровно на них и не вписывает ничего. */
         <>
           <p className="hint">{t('u.new_steps')}</p>
+          <dl className="ad__kv">
+            <dt>{t('t.email')}</dt>
+            <dd className="ad__secret">{s.clientLogin ?? t('u.wiped')}</dd>
+            <dt>{t('u.password')}</dt>
+            <dd className="ad__secret">{s.clientPassword ?? t('u.wiped')}</dd>
+          </dl>
+
+          {don.error ? <p className="err">{t(don.error)}</p> : null}
+          {don.ok ? <p className="ok">{t(don.ok, don.polya)}</p> : null}
+          {zan.error ? <p className="err">{t(zan.error)}</p> : null}
+          {zan.ok ? <p className="ok">{t(zan.ok, zan.polya)}</p> : null}
+
+          <div className="ad__actions">
+            {!s.gotov && !zakryt ? (
+              <form action={done}>
+                <input type="hidden" name="order" value={z.id} />
+                <input type="hidden" name="slot" value={s.id} />
+                <button type="submit" className="btn btn--sm" disabled={busy2}>
+                  {busy2 ? t('o.saving') : t('u.new_done')}
+                </button>
+              </form>
+            ) : null}
+            {!zakryt ? (
+              <form action={zanyata}>
+                <input type="hidden" name="order" value={z.id} />
+                <button type="submit" className="btn btn--ghost btn--sm" disabled={busy4}>
+                  {busy4 ? t('z.cancelling') : t('u.email_taken')}
+                </button>
+              </form>
+            ) : null}
+          </div>
+          {!zakryt ? <p className="hint">{t('u.email_taken_hint')}</p> : null}
+        </>
+      ) : (
+        /* СТАРЫЙ ЗАКАЗ: доступы заводил оператор, и доделывать его
+           надо тем же способом, каким он начинался. */
+        <>
+          <p className="hint">{t('u.new_steps_old')}</p>
           {iss.error ? <p className="err">{t(iss.error)}</p> : null}
           {iss.ok ? <p className="ok">{t(iss.ok, iss.polya)}</p> : null}
           {s.outLogin ? (

@@ -1,9 +1,12 @@
 'use client';
 
 import { useActionState, useState } from 'react';
+import { Soglasie } from './Soglasie';
 import { deystvieOformit, type Otvet } from '@/lib/server/actions-client';
 import { rubli } from '@/lib/server/money';
-import { cel, CELI, BEZ_ZAPISI } from '@/lib/metrika';
+import { cel, CELI } from '@/lib/metrika';
+import { Pole, PoleParolya } from './Polya';
+import { parolNeGoditsya, pochtaNeVerna, PRAVILO_PAROLYA } from '@/lib/proverka';
 
 export type SrokVybor = { period: number; kop: number; label: string };
 
@@ -15,6 +18,8 @@ export type Vvod = {
   sroki: SrokVybor[];
   periodPoUmolchaniyu: number;
   rezhimPoUmolchaniyu: 'new' | 'renew';
+  /** Почты из заказа, который продлевают по ссылке из письма. */
+  pochtyPoUmolchaniyu: string[];
   balansKop: number;
 };
 
@@ -26,11 +31,21 @@ export type Vvod = {
  * поле формы — это то, что человек может переписать в браузере,
  * и «на одного» за 299 рублей на троих оформляться не должно.
  *
- * У каждого участника ровно два пути:
- *   НОВЫЙ АККАУНТ    — человек не вводит ничего, аккаунт заводит оператор;
- *   ПРОДЛИТЬ СВОЙ    — человек вводит почту и пароль СВОЕГО аккаунта
- *                      Spotify. Пароль уезжает на сервер и ложится
- *                      в базу только зашифрованным.
+ * ⚠️ ДАННЫЕ АККАУНТА ЧЕЛОВЕК ВВОДИТ В ОБОИХ СЛУЧАЯХ С ТРИДЦАТЬ
+ * ЧЕТВЁРТОЙ ИТЕРАЦИИ. У Spotify нет двухфакторной проверки, значит
+ * аккаунт можно завести прямо на почту клиента:
+ *   НОВЫЙ АККАУНТ    — человек вводит СВОЮ почту и пароль, КОТОРЫЙ
+ *                      ХОЧЕТ; оператор заводит аккаунт ровно на эти
+ *                      данные и включает Premium. Выдавать нечего:
+ *                      доступ с самого начала у человека;
+ *   ПРОДЛИТЬ СВОЙ    — почта и пароль СВОЕГО аккаунта Spotify.
+ * И то, и другое уезжает на сервер и ложится в базу только
+ * шифротекстом (закон 35).
+ *
+ * ⚠️ ПРОВЕРКА ИДЁТ НАШЕЙ, А НЕ БРАУЗЕРНОЙ. У формы стоит `noValidate`,
+ * правила лежат в `lib/proverka` и зовутся ТЕМ ЖЕ модулем на сервере:
+ * две копии правил разошлись бы молча. Сообщения — набором сайта,
+ * под своим полем, а не всплывающей подсказкой браузера.
  */
 export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
   const [period, setPeriod] = useState<number>(vvod.periodPoUmolchaniyu);
@@ -38,7 +53,45 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
     Array.from({ length: vvod.sertifikat ? 0 : vvod.people }, () => vvod.rezhimPoUmolchaniyu),
   );
   const [tratit, setTratit] = useState(vvod.balansKop > 0);
+  const [dannye, setDannye] = useState<{ login: string; password: string }[]>(
+    Array.from({ length: vvod.sertifikat ? 0 : vvod.people }, (_, i) => ({
+      login: vvod.pochtyPoUmolchaniyu[i] ?? '',
+      password: '',
+    })),
+  );
+  const [bedy, setBedy] = useState<{ login: string | null; password: string | null }[]>(
+    Array.from({ length: vvod.sertifikat ? 0 : vvod.people }, () => ({ login: null, password: null })),
+  );
+  const [bedaSoglasiya, setBedaSoglasiya] = useState<string | null>(null);
   const [otvet, oformit, idyot] = useActionState<Otvet, FormData>(deystvieOformit, {});
+
+  const pravitDannye = (i: number, klyuch: 'login' | 'password', v: string) => {
+    setDannye((s) => s.map((x, j) => (j === i ? { ...x, [klyuch]: v } : x)));
+    setBedy((s) => s.map((x, j) => (j === i ? { ...x, [klyuch]: null } : x)));
+  };
+
+  /**
+   * Проверка перед отправкой. Возвращает true, когда всё в порядке.
+   *
+   * ⚠️ `preventDefault` ОСТАНАВЛИВАЕТ И СЕРВЕРНОЕ ДЕЙСТВИЕ: React
+   * вешает своё на submit и уважает отмену. Поэтому отдельного
+   * «не отправлять» держать не нужно.
+   */
+  const vsyoLiVerno = (): boolean => {
+    if (vvod.sertifikat) {
+      const ok = (document.querySelector('input[name="consent"]') as HTMLInputElement | null)?.checked;
+      setBedaSoglasiya(ok ? null : 'Без согласия оформить заказ нельзя');
+      return Boolean(ok);
+    }
+    const svezhie = dannye.map((d) => ({
+      login: pochtaNeVerna(d.login),
+      password: parolNeGoditsya(d.password),
+    }));
+    setBedy(svezhie);
+    const soglasie = (document.querySelector('input[name="consent"]') as HTMLInputElement | null)?.checked;
+    setBedaSoglasiya(soglasie ? null : 'Без согласия оформить заказ нельзя');
+    return Boolean(soglasie) && svezhie.every((b) => !b.login && !b.password);
+  };
 
   const cena = vvod.sroki.find((s) => s.period === period)?.kop ?? 0;
   const sBalansa = tratit ? Math.min(vvod.balansKop, cena) : 0;
@@ -51,7 +104,17 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
        вовсе. `onSubmit` при этом идёт ПОСЛЕ проверки браузером
        обязательных полей — на незаполненной галочке согласия он
        не сработает. */
-    <form action={oformit} onSubmit={() => cel(CELI.perehodKOplate)}>
+    <form
+      action={oformit}
+      noValidate
+      onSubmit={(e) => {
+        if (!vsyoLiVerno()) {
+          e.preventDefault();
+          return;
+        }
+        cel(CELI.perehodKOplate);
+      }}
+    >
       <input type="hidden" name="plan" value={vvod.planId} />
       <input type="hidden" name="period" value={period} />
       {/* ⚠️ СЕРТИФИКАТ — ПРИЗНАК, А НЕ ТАРИФ (Р-93). Тариф и срок
@@ -108,32 +171,40 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
                   </button>
                 ))}
               </div>
-              {r === 'new' ? (
-                <p className="panel__note">
-                  Вводить ничего не нужно: мы заведём аккаунт сами и пришлём логин с паролем
-                  в личный кабинет.
-                </p>
-              ) : (
-                <div className="row2">
-                  <label className="field">
-                    <span className="field__label">Почта аккаунта Spotify</span>
-                    <input type="email" name={`login${i}`} required autoComplete="off" className={BEZ_ZAPISI} />
-                  </label>
-                  <label className="field">
-                    <span className="field__label">Пароль от аккаунта Spotify</span>
-                    <input type="password" name={`password${i}`} required autoComplete="off" className={BEZ_ZAPISI} />
-                  </label>
-                </div>
-              )}
+              {/* ⚠️ ПОЛЯ ОДНИ И ТЕ ЖЕ В ОБОИХ РЕЖИМАХ, РАЗНЫЕ ТОЛЬКО
+                  ПОДПИСИ. Разводить их разметкой значило бы завести
+                  две формы вместо одной и два места, где правила
+                  пароля могут разойтись. */}
+              <div className="row2">
+                <Pole
+                  imya={`login${i}`}
+                  tip="email"
+                  podpis={r === 'new' ? 'Почта для нового аккаунта Spotify' : 'Почта аккаунта Spotify'}
+                  znachenie={dannye[i]?.login ?? ''}
+                  menyat={(v) => pravitDannye(i, 'login', v)}
+                  beda={bedy[i]?.login}
+                  podskazka={
+                    r === 'new'
+                      ? 'Мы заведём аккаунт на неё и включим Premium'
+                      : 'Та, на которую заведён ваш аккаунт Spotify'
+                  }
+                />
+                <PoleParolya
+                  imya={`password${i}`}
+                  podpis={r === 'new' ? 'Пароль, который мы поставим' : 'Пароль от аккаунта Spotify'}
+                  znachenie={dannye[i]?.password ?? ''}
+                  menyat={(v) => pravitDannye(i, 'password', v)}
+                  beda={bedy[i]?.password}
+                  podskazka={PRAVILO_PAROLYA}
+                />
+              </div>
             </div>
           ))}
-          {rezhimy.includes('renew') ? (
-            <p className="panel__note">
-              Пароль нужен, чтобы включить Premium на вашем аккаунте. Он хранится
-              зашифрованным, виден только исполнителю заказа и стирается через семь дней
-              после его закрытия.
-            </p>
-          ) : null}
+          <p className="panel__note">
+            {rezhimy.includes('renew')
+              ? 'Пароль нужен, чтобы включить Premium на аккаунте. Он хранится зашифрованным, виден только исполнителю заказа и стирается через семь дней после его закрытия.'
+              : 'Аккаунт заведём мы — на указанную почту и с указанным паролем. Пароль хранится зашифрованным, виден только исполнителю заказа и стирается через семь дней после закрытия заказа.'}
+          </p>
         </div>
       ) : (
         <div className="panel">
@@ -176,16 +247,7 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
           <span className="tnum">{rubli(kOplate)}</span>
         </p>
 
-        <label className="check">
-          <input type="checkbox" name="consent" required />
-          <span>
-            Принимаю условия{' '}
-            <a href="/oferta/" target="_blank" rel="noreferrer">
-              публичной оферты
-            </a>{' '}
-            и согласен на обработку персональных данных.
-          </span>
-        </label>
+        <Soglasie beda={bedaSoglasiya} />
 
         {/* ⚠️ ПОДСКАЗКА ПРО VPN СТОИТ ПРЯМО ПЕРЕД ПЕРЕХОДОМ К ОПЛАТЕ,
             и она не предупреждение. С включённым VPN страница

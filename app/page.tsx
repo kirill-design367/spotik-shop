@@ -1,5 +1,5 @@
 import Hero from '@/components/sections/Hero';
-import Pricing, { type CenyTarifov } from '@/components/sections/Pricing';
+import Pricing, { type CenyTarifov, type SkidkiTarifov } from '@/components/sections/Pricing';
 import Marquee from '@/components/mid/Marquee';
 import HowItWorks from '@/components/sections/HowItWorks';
 import Faq from '@/components/sections/Faq';
@@ -30,17 +30,28 @@ export const revalidate = 300;
 export default async function Page() {
   const spisok = await katalog();
   const ceny: CenyTarifov = {};
+  /* ⚠️ В `ceny` УЕЗЖАЕТ ЦЕНА, ПО КОТОРОЙ ПЛАТЯТ, — со скидкой, если
+     она есть. Всё, что считает страница (экономия, надпись кнопки,
+     цена сертификата), обязано считаться по ней. Старая цена едет
+     ОТДЕЛЬНО и нужна ровно одному месту — зачёркнутой строке
+     на карточке. */
+  const skidki: SkidkiTarifov = {};
   for (const t of spisok) {
     const m: Partial<Record<PeriodKey, number>> = {};
-    for (const c of t.ceny) m[c.period] = c.kop / 100;
+    const sk: Partial<Record<PeriodKey, { bylo: number; doDaty: string }>> = {};
+    for (const c of t.ceny) {
+      m[c.period] = c.kop / 100;
+      if (c.bezSkidki && c.doDaty) sk[c.period] = { bylo: c.bezSkidki / 100, doDaty: c.doDaty };
+    }
     ceny[t.id] = m;
+    if (Object.keys(sk).length) skidki[t.id] = sk;
   }
 
   return (
     <>
       <main id="main" tabIndex={-1}>
         <Hero />
-        <Pricing ceny={ceny} />
+        <Pricing ceny={ceny} skidki={skidki} />
         <Marquee items={PERKS} />
         <HowItWorks />
         <Faq />

@@ -20,6 +20,16 @@
  * и отмена остаются в журнале: они шумные и адресованы не команде,
  * а разбору беды.
  *
+ * ⚠️ РАБОЧИЕ СООБЩЕНИЯ ИДУТ ПО-АНГЛИЙСКИ С ТРИДЦАТЬ ЧЕТВЁРТОЙ
+ * ИТЕРАЦИИ — постановка. Это надписи интерфейса, и относятся они
+ * к тому же классу, что надписи админки: сотрудников двое, язык
+ * у них общий. ⚠️ ДАННЫЕ ЗАКАЗА ПРИ ЭТОМ НЕ ПЕРЕВОДЯТСЯ (закон 40):
+ * название тарифа и срок приходят из каталога и остаются как есть.
+ *
+ * ⚠️ И ОДНО СОБЫТИЕ ОСТАЁТСЯ РУССКИМ — ОБРАЩЕНИЕ В ПОДДЕРЖКУ.
+ * Там внутри текст, который написал КЛИЕНТ, и он русский; заголовок
+ * по-английски над русским телом читался бы как чужая врезка.
+ *
  * ⚠️ ПЕРСОНАЛЬНЫХ ДАННЫХ КЛИЕНТА В СОБЫТИИ НЕТ. Адрес СОТРУДНИКА
  * в «заказ выполнен» есть — постановка требует «кто выполнил»,
  * а чат служебный; в журнал он при этом идёт огрызком (Р-87).
@@ -38,7 +48,10 @@ export type SobytieKomande =
   | { vid: 'zakaz_otmenyon'; zakaz: number }
   /* Деньги пришли по заказу, который их уже не ждал, и легли
      на баланс покупателя. Разбирается руками — потому и в чат. */
-  | { vid: 'dengi_bez_zakaza'; zakaz: number; platyozh: number; summaKop: number };
+  | { vid: 'dengi_bez_zakaza'; zakaz: number; platyozh: number; summaKop: number }
+  /* Обращение в поддержку с сайта. Форма публичная, поэтому текст
+     приходит сюда как есть — и как есть уходит в чат. */
+  | { vid: 'obrashchenie'; tekst: string; svyaz: string; ot: string | null };
 
 /** Сколько раз пробуем, прежде чем бросить. */
 const POPYTOK = 10;
@@ -57,17 +70,28 @@ function ssylka(zakaz: number): string {
 function tekstDlyaChata(s: SobytieKomande): string | null {
   if (s.vid === 'zakaz_oplachen') {
     return [
-      `Новый оплаченный заказ № ${s.zakaz}`,
-      `Тариф: ${s.tarif}, ${s.srok}`,
-      `Участников: ${s.mest}`,
+      `New paid order #${s.zakaz}`,
+      `Plan: ${s.tarif}, ${s.srok}`,
+      `Participants: ${s.mest}`,
       s.podarok
-        ? 'Оплата: подарочный сертификат — денег за этим заказом нет, их взяли при покупке сертификата'
-        : 'Оплата: картой или с баланса',
+        ? 'Payment: gift certificate — no money on this order, it was taken when the certificate was bought'
+        : 'Payment: card or balance',
       ssylka(s.zakaz),
     ].join('\n');
   }
   if (s.vid === 'zakaz_zakryt') {
-    return [`Заказ № ${s.zakaz} выполнен`, `Исполнитель: ${s.kto}`, ssylka(s.zakaz)].join('\n');
+    return [`Order #${s.zakaz} is done`, `Operator: ${s.kto}`, ssylka(s.zakaz)].join('\n');
+  }
+  /* ⚠️ ОБРАЩЕНИЕ — ЕДИНСТВЕННОЕ СОБЫТИЕ, КОТОРОЕ ОСТАЁТСЯ РУССКИМ.
+     Внутри текст клиента, и он русский. */
+  if (s.vid === 'obrashchenie') {
+    return [
+      'Обращение в поддержку',
+      s.ot ? `От: ${s.ot}` : 'От: не входил в кабинет',
+      `Связь: ${s.svyaz}`,
+      '',
+      s.tekst,
+    ].join('\n');
   }
   /* ⚠️ ТРЕТЬЕ СОБЫТИЕ В ЧАТЕ, И ОНО ДРУГОГО КЛАССА. Постановка
      называла два РЯДОВЫХ события; это не рядовое, а происшествие:
@@ -76,21 +100,35 @@ function tekstDlyaChata(s: SobytieKomande): string | null {
      не читает, пока не сломалось. */
   if (s.vid === 'dengi_bez_zakaza') {
     return [
-      `Деньги пришли по заказу № ${s.zakaz}, который их уже не ждал`,
-      `Счёт № ${s.platyozh}, ${rubli(s.summaKop)}`,
-      'Сумма положена на баланс покупателя. Нужен разбор руками.',
+      `Money arrived for order #${s.zakaz}, which was no longer waiting for it`,
+      `Invoice #${s.platyozh}, ${rubli(s.summaKop)}`,
+      'The amount went to the buyer’s balance. Needs a look by hand.',
       ssylka(s.zakaz),
     ].join('\n');
   }
   return null;
 }
 
-/** Строка в журнал: без адресов целиком. */
+/**
+ * Строка в журнал: без адресов целиком.
+ *
+ * ⚠️ ТЕКСТ ОБРАЩЕНИЯ В ЖУРНАЛ НЕ ПИШЕТСЯ. Его написал человек,
+ * и там бывает что угодно — вплоть до его же пароля. Журнал читают
+ * все, у кого есть доступ к серверу; в чат обращение уходит, потому
+ * что чат для того и заведён, а в журнал идёт только факт.
+ */
 function vZhurnal(s: SobytieKomande): void {
   const { vid, ...ostalnoe } = s;
   const polya: Record<string, string | number | boolean> = {};
   for (const [k, v] of Object.entries(ostalnoe)) {
-    polya[k] = k === 'kto' && typeof v === 'string' ? pochtaVZhurnal(v) : (v as string | number | boolean);
+    if (vid === 'obrashchenie' && (k === 'tekst' || k === 'svyaz')) {
+      polya[k] = `${String(v).length} знаков`;
+      continue;
+    }
+    polya[k] =
+      (k === 'kto' || k === 'ot') && typeof v === 'string'
+        ? pochtaVZhurnal(v)
+        : (v as string | number | boolean);
   }
   log.info(`команде: ${vid}`, polya);
 }

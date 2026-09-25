@@ -100,11 +100,16 @@ console.log('\nПриёмы середины при «уменьшить дви�
   const okLit = Number(before.off) === 1 && Number(after) === 1;
   const okSpark = before.spark === 'none';
   const okNums = before.nums.length === 5 && before.nums.every((v) => v > 0.99);
+  /* ⚠️ ЧИСЛО ВОПРОСОВ НЕ ЗАШИТО, И ЭТО НЕ ПОСЛАБЛЕНИЕ. Проверяется
+     не «их шесть», а «видны ВСЕ и ни одна строка не бежит»: тексты
+     вопросов — содержание, оно правится постановкой (в тридцать
+     четвёртой их стало четыре), а зашитое число превращает правку
+     текста в падение сторожа, которое ничего не значит. */
   const okAns =
     dim === 0 &&
-    before.q.length === 6 &&
-    before.a.length === 6 &&
-    before.run.length === 6 &&
+    before.q.length > 0 &&
+    before.a.length === before.q.length &&
+    before.run.length === before.q.length &&
     before.run.every((v) => v === 'none');
   if (!okMq || !okLit || !okNums || !okAns || !okSpark) failed = true;
   console.log(`  бегущая строка: animation-name=${before.mq} ${okMq ? '— стоит' : '— ИДЁТ'}`);

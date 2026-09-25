@@ -61,6 +61,8 @@ export type Sotrudnik = {
   role: 'admin' | 'operator';
   disabled: boolean;
   lang: Yazyk;
+  /** Как часто очередь обновляет себя сама; 0 — выключено. */
+  queueSec: number;
 };
 
 /**
@@ -79,12 +81,26 @@ export async function zavestiPervyhAdminov(): Promise<void> {
 }
 
 export async function sotrudnikPoPochte(email: string): Promise<Sotrudnik | null> {
-  const r = await odna<{ id: string; email: string; role: 'admin' | 'operator'; disabled: boolean; lang: string }>(
-    'select id, email, role, disabled, lang from staff where email = $1',
+  const r = await odna<{
+    id: string;
+    email: string;
+    role: 'admin' | 'operator';
+    disabled: boolean;
+    lang: string;
+    queue_sec: number;
+  }>(
+    'select id, email, role, disabled, lang, queue_sec from staff where email = $1',
     [normPochta(email)],
   );
   return r
-    ? { id: Number(r.id), email: r.email, role: r.role, disabled: r.disabled, lang: ponyatYazyk(r.lang) }
+    ? {
+        id: Number(r.id),
+        email: r.email,
+        role: r.role,
+        disabled: r.disabled,
+        lang: ponyatYazyk(r.lang),
+        queueSec: Number(r.queue_sec ?? 30),
+      }
     : null;
 }
 
@@ -243,8 +259,15 @@ export const ktoSotrudnik = cache(async function ktoSotrudnik(): Promise<Sotrudn
   if (!t) return null;
   const r = await tikho(
     () =>
-      odna<{ id: string; email: string; role: 'admin' | 'operator'; disabled: boolean; lang: string }>(
-        `select f.id, f.email, f.role, f.disabled, f.lang
+      odna<{
+        id: string;
+        email: string;
+        role: 'admin' | 'operator';
+        disabled: boolean;
+        lang: string;
+        queue_sec: number;
+      }>(
+        `select f.id, f.email, f.role, f.disabled, f.lang, f.queue_sec
            from session s join staff f on f.id = s.staff_id
           where s.token_hash = $1 and s.scope = 'staff' and s.expires_at > now()`,
         [otpechatok(t)],
@@ -252,5 +275,12 @@ export const ktoSotrudnik = cache(async function ktoSotrudnik(): Promise<Sotrudn
     null,
   );
   if (!r || r.disabled) return null;
-  return { id: Number(r.id), email: r.email, role: r.role, disabled: r.disabled, lang: ponyatYazyk(r.lang) };
+  return {
+    id: Number(r.id),
+    email: r.email,
+    role: r.role,
+    disabled: r.disabled,
+    lang: ponyatYazyk(r.lang),
+    queueSec: Number(r.queue_sec ?? 30),
+  };
 });

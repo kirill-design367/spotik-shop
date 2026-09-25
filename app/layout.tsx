@@ -4,6 +4,7 @@ import './components.css';
 import ScrollProvider from '@/components/ScrollProvider';
 import SiteChrome from '@/components/chrome/SiteChrome';
 import Metrika from '@/components/chrome/Metrika';
+import Podderzhka from '@/components/shop/Podderzhka';
 import { siteFontFaces, SITE, BASE_PATH as BASE } from '@/lib/fontface';
 
 export const metadata: Metadata = {
@@ -132,6 +133,15 @@ addEventListener('visibilitychange',function(){if(document.visibilityState==='hi
           }}
         />
         <ScrollProvider />
+        {/* ⚠️ ПЛАШКА ПОДДЕРЖКИ СТОИТ В КОРНЕВОЙ РАСКЛАДКЕ, значит
+            попадает в критический путь всех страниц. Поэтому в ней
+            нет ничего, кроме кнопки и одного слушателя прокрутки:
+            сама форма тянется отдельным чанком и только при открытии.
+            ⚠️ И НИ ОДНОГО ОБРАЩЕНИЯ К КУКАМ ЗДЕСЬ НЕТ. `cookies()`
+            в раскладке перевёл бы лендинг на посчитанный ответ
+            и отменил бы закон 36; почту для подстановки форма
+            спрашивает сама, когда её открыли. */}
+        <Podderzhka />
         {/* Счётчик Метрики. Стоит ПОСЛЕДНИМ и грузится после события
             `load`; в кабинете и в админке его нет вовсе — см. сам
             компонент. */}

@@ -92,6 +92,7 @@
 .ad input[type='email'],
 .ad input[type='password'],
 .ad input[type='number'],
+.ad input[type='date'],
 .ad select {
   min-height: 44px;
   padding: 0 12px;
@@ -122,3 +123,20 @@
    в проекте нет, поэтому читаемость держит разрядка и перенос
    по любому знаку — utm_campaign бывает длиннее колонки. */
 .ad__utm { display: grid; gap: 2px; font-size: 13px; letter-spacing: 0.01em; }
+
+
+/* Выбор частоты самообновления очереди: строка ссылок, выбранная
+   помечена начертанием — так же, как выбранная сортировка. */
+.ad__rate { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin: 0 0 12px; }
+.ad__rate b { font-variation-settings: 'wght' 700; }
+.ad__rate-btn {
+  border: 0;
+  background: transparent;
+  color: var(--green, #1db954);
+  font: inherit;
+  font-size: 14px;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.ad__rate-btn:focus-visible { outline: 2px solid var(--green, #1db954); outline-offset: 2px; }

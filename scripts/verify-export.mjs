@@ -50,6 +50,9 @@ const PAGES = [
   ['кабинет', `${PREFIX}/cabinet/`, false],
   ['сертификат', `${PREFIX}/certificate/`, false],
   ['оферта', `${PREFIX}/oferta/`, false],
+  ['соглашение', `${PREFIX}/soglashenie/`, false],
+  ['политика', `${PREFIX}/politika/`, false],
+  ['согласие', `${PREFIX}/soglasie/`, false],
   ['админка', `${PREFIX}/admin/login/`, false],
 ];
 
