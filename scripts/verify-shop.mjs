@@ -1545,7 +1545,8 @@ console.log('── СКРЫТОЕ СОЧЕТАНИЕ ТАРИФ × СРОК И�
   chk('на полугоде «На троих» скрыт целиком',
     Boolean(trio6?.off) && (trio6?.w ?? 99) < 4 && (trio6?.prozr ?? 1) < 0.05,
     `ширина ${trio6?.w} px, прозрачность ${trio6?.prozr}`);
-  chk('скрытая карточка выведена из обхода клавиатурой', trio6?.inert === true);
+  chk('скрытая карточка выведена из обхода клавиатурой', trio6?.inert === true,
+    `inert у скрытой ${trio6?.inert}, ячеек ${na6.length}, имена ${na6.map((v) => `${v.imya}${v.off ? '(скрыт)' : ''}`).join(' · ')}`);
   chk('выбор мягко перешёл на первый доступный',
     !trio6?.vybran && vidnye6[0]?.vybran === true,
     `выбран «${na6.find((v) => v.vybran)?.imya ?? 'никто'}»`);
@@ -1709,6 +1710,11 @@ console.log('── ЧАСЫ РАБОТЫ В ХИРО ──');
         /* «Справа внизу»: правый край плотно к правому краю поля,
            и низ строки не выше низа соседнего текста. */
         sprava: pole ? pole.right - polePad - b.right < 3 : false,
+        /* ⚠️ ОТКАЗ ОБЯЗАН НАЗЫВАТЬ ЧИСЛО, А НЕ «false»: по одному
+           булеву не отличить «поле не нашлось» от «строка не дотянула
+           двух пикселей». */
+        zazor: pole ? Math.round((pole.right - polePad - b.right) * 100) / 100 : null,
+        estPole: Boolean(pole),
         vnizu: nota ? b.bottom >= nota.bottom - 2 : false,
         /* И строка не вылезает за сцену: у неё `overflow: hidden`,
            и вылезшее не съезжает вниз, а МОЛЧА ОБРЕЗАЕТСЯ (Р-16). */
@@ -1719,7 +1725,7 @@ console.log('── ЧАСЫ РАБОТЫ В ХИРО ──');
       Boolean(v?.vidno) && /10:00–22:00 по Москве/.test(v?.tekst ?? ''), v?.tekst ?? 'строки нет');
     chk(`часы стоят справа внизу и не вылезают за экран (${imya})`,
       Boolean(v?.sprava && v?.vnizu && v?.vEkrane),
-      `справа ${v?.sprava}, внизу ${v?.vnizu}, в экране ${v?.vEkrane}`);
+      `зазор справа ${v?.zazor} px (поле найдено: ${v?.estPole}), внизу ${v?.vnizu}, в экране ${v?.vEkrane}`);
     await p.close();
   }
 }
