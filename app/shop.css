@@ -158,22 +158,39 @@
 .row2 { display: grid; gap: 12px; }
 @media (min-width: 560px) { .row2 { grid-template-columns: 1fr 1fr; } }
 
-.pick { display: grid; gap: 8px; margin: 0 0 14px; }
+/* ── ПЛАШКИ ВЫБОРА ───────────────────────────────────────────────────────
+   ⚠️ КРУПНЫЕ, И ЭТО ПОСТАНОВКА ТРИДЦАТЬ ШЕСТОЙ ИТЕРАЦИИ. Прежние
+   были ростом с поле ввода и читались как ещё одно поле; выбор
+   на телефоне терялся. Теперь это заметная пара: выбранная — зелёная
+   заливка, вторая — тёмная со светлой каймой. Тот же элемент стоит
+   и на лендинге (`.opt`), только формой там пилюля: на лендинге
+   скруглены лишь кнопка, плашка срока и карта (закон раздела 3),
+   а здесь скруглено всё и одним токеном. */
+.pick { display: grid; gap: 10px; margin: 0 0 16px; }
 @media (min-width: 560px) { .pick { grid-template-columns: 1fr 1fr; } }
 .pick__btn {
-  min-height: 52px;
-  padding: 0 16px;
+  min-height: 60px;
+  padding: 0 18px;
   border: 0;
   border-radius: var(--ui-r);
   background: var(--ink);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
   color: var(--dim);
   font: inherit;
   font-size: 15px;
+  font-variation-settings: 'wght' 560;
   cursor: pointer;
-  text-align: left;
+  text-align: center;
+  touch-action: manipulation;
+  transition:
+    color 160ms var(--ease),
+    background-color 160ms var(--ease),
+    transform 160ms var(--ease);
 }
-.pick__btn[aria-checked='true'] { background: var(--green); color: var(--on-green-dim); box-shadow: none; font-variation-settings: 'wght' 680; }
+.pick__btn:hover { color: #fff; }
+.pick__btn:active { transform: translateY(1px); }
+.pick__btn[aria-checked='true'] { background: var(--green); color: var(--on-green-dim); box-shadow: none; font-variation-settings: 'wght' 700; }
+.pick__btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 
 .sum { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; font-size: 15px; }
 .sum--total { font-size: 19px; font-variation-settings: 'wght' 700; border-top: 1px solid var(--hair); margin-top: 8px; padding-top: 16px; }
@@ -356,4 +373,196 @@
   width: 1px;
   height: 1px;
   overflow: hidden;
+}
+
+
+/* ═══════════════════════════════════════ ТРИДЦАТЬ ШЕСТАЯ ИТЕРАЦИЯ
+   Кабинет, «Спасибо», сертификаты и оживление оформления.
+
+   ⚠️ ВСЁ, ЧТО ЗДЕСЬ ДВИЖЕТСЯ, ДВИГАЕТ ТОЛЬКО `opacity`, `translate`
+   и `grid-template-rows`. Ни одного фильтра, ни одной маски —
+   закон 29 и в разделе тот же, что на лендинге. Радиусы берутся
+   двумя общими токенами (Р-111): своих чисел здесь нет ни одного. */
+
+/* ── ВКЛАДКИ СЕРТИФИКАТОВ ──────────────────────────────────────────────── */
+.tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 20px;
+}
+.tabs__btn {
+  min-height: 52px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--ui-r);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
+  color: var(--dim);
+  font: inherit;
+  font-size: 15px;
+  font-variation-settings: 'wght' 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: color 160ms var(--ease), background-color 160ms var(--ease);
+}
+.tabs__btn:hover { color: #fff; }
+.tabs__btn[aria-selected='true'] {
+  background: var(--green);
+  color: var(--on-green-dim);
+  box-shadow: none;
+  font-variation-settings: 'wght' 700;
+}
+.tabs__btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+
+/* ── КОПИРОВАНИЕ В ОДИН ТАП ────────────────────────────────────────────── */
+.kop {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--ui-r);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
+  color: var(--dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  touch-action: manipulation;
+  flex: 0 0 auto;
+}
+.kop:hover { color: #fff; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5); }
+.kop:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+
+/* ── КАБИНЕТ ───────────────────────────────────────────────────────────── */
+.cab__h2 {
+  font-size: clamp(1.125rem, 2.4vw, 1.375rem);
+  font-variation-settings: 'wght' 700;
+  margin: 36px 0 14px;
+}
+.cab__balans { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.cab__pusto-h { font-size: 17px; font-variation-settings: 'wght' 680; margin: 0 0 6px; }
+.cab__pusto-knopki { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.cab__sert-verh { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 14px; }
+.order-card__knopki { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.cred__stroka { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cert__stroka { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* ШКАЛА СТАТУСОВ: оплачен → в работе → готово.
+   Линия между точками — псевдоэлемент самой точки, а не отдельный
+   слой: так шкала переживает любое число шагов и любой перенос. */
+.shkala {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+}
+.shkala__sh { position: relative; display: grid; justify-items: center; gap: 6px; }
+.shkala__sh::before {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: -50%;
+  width: 100%;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.14);
+}
+.shkala__sh:first-child::before { display: none; }
+.shkala__sh[data-on]::before { background: var(--green); }
+.shkala__tochka {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.28);
+  position: relative;
+  z-index: 1;
+  transition: background-color 220ms var(--ease), box-shadow 220ms var(--ease);
+}
+.shkala__sh[data-on] .shkala__tochka { background: var(--green); box-shadow: none; }
+.shkala__t { font-size: 12px; color: var(--dim-2); text-align: center; }
+.shkala__sh[data-on] .shkala__t { color: #fff; }
+
+/* Дата окончания и «Продлить» — одной строкой. */
+.srok {
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border-radius: var(--ui-r);
+  background: var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.srok__t { margin: 0; font-size: 14px; color: var(--dim); }
+
+/* ── КАРТОЧКА, КОТОРАЯ СХЛОПЫВАЕТСЯ ────────────────────────────────────
+   `grid-template-rows: 1fr → 0fr` — единственный способ анимировать
+   высоту, не зная её: считать высоту в JS значило бы читать геометрию
+   там, где её можно не читать. */
+.svorach {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 420ms var(--ease), opacity 300ms linear;
+}
+.svorach > * { overflow: hidden; min-height: 0; }
+.svorach[data-uhodit] { grid-template-rows: 0fr; opacity: 0; }
+
+/* ── СТРАНИЦА «СПАСИБО» ────────────────────────────────────────────────── */
+.spasibo { display: grid; justify-items: start; gap: 14px; margin: 0 0 28px; }
+.galka { width: 64px; height: 64px; overflow: visible; }
+.galka__krug,
+.galka__put {
+  fill: none;
+  stroke: var(--green);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.galka__krug { stroke-opacity: 0.45; stroke-dasharray: 183; stroke-dashoffset: 183; animation: galka-krug 620ms var(--ease) forwards; }
+.galka__put { stroke-dasharray: 40; stroke-dashoffset: 40; animation: galka-put 420ms var(--ease) 380ms forwards; }
+@keyframes galka-krug { to { stroke-dashoffset: 0; } }
+@keyframes galka-put { to { stroke-dashoffset: 0; } }
+
+.shagi { list-style: none; margin: 0 0 20px; padding: 0; display: grid; gap: 14px; }
+.shagi__sh { display: flex; gap: 14px; align-items: flex-start; color: var(--dim); font-size: 15px; line-height: 1.5; }
+.shagi__sh b { color: #fff; font-variation-settings: 'wght' 680; }
+.shagi__n {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  color: var(--dim);
+  font-size: 13px;
+  font-variation-settings: 'wght' 700;
+}
+
+/* ── ОФОРМЛЕНИЕ ОЖИВАЕТ ────────────────────────────────────────────────── */
+.ozhivayet > .panel { animation: panel-vhod 420ms var(--ease) both; }
+.ozhivayet > .panel:nth-of-type(1) { animation-delay: 40ms; }
+.ozhivayet > .panel:nth-of-type(2) { animation-delay: 110ms; }
+.ozhivayet > .panel:nth-of-type(3) { animation-delay: 180ms; }
+.ozhivayet > .panel:nth-of-type(4) { animation-delay: 250ms; }
+@keyframes panel-vhod {
+  from { opacity: 0; translate: 0 14px; }
+  to { opacity: 1; translate: 0 0; }
+}
+/* Сумма пересчитывается ДВИЖЕНИЕМ: узел с новым значением монтируется
+   заново (ключ по значению), и появление играет каждый раз. */
+.summa { animation: summa-vhod 260ms var(--ease) both; }
+@keyframes summa-vhod {
+  from { opacity: 0; translate: 0 -6px; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .svorach { transition: none; }
+  .galka__krug, .galka__put { animation: none; stroke-dashoffset: 0; }
+  .ozhivayet > .panel, .summa { animation: none; }
+  .shkala__tochka { transition: none; }
 }

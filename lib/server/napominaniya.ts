@@ -90,7 +90,6 @@ export async function napomnitObOkonchanii(): Promise<void> {
       const tarif = naytiTarif(spisok, z.plan_id);
       await pismoSkoroKonec({
         komu: z.email,
-        zakaz,
         chto: `${tarif?.name ?? z.plan_id}, ${srokPolno(z.period).toLowerCase()}`,
         kogda: new Date(z.expires_at),
         ssylka: `${env.siteUrl}/checkout/?plan=${encodeURIComponent(z.plan_id)}&period=${z.period}&renew=${zakaz}`,

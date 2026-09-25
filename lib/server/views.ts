@@ -39,6 +39,9 @@ export type SlotKlientu = {
 export type ZakazKlientu = {
   id: number;
   kind: 'plan' | 'certificate';
+  /** Тариф и срок — нужны ссылке «Продлить». */
+  planId: string;
+  period: number;
   nazvanie: string;
   srok: string;
   status: Status;
@@ -72,9 +75,16 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
     secrets_wiped_at: Date | null;
     expires_at: Date | null;
   }>(
+    /* ⚠️ ОТМЕНЁННЫЕ САМИМ ПОКУПАТЕЛЕМ СЮДА НЕ ПОПАДАЮТ ВОВСЕ —
+       постановка тридцать шестой итерации: «карточка плавно
+       схлопывается и больше не показывается, причину не пишем».
+       Отменённые ОПЕРАТОРОМ остаются: там есть что сказать —
+       причина и деньги на балансе. */
     `select id, kind, plan_id, period, status, total_kop, balance_kop, money_kop, source,
             created_at, cancel_reason, secrets_wiped_at, expires_at
-       from shop_order where user_id = $1 order by created_at desc limit 100`,
+       from shop_order
+      where user_id = $1 and not cancelled_by_client
+      order by created_at desc limit 100`,
     [userId],
   );
   if (!rows.length) return [];
@@ -103,6 +113,8 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
     return {
       id: Number(r.id),
       kind: r.kind,
+      planId: r.plan_id,
+      period: r.period,
       /* ⚠️ У СЕРТИФИКАТА ТЕПЕРЬ ЕСТЬ ТАРИФ, и без него строка в кабинете
          не говорит, что именно куплено (Р-93). */
       nazvanie:

@@ -84,7 +84,25 @@ export default async function PayOk({
 
   return (
     <main id="main" className="page" tabIndex={-1}>
-      <h1 className="page__h">Спасибо</h1>
+      {/* ⚠️ ГАЛОЧКА РИСУЕТСЯ SVG И ОЖИВАЕТ ЧИСТЫМ CSS: `stroke-dasharray`
+          плюс `stroke-dashoffset`, то есть одна композитная величина
+          и ни строчки скрипта. При «уменьшить движение» она просто
+          стоит нарисованной — см. `shop.css`. */}
+      <div className="spasibo">
+        <svg className="galka" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+          <circle className="galka__krug" cx="32" cy="32" r="29" />
+          <path className="galka__put" d="M19 33.5 L28 42.5 L45.5 23" />
+        </svg>
+        <h1 className="page__h" style={{ marginBottom: 6 }}>
+          {oplachen ? 'Оплата прошла' : 'Спасибо'}
+        </h1>
+        <p className="page__lead" style={{ margin: 0 }}>
+          {oplachen
+            ? 'Заказ принят в работу. Дальше всё делаем мы.'
+            : 'Платёж отправлен. Подтверждение от банка приходит за несколько минут — статус заказа обновится в кабинете сам.'}
+        </p>
+      </div>
+
       {oplachen && zakaz ? (
         <Celi
           imya={podarok ? [CELI.oplataProshla, CELI.sertifikatKuplen] : CELI.oplataProshla}
@@ -93,17 +111,42 @@ export default async function PayOk({
           tovary={tovary}
         />
       ) : null}
-      {oplachen ? (
-        <p className="ok">
-          Оплата подтверждена{zakaz ? `, заказ № ${zakaz} принят в работу` : ''}. Доступ появится
-          в личном кабинете.
-        </p>
-      ) : (
-        <p className="page__lead">
-          {zakaz ? `Заказ № ${zakaz}. ` : ''}Платёж отправлен. Подтверждение приходит от банка
-          в течение нескольких минут — статус заказа обновится в кабинете сам.
-        </p>
-      )}
+
+      {/* ⚠️ НОМЕРА ЗАКАЗА НА ЭТОЙ СТРАНИЦЕ БОЛЬШЕ НЕТ (постановка
+          тридцать шестой итерации). Он стоял здесь как доказательство
+          того, что платёж дошёл до нужного заказа, но человеку это
+          ничего не даёт: заказ у него один и он его только что
+          оформил. */}
+      <ol className="shagi">
+        <li className="shagi__sh">
+          <span className="shagi__n" aria-hidden="true">1</span>
+          <span>
+            <b>Заказ у оператора.</b> Он заводит или продлевает аккаунт на те данные,
+            которые вы указали.
+          </span>
+        </li>
+        <li className="shagi__sh">
+          <span className="shagi__n" aria-hidden="true">2</span>
+          <span>
+            <b>Включаем Premium.</b> {podarok
+              ? 'Для сертификата этого шага нет: код придёт сразу.'
+              : 'Ничего делать не нужно — просто подождите.'}
+          </span>
+        </li>
+        <li className="shagi__sh">
+          <span className="shagi__n" aria-hidden="true">3</span>
+          <span>
+            <b>{podarok ? 'Код появится в кабинете' : 'Доступ появится в кабинете'}</b> — и туда же
+            придёт письмо на вашу почту.
+          </span>
+        </li>
+      </ol>
+
+      <p className="panel__note panel__note--plate">
+        Обычно это 5–10 минут. Сервис работает с 10:00 до 22:00 по Москве — если заказ
+        пришёл позже, его возьмут утром.
+      </p>
+
       <a className="btn" href="/cabinet/">В личный кабинет</a>
     </main>
   );

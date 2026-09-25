@@ -412,9 +412,12 @@
   .logo-slot__text { font-size: 25px; }
 }
 
+/* ⚠️ ПУНКТОВ ПЯТЬ С ТРИДЦАТЬ ШЕСТОЙ ИТЕРАЦИИ, и промежуток пришлось
+   ужать: пять надписей по 13 px с прежними 28 px между ними
+   не вставали в строку рядом со слотом логотипа. */
 .nav__links {
   display: none;
-  gap: 28px;
+  gap: clamp(14px, 1.8vw, 26px);
   align-items: center;
 }
 @media (min-width: 900px) {
@@ -857,6 +860,75 @@
 .footer__req a { color: inherit; text-decoration: none; border-bottom: 1px solid rgba(18, 18, 18, 0.45); }
 .footer__req a:hover { border-bottom-color: currentColor; }
 
+/* ── РЕКВИЗИТЫ СОБИРАЮТСЯ ИЗ ТОЧЕК ──────────────────────────────────────
+   Постановка тридцать шестой итерации: реквизиты спрятаны за одну
+   ссылку «Реквизиты», на нажатие данные собираются из мелких летающих
+   точек в читаемый текст, на второе нажатие рассыпаются обратно.
+
+   ⚠️ ДВИЖУТСЯ ТОЛЬКО `translate` И `opacity`. Ни фильтра, ни маски,
+   ни размытия — закон 29 цел, и обе величины композитные. Точка —
+   это псевдоэлемент знака, а сам знак в это время прозрачен: на сборке
+   точка едет на своё место и гаснет, глиф проявляется.
+
+   ⚠️ РАДИУС У КНОПКИ НОЛЬ. Это лендинг: скруглены там только кнопка
+   `.btn`, плашки и карта (закон раздела 3), а это текстовая ссылка. */
+.req__knopka {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  padding: 0 0 2px;
+  margin: 0 0 10px;
+  min-height: 44px;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-variation-settings: 'wght' 700;
+  color: var(--on-green-dim);
+  border-bottom: 1px solid rgba(18, 18, 18, 0.45);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.req__knopka:hover { border-bottom-color: currentColor; }
+.req__knopka:focus-visible { outline: 2px solid var(--on-green-dim); outline-offset: 3px; }
+
+.req__para + .req__para { margin-top: 12px; }
+.req__z {
+  position: relative;
+  display: inline-block;
+  white-space: pre;
+}
+.req__z > i {
+  font-style: normal;
+  opacity: 0;
+  transition: opacity 220ms linear var(--d, 0ms);
+}
+.req__z::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  margin: -1.5px 0 0 -1.5px;
+  border-radius: 50%;
+  background: var(--on-green-dim);
+  opacity: 0.6;
+  translate: var(--dx, 0) var(--dy, 0);
+  transition:
+    translate 620ms var(--ease) var(--d, 0ms),
+    opacity 260ms linear var(--d, 0ms);
+}
+.req[data-on] .req__z > i { opacity: 1; }
+.req[data-on] .req__z::before { translate: 0 0; opacity: 0; }
+
+/* «При `prefers-reduced-motion` они просто появляются». */
+@media (prefers-reduced-motion: reduce) {
+  .req__z > i { opacity: 1; transition: none; }
+  .req__z::before { display: none; }
+}
+
 
 /* ═══════════════════════════════════════════════════════════ ВСПОМОГАТЕЛЬНОЕ */
 .sr-only {
@@ -1056,7 +1128,12 @@
   margin-inline: auto;
   position: relative;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* ⚠️ ЧИСЛО ЯЧЕЕК НЕ ЗАДАНО ВОВСЕ, И ЭТО ТРЕБОВАНИЕ ПОСТАНОВКИ:
+     карточек столько, сколько тарифов включено в админке. На телефоне
+     они идут СТОЛБИКОМ — широкие и низкие, название слева, цена
+     справа; на десктопе одним рядом. Прежняя сетка 2×2 держалась
+     на четвёртой карточке-сертификате, а он уехал на свою страницу. */
+  grid-template-columns: minmax(0, 1fr);
   gap: clamp(12px, 1.6vw, 26px);
   margin-top: clamp(24px, 3.4vw, 42px);
   /* Точка схода ОДНА на всю сетку. На самой карте `perspective()`
@@ -1126,6 +1203,14 @@
    ляжет ПОВЕРХ первой — слоты рисуются целиком по очереди (Р-68).
    Ячейку задаёт `grid-area`, а `position: absolute` убирает слой
    из раскладки: высоту ряда назначает карта, а не свет. */
+/* ⚠️ ОБЁРТКА ЯЧЕЙКИ НЕ СОЗДАЁТ КОНТЕКСТА НАЛОЖЕНИЯ, и это её
+   единственное условие. `position: relative` без `z-index` контекста
+   не создаёт, значит все слои света по-прежнему лежат слоем 0 общего
+   контекста `.cards`, а все карты — слоем 1: свет соседа физически
+   не может лечь поверх чужой карты (Р-68). Дай обёртке `isolation`,
+   `z-index` или трансформ — и дефект вернётся. */
+.cards__slot { position: relative; min-width: 0; display: block; }
+
 .cards__glow {
   position: absolute;
   --glow-blur: clamp(62px, 6.4vw, 116px);
@@ -1154,33 +1239,23 @@
    Глазом это не отличить от четырёх светов, стоящих вплотную;
    растр разности отличил сразу: в промежутке между картами света
    было 2 уровня, а сразу за кромкой сетки — 57. */
-.cards__glow[data-i='0'], .card[data-i='0'] { grid-area: 1 / 1 / 2 / 2; }
-.cards__glow[data-i='1'], .card[data-i='1'] { grid-area: 1 / 2 / 2 / 3; }
-.cards__glow[data-i='2'], .card[data-i='2'] { grid-area: 2 / 1 / 3 / 2; }
-.cards__glow[data-i='3'], .card[data-i='3'] { grid-area: 2 / 2 / 3 / 3; }
 /* Состояние света читается из состояния СВОЕЙ карты. Дублировать
    его в JS было бы вторым источником одного числа. */
-.cards:has(.card[data-i='0']:hover) .cards__glow[data-i='0'],
-.cards:has(.card[data-i='1']:hover) .cards__glow[data-i='1'],
-.cards:has(.card[data-i='2']:hover) .cards__glow[data-i='2'],
-.cards:has(.card[data-i='3']:hover) .cards__glow[data-i='3'] { --glow: 0.36; }
+.cards__slot:has(.card:hover) .cards__glow { --glow: 0.36; }
 /* ВЫБРАННАЯ ОТЛИЧАЕТСЯ ТОЛЬКО ЯРКОСТЬЮ СВЕТА. Никакой обводки:
    она снята постановкой вместе с кольцами. */
-.cards:has(.card[data-i='0'][aria-checked='true']) .cards__glow[data-i='0'],
-.cards:has(.card[data-i='1'][aria-checked='true']) .cards__glow[data-i='1'],
-.cards:has(.card[data-i='2'][aria-checked='true']) .cards__glow[data-i='2'],
-.cards:has(.card[data-i='3'][aria-checked='true']) .cards__glow[data-i='3'] { --glow: 0.72; }
+.cards__slot:has(.card[aria-checked='true']) .cards__glow { --glow: 0.72; }
 
 .card {
   position: relative;
   z-index: 1;
-  /* ПРОПОРЦИЯ БЛИЖЕ К БАНКОВСКОЙ: 85.6 × 54 мм это 1.586.
-     На узком экране ячейка 170 px, и по этой пропорции карта вышла бы
-     107 px высотой — туда не встают ни название, ни цена. Там работает
-     нижний предел, и карта получается 1.06…1.15. Это НАША трактовка,
-     она названа в отчёте. */
-  aspect-ratio: 1.586;
-  min-height: clamp(150px, 19svh, 205px);
+  /* ⚠️ НА ТЕЛЕФОНЕ КАРТА ШИРОКАЯ И НИЗКАЯ, А НЕ БАНКОВСКАЯ —
+     постановка тридцать шестой итерации: «столбиком, широкие низкие
+     карточки, название слева, цена справа». Пропорции у неё здесь нет
+     вовсе: ширина задана колонкой, высоту держит содержимое и нижний
+     предел. Банковская пропорция 1.586 (85.6 × 54 мм) осталась там,
+     где карта и читается картой, — на десктопе, в ряду. */
+  min-height: clamp(84px, 11svh, 104px);
   width: 100%;
   /* ⚠️ ПОВЕРХНОСТЬ ТЕМНЕЕ ПРЕЖНЕЙ, И ТЕМНОТА ВЫВЕДЕНА, А НЕ ВЗЯТА
      НА ГЛАЗ. `--surface` подмешан к `--ink` — седьмого цвета
@@ -1332,15 +1407,19 @@
    у плиты не меняется НИЧЕГО, кроме собственного трансформа карты, —
    то есть перерисовывать её нечему по построению. */
 
-/* Название сверху, цена и срок снизу — как на настоящей карте. */
+/* ⚠️ НА ТЕЛЕФОНЕ — НАЗВАНИЕ СЛЕВА, ЦЕНА СПРАВА, в одну строку:
+   карта низкая, и вертикальная раскладка туда не встаёт. На десктопе
+   всё как было — название сверху, цена и срок снизу, как на настоящей
+   карте. */
 .card__face {
   position: absolute;
   inset: 0;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
   justify-content: space-between;
-  padding: clamp(14px, 1.6vw, 26px);
+  padding: 14px 18px;
 }
 .card__name {
   font-size: clamp(1.0625rem, 4.6vw, 1.75rem);
@@ -1350,7 +1429,7 @@
   color: var(--white);
   white-space: nowrap;
 }
-.card__price { display: block; font-size: 12px; line-height: 1.4; color: var(--dim); }
+.card__price { display: block; font-size: 12px; line-height: 1.4; color: var(--dim); text-align: right; flex: 0 0 auto; }
 .card__price b {
   display: block;
   font-size: clamp(1.375rem, 5vw, 2.25rem);
@@ -1370,7 +1449,28 @@
   text-decoration-thickness: 1px;
 }
 
-@media (min-width: 560px) {
+/* ── ДЕСКТОП: РЯД КАРТ БАНКОВСКОЙ ПРОПОРЦИИ ──────────────────────────────
+   Порог 760 px, а не 560: при трёх картах в ряд на 560 каждой достаётся
+   меньше 180 px, и название «Индивидуальный» в неё не встаёт ни одним
+   читаемым кеглем. */
+@media (min-width: 760px) {
+  .cards {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+  }
+  .card {
+    aspect-ratio: 1.586;
+    min-height: clamp(150px, 19svh, 205px);
+  }
+  .card__face {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: space-between;
+    gap: 8px;
+    padding: clamp(14px, 1.6vw, 26px);
+  }
+  .card__price { text-align: left; }
   .card__price, .card__per { font-size: 13px; }
   .card__name { font-size: clamp(1.25rem, 2.2vw, 1.75rem); }
 }
@@ -1404,7 +1504,15 @@
 }
 .order__plan b { font-variation-settings: 'wght' 680; }
 .order__save { font-size: 12px; color: var(--green); font-variation-settings: 'wght' 650; }
-.order__opts { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 18px; }
+/* Две плашки стоят рядом и делят ширину поровну; на самом узком
+   экране ложатся друг под друга. */
+.order__opts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: min(100%, 420px);
+}
+@media (max-width: 359px) { .order__opts { grid-template-columns: minmax(0, 1fr); } }
 .order__gift {
   margin: 0;
   max-width: 52ch;
@@ -1414,37 +1522,50 @@
 }
 .order .btn { min-width: min(320px, 100%); }
 
-/* выбор аккаунта: состояние помечено не одним цветом — кружок
-   заливается, начертание тяжелеет, стоит aria-checked */
-.row__opt {
+/* ── ВЫБОР АККАУНТА: ДВЕ КРУПНЫЕ ПЛАШКИ ──────────────────────────────────
+   ⚠️ БЫЛИ ДВА КРУЖКА В 11 px С ПОДПИСЬЮ В 12 px. На телефоне это
+   не читалось как выбор вовсе: человек не понимал, что здесь вообще
+   есть переключатель. Постановка тридцать шестой итерации: «две
+   крупные плашки-кнопки рядом, выбранная — зелёная заливка, вторая —
+   тёмная со светлой каймой», и тот же элемент в оформлении заказа
+   и при активации сертификата.
+
+   ⚠️ ФОРМА — ПИЛЮЛЯ, А НЕ `--ui-r` РАЗДЕЛА. На лендинге скруглены
+   ровно три вещи: кнопка, плашка срока и карта (закон раздела 3),
+   и первые две — пилюли. Третий радиус на лендинге не заводим;
+   в разделе те же плашки идут общим токеном `--ui-r`, потому что там
+   всё скруглено им. */
+.opt {
   appearance: none;
-  background: none;
   border: 0;
-  padding: 8px 10px 8px 0;
-  min-height: 44px;
+  border-radius: 999px;
+  min-height: 52px;
+  padding: 0 22px;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
   font: inherit;
-  font-size: 12px;
+  font-size: 14px;
+  font-variation-settings: 'wght' 560;
   color: var(--dim);
+  background: var(--surface);
+  /* Граница интерактивного элемента обязана читаться: заливка
+     `--surface` против `--ink` даёт 1.16:1 и нормой 3:1 не является. */
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
   cursor: pointer;
   touch-action: manipulation;
-  transition: color var(--t-fast) var(--ease);
+  transition:
+    color var(--t-fast) var(--ease),
+    background-color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease);
 }
-.row__opt::before {
-  content: '';
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 1px currentColor;
-  flex: 0 0 auto;
-}
-.row__opt:hover { color: var(--white); }
-.row__opt[aria-checked='true'] { color: var(--white); font-variation-settings: 'wght' 700; }
-.row__opt[aria-checked='true']::before {
+.opt:hover { color: var(--white); transform: translateY(-1px); }
+.opt:active { transform: translateY(0); }
+.opt[aria-checked='true'] {
+  color: var(--on-green-dim);
   background: var(--green);
-  box-shadow: inset 0 0 0 1px var(--green);
+  box-shadow: none;
+  font-variation-settings: 'wght' 700;
 }
 
 /* ── БЕГУЩАЯ СТРОКА: ОТДЕЛЬНАЯ ПОЛОСА ────────────────────────────────────
@@ -1934,16 +2055,50 @@
   pointer-events: none;
   opacity: var(--on);
   /* «Ушёл курсор — строка уходит плавно». Переход только
-     на прозрачности: высота и содержимое не трогаются. */
-  transition: opacity 320ms linear;
+     на прозрачности: высота и содержимое не трогаются.
+     ⚠️ УХОДИТ ОНА БЫСТРЕЕ, ЧЕМ ПОЯВЛЯЕТСЯ, и это не украшение:
+     вместе с концом состояния снимается анимация, и дорожка встаёт
+     обратно в точку захода. Чем короче это окно, тем меньше видно
+     возврат. Длительность берётся из состояния, В КОТОРОЕ идёт
+     переход, — поэтому «включено» задаёт свои 320 мс правилом ниже,
+     а базовые 180 мс работают только на выход. */
+  transition: opacity 180ms linear;
 }
+.qa__item:hover .qa__tick,
+.qa__item[data-on] .qa__tick { transition-duration: 320ms; }
+/* ⚠️ АНИМАЦИИ У ПОКОЯЩЕЙСЯ СТРОКИ НЕТ ВОВСЕ, А НЕ «НА ПАУЗЕ», И ЭТО
+   ПРАВКА ТРИДЦАТЬ ШЕСТОЙ ИТЕРАЦИИ. Пауза замораживает анимацию
+   на её текущем времени и при возобновлении продолжает С ТОГО ЖЕ
+   МЕСТА: второй раз строка появлялась уже с середины фразы, третий —
+   с конца. Постановка требует обратного — каждое появление начинается
+   заново. Анимация теперь ЖИВЁТ ТОЛЬКО В СОСТОЯНИИ «ВКЛЮЧЕНО»:
+   правило перестало совпадать — анимация снята, время сброшено,
+   совпало снова — она заводится с нуля. Закон 11 при этом цел:
+   в покое анимации нет вовсе, а не «есть, но стоит».
+
+   ⚠️ ДВЕ АНИМАЦИИ, А НЕ ОДНА, И ЭТО ЕДИНСТВЕННЫЙ СПОСОБ СОВМЕСТИТЬ
+   «НАЧАЛО В СЕРЕДИНЕ СТРОКИ» С ПЕТЛЁЙ БЕЗ ШВА. Постановка: в момент
+   появления начало ответа стоит ПОСЕРЕДИНЕ полосы и уходит влево.
+   Одной петлёй это не выразить: круг переносит дорожку ровно
+   на копию, и если левая половина полосы пуста в начале круга,
+   она обязана быть пуста и в конце — то есть на каждом обороте
+   открывался бы разрыв. Поэтому заход (`qa-lead`) идёт ОДИН РАЗ,
+   от середины полосы к нулю и с той же скоростью, а дальше
+   с нулевой точки подхватывает бесконечная петля. Стыка между ними
+   нет по построению: заход кончается ровно там, где петля
+   начинается. */
 .qa__run {
   display: flex;
   width: max-content;
-  animation: qa-run var(--dur, 24s) linear infinite;
-  /* По умолчанию строка СТОИТ: анимация на паузе не тикает вовсе,
-     и закон 11 выполняется без единого наблюдателя. */
-  animation-play-state: paused;
+  /* В покое дорожка стоит в точке захода — то есть началом ответа
+     посередине полосы. Полоса в этот момент прозрачна. */
+  transform: translateX(var(--from, 0px));
+}
+.qa__item:hover .qa__run,
+.qa__item[data-on] .qa__run {
+  animation:
+    qa-lead var(--lead, 0s) linear 1 both,
+    qa-run var(--dur, 24s) linear var(--lead, 0s) infinite;
 }
 .qa__copy {
   /* СТРОГО ОДНА СТРОКА, без переносов: в этом весь приём. */
@@ -1964,6 +2119,13 @@
    дорожку в отдельный слой, а она вчетверо длиннее полосы: шесть
    таких слоёв держатся в памяти всё время, хотя видно из них обычно
    ни одного. Двумерный трансформ композитор ведёт так же. */
+/* Заход: от середины полосы к нулю, той же скоростью. Ширина полосы
+   приходит числом из замера — в процентах её не выразить: они
+   считаются от ширины ДОРОЖКИ, а она вчетверо длиннее. */
+@keyframes qa-lead {
+  from { transform: translateX(var(--from, 0px)); }
+  to { transform: translateX(0); }
+}
 @keyframes qa-run {
   from { transform: translateX(0); }
   /* Ход круга — РОВНО ОДНА КОПИЯ из четырёх. */
@@ -1972,11 +2134,9 @@
 /* На точном указателе строку ведёт наведение, и ведёт его CSS. */
 @media (hover: hover) and (pointer: fine) {
   .qa__item:hover { --on: 1; }
-  .qa__item:hover .qa__run { animation-play-state: running; }
 }
 /* На касаниях — тот вопрос, что ближе к линии отсчёта. */
 .qa__item[data-on] { --on: 1; }
-.qa__item[data-on] .qa__run { animation-play-state: running; }
 
 /* «При `prefers-reduced-motion` ответ стоит неподвижно в одну строку».
    ⚠️ ОТСТУПЛЕНИЕ, И ОНО НАЗВАНО В ОТЧЁТЕ: на узком экране ответ
@@ -1996,7 +2156,9 @@
     overflow: visible;
   }
   .qa__q { opacity: 1; }
-  .qa__run { animation: none; display: block; width: auto; }
+  .qa__item:hover .qa__run,
+  .qa__item[data-on] .qa__run { animation: none; }
+  .qa__run { animation: none; display: block; width: auto; transform: none; }
   .qa__copy { white-space: normal; padding-right: 0; line-height: 1.4; }
   .qa__copy + .qa__copy { display: none; }
 }

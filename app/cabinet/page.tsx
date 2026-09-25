@@ -3,6 +3,8 @@ import PodderzhkaForma from '@/components/shop/PodderzhkaForma';
 import type { Metadata } from 'next';
 import LoginBox from '@/components/shop/LoginBox';
 import KabinetZhivoy from '@/components/shop/KabinetZhivoy';
+import Kopirovat from '@/components/shop/Kopirovat';
+import Svorachivanie from '@/components/shop/Svorachivanie';
 import { ktoKlient } from '@/lib/server/auth';
 import { balans, moiZakazy } from '@/lib/server/views';
 import { moiSertifikaty } from '@/lib/server/certificates';
@@ -22,6 +24,35 @@ const ZNACHOK: Record<Status, string> = {
   done: 'badge badge--done',
   cancelled: 'badge badge--cancel',
 };
+
+/**
+ * ШКАЛА СТАТУСОВ: оплачен → в работе → готово.
+ *
+ * ⚠️ ТРИ ШАГА, А НЕ ПЯТЬ. Статусов в базе пять, но «новый» — это ещё
+ * не заказ в работе (он ждёт оплаты, и вместо шкалы там кнопка
+ * «Оплатить»), а «отменён» — не шаг пути, а его конец. Шкала рисуется
+ * только у тех, кто по пути идёт.
+ */
+const SHAGI: [Status, string][] = [
+  ['paid', 'Оплачен'],
+  ['in_work', 'В работе'],
+  ['done', 'Готово'],
+];
+const PORYADOK: Record<Status, number> = { new: -1, paid: 0, in_work: 1, done: 2, cancelled: -1 };
+
+/** Сколько дней осталось до даты, с точностью до суток. */
+function dneyDo(kogda: Date): number {
+  return Math.ceil((kogda.getTime() - Date.now()) / 86_400_000);
+}
+
+function dniSlovami(n: number): string {
+  const s = Math.abs(n) % 100;
+  const e = s % 10;
+  if (s > 10 && s < 20) return 'дней';
+  if (e === 1) return 'день';
+  if (e >= 2 && e <= 4) return 'дня';
+  return 'дней';
+}
 
 /**
  * ЛИЧНЫЙ КАБИНЕТ.
@@ -84,9 +115,13 @@ export default async function Cabinet({
         </p>
       )}
 
+      {/* ── ШАПКА КАБИНЕТА: ПОЧТА И ВЫХОД ────────────────────────────────
+          Почту можно скопировать в один тап: это тот адрес, на который
+          придут письма и по которому человек входит, и диктовать его
+          по памяти он не обязан. */}
       <div className="cab__top">
         <span className="cab__mail">{kto.email}</span>
-        <span className="cab__balance tnum">Баланс: {rubli(bal)}</span>
+        <Kopirovat chto={kto.email} chego="почту" />
         <form action={deystvieVyyti}>
           <button type="submit" className="btn btn--ghost btn--sm">Выйти</button>
         </form>
@@ -98,128 +133,216 @@ export default async function Cabinet({
           выданы»; всё остальное по-прежнему рисует сервер. */}
       <KabinetZhivoy nachalo={await otpechatokKabineta(kto.userId)} />
 
-      <h2 className="panel__h">Заказы</h2>
+      {/* ⚠️ БАЛАНС — СВОЯ КАРТОЧКА, А НЕ СТРОКА В ШАПКЕ (постановка
+          тридцать шестой итерации). Появляется он одним способом —
+          возвратом за отменённый заказ, — и человеку надо видеть,
+          что деньги не пропали, а лежат и тратятся при следующем
+          оформлении. Нулевой баланс не показываем вовсе: пустая
+          строка «0 ₽» только пугает. */}
+      {bal > 0 ? (
+        <div className="panel cab__balans">
+          <div>
+            <span className="panel__h" style={{ margin: 0, display: 'block' }}>Баланс</span>
+            <p className="panel__note" style={{ marginTop: 4 }}>
+              Спишется при следующем оформлении — галочкой в «К оплате».
+            </p>
+          </div>
+          <span className="cab__balance tnum">{rubli(bal)}</span>
+        </div>
+      ) : null}
+
+      <h2 className="cab__h2">Заказы</h2>
       {!zakazy.length ? (
-        <p className="empty">Заказов пока нет. <a href="/">Выбрать тариф</a></p>
+        /* ⚠️ ПУСТОЕ СОСТОЯНИЕ — НЕ СТРОКА «ЗАКАЗОВ НЕТ», а приглашение:
+           человек, впервые вошедший в кабинет, обязан понять, что
+           делать дальше. */
+        <div className="panel cab__pusto">
+          <p className="cab__pusto-h">Пока пусто — и это нормально</p>
+          <p className="panel__note" style={{ marginTop: 0 }}>
+            Выберите тариф и срок, оплатите картой или через СБП — доступ появится
+            здесь. Обычно это 5–10 минут в рабочее время, с 10:00 до 22:00 по Москве.
+          </p>
+          <div className="cab__pusto-knopki">
+            <a className="btn" href="/#pricing">Выбрать тариф</a>
+            <a className="btn btn--ghost" href="/certificate/">Активировать сертификат</a>
+          </div>
+        </div>
       ) : (
-        zakazy.map((z) => (
-          <article key={z.id} className="order-card">
-            <div className="order-card__head">
-              <div>
-                <div className="order-card__id">Заказ № {z.id} · {z.sozdan.toLocaleDateString('ru-RU')}</div>
-                <div className="order-card__name">
-                  {z.nazvanie} · {z.srok}
-                  {z.poSertifikatu ? ' · по сертификату' : ''}
+        zakazy.map((z) => {
+          const shag = PORYADOK[z.status];
+          const ostalos = z.konchaetsya ? dneyDo(z.konchaetsya) : null;
+          return (
+            /* Карточка схлопывается, когда покупатель отменяет заказ:
+               серверное действие следом перерисует кабинет уже без неё. */
+            <Svorachivanie key={z.id}>
+              <article className="order-card">
+                <div className="order-card__head">
+                  <div>
+                    {/* ⚠️ НОМЕРА ЗАКАЗА ЗДЕСЬ НЕТ И НЕ БУДЕТ (постановка
+                        тридцать шестой итерации): клиенту он не нужен
+                        ни для чего, а в поддержке заказ находят
+                        по почте. Номер остался в админке и в чате. */}
+                    <div className="order-card__name">
+                      {z.nazvanie} · {z.srok}
+                      {z.poSertifikatu ? ' · по сертификату' : ''}
+                    </div>
+                    <div className="order-card__id">{z.sozdan.toLocaleDateString('ru-RU')}</div>
+                  </div>
+                  <span className={ZNACHOK[z.status]}>{z.statusSlovami}</span>
                 </div>
-              </div>
-              <span className={ZNACHOK[z.status]}>{z.statusSlovami}</span>
-            </div>
 
-            {z.status === 'new' && z.kDoplate > 0 ? (
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 14 }}>
-                <form action={deystvieOplatit}>
-                  <input type="hidden" name="order" value={z.id} />
-                  <button type="submit" className="btn btn--sm">Оплатить {rubli(z.kDoplate)}</button>
-                </form>
-                <form action={deystvieOtmenitSvoy}>
-                  <input type="hidden" name="order" value={z.id} />
-                  <button type="submit" className="btn btn--ghost btn--sm">Отменить</button>
-                </form>
-              </div>
-            ) : null}
+                {/* ШКАЛА: где заказ сейчас. Рисуется, только пока он идёт
+                    по пути, — у неоплаченного и отменённого шага нет. */}
+                {shag >= 0 ? (
+                  <ol className="shkala" aria-label="Что происходит с заказом">
+                    {SHAGI.map(([k, t], i) => (
+                      <li key={k} className="shkala__sh" data-on={i <= shag ? '' : undefined}>
+                        <span className="shkala__tochka" aria-hidden="true" />
+                        <span className="shkala__t">{t}</span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : null}
 
-            {z.status === 'cancelled' && z.prichinaOtmeny ? (
-              <p className="panel__note">Причина: {z.prichinaOtmeny}</p>
-            ) : null}
+                {z.status === 'new' && z.kDoplate > 0 ? (
+                  <div className="order-card__knopki">
+                    <form action={deystvieOplatit}>
+                      <input type="hidden" name="order" value={z.id} />
+                      <button type="submit" className="btn btn--sm">Оплатить {rubli(z.kDoplate)}</button>
+                    </form>
+                    {/* ⚠️ ПРИЗНАК `data-otmena` ЛОВИТ ОБЁРТКА: по нему
+                        карточка схлопывается. Без него отмена сработает
+                        всё равно — просто без плавного ухода. */}
+                    <form action={deystvieOtmenitSvoy} data-otmena="">
+                      <input type="hidden" name="order" value={z.id} />
+                      <button type="submit" className="btn btn--ghost btn--sm">Отменить</button>
+                    </form>
+                  </div>
+                ) : null}
 
-            {/* ⚠️ ДАТА ОКОНЧАНИЯ — ПРОСТАЯ СТРОКА, и это постановка:
-                «в кабинете показать дату окончания обычной строкой,
-                оформление придёт следующей задачей». Стоит она только
-                у закрытых заказов: пока доступ не выдан, кончаться
-                нечему. */}
-            {z.konchaetsya && z.status === 'done' ? (
-              <p className="panel__note">
-                Доступ действует до {z.konchaetsya.toLocaleDateString('ru-RU')}. За три дня
-                до конца пришлём письмо со ссылкой на продление.
-              </p>
-            ) : null}
+                {/* ⚠️ ПРИЧИНА ОТМЕНЫ ОСТАЁТСЯ ТОЛЬКО У ОТМЕНЫ ОПЕРАТОРОМ.
+                    Отменённые самим покупателем сюда не доходят вовсе —
+                    их не отдаёт `moiZakazy`. */}
+                {z.status === 'cancelled' ? (
+                  <p className="panel__note">
+                    {z.prichinaOtmeny ? `Причина: ${z.prichinaOtmeny} ` : ''}
+                    Деньги за заказ лежат на балансе — спишутся при следующем оформлении.
+                  </p>
+                ) : null}
 
-            {/* ⚠️ ЧТО ПОКАЗАНО ПО НОВОМУ АККАУНТУ — ПОЧТА, А НЕ ЛОГИН
-                С ПАРОЛЕМ. С тридцать четвёртой итерации аккаунт заводит
-                оператор на данные КЛИЕНТА: выдавать нечего, доступ
-                у человека с самого начала, и единственное, что ему
-                нужно знать, — на какую почту включили Premium.
-                ⚠️ СТАРЫЕ ЗАКАЗЫ НЕ ТРОНУТЫ: там, где оператор доступы
-                ВЫДАВАЛ, они по-прежнему видны строкой ниже. */}
-            {z.status === 'done' && z.slots.some((s) => s.pochta && !s.login) ? (
-              <div className="creds">
-                {z.slots
-                  .filter((s) => s.pochta && !s.login)
-                  .map((s) => (
-                    <div key={s.idx} className="cred">
-                      {z.slots.length > 1 ? <span className="cred__k">Аккаунт {s.idx + 1}</span> : null}
-                      <span className="cred__k">
-                        {s.mode === 'new' ? 'Premium включён на почте' : 'Premium продлён на почте'}
-                      </span>
-                      <b>{s.pochta}</b>
-                    </div>
-                  ))}
-              </div>
-            ) : null}
+                {/* ДАТА ОКОНЧАНИЯ И ОСТАТОК ДНЕЙ. Кнопка «Продлить»
+                    открывает оформление уже заполненным: тот же тариф,
+                    тот же срок, режим «продлить существующий» и почта
+                    аккаунта — её страница читает по номеру заказа сама
+                    (закон 44). */}
+                {z.konchaetsya && z.status === 'done' ? (
+                  <div className="srok">
+                    <p className="srok__t">
+                      Доступ действует до {z.konchaetsya.toLocaleDateString('ru-RU')}
+                      {ostalos !== null && ostalos > 0
+                        ? ` — осталось ${ostalos} ${dniSlovami(ostalos)}`
+                        : ''}
+                      .
+                    </p>
+                    <a
+                      className="btn btn--sm"
+                      href={`/checkout/?plan=${encodeURIComponent(z.planId)}&period=${z.period}&renew=${z.id}&mode=renew`}
+                    >
+                      Продлить
+                    </a>
+                  </div>
+                ) : null}
 
-            {/* Выданные доступы: только там, где оператор их завёл. */}
-            {z.slots.some((s) => s.login) ? (
-              <div className="creds">
-                {z.slots
-                  .filter((s) => s.login)
-                  .map((s) => (
-                    <div key={s.idx} className="cred">
-                      {z.slots.length > 1 ? <span className="cred__k">Аккаунт {s.idx + 1}</span> : null}
-                      <span className="cred__k">Логин</span>
-                      <b>{s.login}</b>
-                      {s.mailPass ? (
-                        <>
-                          <span className="cred__k">Пароль от почты</span>
-                          <b>{s.mailPass}</b>
-                        </>
-                      ) : null}
-                      {s.spotifyPass ? (
-                        <>
-                          <span className="cred__k">Пароль Spotify</span>
-                          <b>{s.spotifyPass}</b>
-                        </>
-                      ) : null}
-                    </div>
-                  ))}
-              </div>
-            ) : null}
+                {/* ⚠️ ЧТО ПОКАЗАНО ПО НОВОМУ АККАУНТУ — ПОЧТА, А НЕ ЛОГИН
+                    С ПАРОЛЕМ. С тридцать четвёртой итерации аккаунт заводит
+                    оператор на данные КЛИЕНТА: выдавать нечего, доступ
+                    у человека с самого начала, и единственное, что ему
+                    нужно знать, — на какую почту включили Premium.
+                    ⚠️ СТАРЫЕ ЗАКАЗЫ НЕ ТРОНУТЫ: там, где оператор доступы
+                    ВЫДАВАЛ, они по-прежнему видны строкой ниже. */}
+                {z.status === 'done' && z.slots.some((s) => s.pochta && !s.login) ? (
+                  <div className="creds">
+                    {z.slots
+                      .filter((s) => s.pochta && !s.login)
+                      .map((s) => (
+                        <div key={s.idx} className="cred">
+                          {z.slots.length > 1 ? <span className="cred__k">Аккаунт {s.idx + 1}</span> : null}
+                          <span className="cred__k">
+                            {s.mode === 'new' ? 'Premium включён на почте' : 'Premium продлён на почте'}
+                          </span>
+                          <span className="cred__stroka">
+                            <b>{s.pochta}</b>
+                            <Kopirovat chto={s.pochta!} chego="почту аккаунта" />
+                          </span>
+                        </div>
+                      ))}
+                  </div>
+                ) : null}
 
-            {z.sekretyStyorty && z.status === 'done' ? (
-              <p className="panel__note">
-                Доступы стёрты с сервера через семь дней после закрытия заказа — так надёжнее.
-                Если вы их не сохранили, напишите нам.
-              </p>
-            ) : null}
-          </article>
-        ))
+                {/* Выданные доступы: только там, где оператор их завёл. */}
+                {z.slots.some((s) => s.login) ? (
+                  <div className="creds">
+                    {z.slots
+                      .filter((s) => s.login)
+                      .map((s) => (
+                        <div key={s.idx} className="cred">
+                          {z.slots.length > 1 ? <span className="cred__k">Аккаунт {s.idx + 1}</span> : null}
+                          <span className="cred__k">Логин</span>
+                          <b>{s.login}</b>
+                          {s.mailPass ? (
+                            <>
+                              <span className="cred__k">Пароль от почты</span>
+                              <b>{s.mailPass}</b>
+                            </>
+                          ) : null}
+                          {s.spotifyPass ? (
+                            <>
+                              <span className="cred__k">Пароль Spotify</span>
+                              <b>{s.spotifyPass}</b>
+                            </>
+                          ) : null}
+                        </div>
+                      ))}
+                  </div>
+                ) : null}
+
+                {z.sekretyStyorty && z.status === 'done' ? (
+                  <p className="panel__note">
+                    Доступы стёрты с сервера через семь дней после закрытия заказа — так надёжнее.
+                    Если вы их не сохранили, напишите нам.
+                  </p>
+                ) : null}
+              </article>
+            </Svorachivanie>
+          );
+        })
       )}
 
-      <h2 className="panel__h" style={{ marginTop: 40 }}>Сертификаты</h2>
+      <h2 className="cab__h2">Сертификаты</h2>
+      {/* Активация живёт и здесь: человек, которому подарили код, чаще
+          всего уже вошёл в кабинет. */}
+      <div className="cab__sert-verh">
+        <a className="btn btn--ghost btn--sm" href="/certificate/">Активировать сертификат</a>
+        <a className="btn btn--ghost btn--sm" href="/sertifikaty/">Подарить сертификат</a>
+      </div>
       {!sert.length ? (
-        <p className="empty">Сертификатов нет.</p>
+        <p className="empty">Своих сертификатов пока нет.</p>
       ) : (
         /* ⚠️ ТАРИФ И СРОК ВИДНЫ РЯДОМ С КОДОМ (Р-93): сертификатов
            у человека может быть несколько и на разные тарифы,
            а по одному коду их не различить. */
         sert.map((s) => (
           <div key={s.id} className={s.ispolzovan ? 'cert cert--used' : 'cert'}>
-            <span className="cert__code">{s.kod ?? `…${s.tail}`}</span>
+            <span className="cert__stroka">
+              <span className="cert__code">{s.kod ?? `…${s.tail}`}</span>
+              {s.kod && !s.ispolzovan ? <Kopirovat chto={s.kod} chego="код сертификата" /> : null}
+            </span>
             <span className="cert__meta">
               {s.chto}
               {' · '}
               {s.ispolzovan
                 ? 'активирован'
-                : `действует до ${s.srokDo.toLocaleDateString('ru-RU')} · активировать: spotik.shop/certificate/`}
+                : `действует до ${s.srokDo.toLocaleDateString('ru-RU')}`}
             </span>
           </div>
         ))
@@ -231,7 +354,7 @@ export default async function Cabinet({
           в кабинет с вопросом по своему заказу, и открывать ради
           этого окно поверх экрана незачем. Почта аккаунта известна
           странице, поэтому подставляется сразу. */}
-      <h2 className="panel__h" style={{ marginTop: 40 }}>Нужна помощь?</h2>
+      <h2 className="cab__h2">Нужна помощь?</h2>
       <div className="panel pd__pomoshch">
         <p className="panel__note" style={{ marginTop: 0 }}>
           Напишите, что случилось, — ответим в рабочее время, с 10:00 до 22:00 по Москве.

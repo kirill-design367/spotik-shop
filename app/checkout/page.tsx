@@ -54,7 +54,12 @@ export default async function Checkout({
   const tarif = naytiTarif(spisok, planId) ?? spisok[0]!;
   const zapros = Number(odin('period'));
   const sroki = tarif.ceny.map((c) => ({ period: c.period, kop: c.kop, label: srokPolno(c.period) }));
-  const period = sroki.find((s) => s.period === zapros)?.period ?? sroki[sroki.length - 1]?.period ?? 1;
+  /* ⚠️ БЕЗ ЯВНОГО СРОКА В АДРЕСЕ ОТКРЫВАЕТСЯ САМЫЙ КОРОТКИЙ, А НЕ САМЫЙ
+     ДЛИННЫЙ. Раньше умолчанием был последний срок из списка, то есть
+     год: человек, пришедший по ссылке без срока, видел самую крупную
+     сумму. Постановка тридцать шестой итерации ставит месяц и здесь,
+     и на лендинге. */
+  const period = sroki.find((s) => s.period === zapros)?.period ?? sroki[0]?.period ?? 1;
   const kto = await ktoKlient();
 
   const zagolovok = podarok ? `Сертификат в подарок · ${tarif.name}` : tarif.name;

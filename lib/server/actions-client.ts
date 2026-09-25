@@ -219,7 +219,7 @@ export async function deystvieOtmenitSvoy(fd: FormData): Promise<void> {
     zakaz,
     kto.userId,
   ]);
-  if (r) await otmenitZakaz(zakaz, 'Отменён покупателем до оплаты', null);
+  if (r) await otmenitZakaz(zakaz, 'Отменён покупателем до оплаты', null, 'obychno', 'klient');
   revalidatePath('/cabinet');
   redirect('/cabinet/');
 }

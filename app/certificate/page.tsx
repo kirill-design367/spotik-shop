@@ -1,34 +1,21 @@
 import '../shop.css';
 import type { Metadata } from 'next';
-import CertificateForm from '@/components/shop/CertificateForm';
-import LoginBox from '@/components/shop/LoginBox';
-import { ktoKlient } from '@/lib/server/auth';
-import { bazaEst } from '@/lib/server/db';
+import Sertifikaty from '@/components/shop/Sertifikaty';
 
-export const metadata: Metadata = { title: 'Активация сертификата — Spotik Shop', robots: { index: false, follow: false } };
+export const metadata: Metadata = {
+  title: 'Сертификат — Spotik Shop',
+  robots: { index: false, follow: false },
+};
 export const dynamic = 'force-dynamic';
 
-export default async function Certificate() {
-  if (!bazaEst()) {
-    return (
-      <main id="main" className="page" tabIndex={-1}>
-        <h1 className="page__h">Сертификат</h1>
-        <p className="err">Сервис временно недоступен. Попробуйте чуть позже.</p>
-      </main>
-    );
-  }
-  const kto = await ktoKlient();
-  return (
-    <main id="main" className="page" tabIndex={-1}>
-      <a className="page__back" href="/">← На главную</a>
-      <h1 className="page__h">Активация сертификата</h1>
-      <p className="page__lead">
-        Введите код с сертификата — мы покажем, что вам подарено. Дальше вход по коду
-        из письма и выбор по каждому аккаунту: завести новый или продлить свой. Платить
-        ничего не нужно.
-      </p>
-      {!kto ? <LoginBox next="/certificate/" zagolovok="Вход — на эту почту придёт доступ" /> : null}
-      <CertificateForm voshyol={Boolean(kto)} />
-    </main>
-  );
+/**
+ * СТАРЫЙ АДРЕС АКТИВАЦИИ.
+ *
+ * Он стоит в письмах о купленном сертификате, в кабинете и в ссылках,
+ * которые люди уже сохранили, поэтому перенаправлять его никуда
+ * нельзя — открывается та же страница, только сразу на вкладке
+ * «Активировать».
+ */
+export default function Certificate() {
+  return <Sertifikaty nachalnaya="aktivirovat" />;
 }

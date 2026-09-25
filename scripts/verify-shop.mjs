@@ -502,7 +502,12 @@ await drug.fill('input[name="password0"]', 'Drug-Parol-7');
 await drug.fill('input[name="login1"]', 'drug@akkaunt.test');
 await drug.fill('input[name="password1"]', 'drugoy-tayny-parol7');
 await drug.check('input[name="consent"]');
-await nazhat(drug, 'button:has-text("Активировать")');
+/* ⚠️ ПОЛНАЯ НАДПИСЬ, А НЕ «Активировать»: с тридцать шестой итерации
+   на странице есть вкладка с таким же началом («Подарить» /
+   «Активировать»), и `has-text` берёт ПЕРВОЕ совпадение — то есть
+   нажималась бы вкладка, а форма оставалась бы неотправленной.
+   Отказ при этом выглядел как «код не принят», хотя код приняли. */
+await nazhat(drug, 'button:has-text("Активировать сертификат")');
 chk('сертификат активирован, заказ в кабинете', drug.url().includes('/cabinet/'), drug.url().replace(`http://localhost:${PORT}`, ''));
 const teloD = await drug.textContent('body');
 chk('заказ по сертификату сразу у оператора', /Оплачен, ждёт оператора/.test(teloD ?? ''));
@@ -660,6 +665,23 @@ console.log('── ДЕНЬГИ ПО ЗАКАЗУ, КОТОРЫЙ ИХ УЖЕ �
   await klient.waitForTimeout(300);
   const st1 = await p2.query('select status from shop_order where id = $1', [nomer]);
   chk('заказ отменён покупателем', st1.rows[0].status === 'cancelled', String(st1.rows[0].status));
+
+  /* ⚠️ И ИЗ КАБИНЕТА ОН ИСЧЕЗ (закон 48). Спрашивается ЖИВАЯ
+     СТРАНИЦА, а не наш же запрос к базе: прятать заказ обязан
+     кабинет, а проверка тем же условием, каким он его прячет,
+     была бы моделью предмета (Р-47). */
+  await klient.goto(`http://localhost:${PORT}/cabinet/`, { waitUntil: 'networkidle' });
+  const kabPosleOtmeny = await klient.content();
+  chk('отменённый покупателем заказ из кабинета исчез',
+    !kabPosleOtmeny.includes(`value="${nomer}"`) && !/Отменён покупателем/.test(kabPosleOtmeny),
+    `заказ № ${nomer}`);
+  /* ⚠️ НОМЕРА ЗАКАЗА КЛИЕНТ НЕ ВИДИТ НИГДЕ — ни на экране, ни
+     в письме. Проверяется по ТЕКСТУ страницы и по журналу писем,
+     а не по разметке: в скрытых полях форм оплаты и отмены номер
+     есть и быть обязан. */
+  const kabTekst = ((await klient.textContent('body')) ?? '').replace(/\s+/g, ' ');
+  chk('номера заказа в кабинете нет', !/Заказ\s*№/i.test(kabTekst), kabTekst.slice(0, 80));
+  chk('номера заказа в письмах нет', !/Заказ\s*№/i.test(server.zhurnal()));
 
   // …а деньги всё-таки пришли. Стучимся в ТУ ЖЕ дверь, что и настоящее
   // уведомление Робокассы, — иначе проверялась бы не оплата, а кнопка.
@@ -865,14 +887,18 @@ console.log('── СКРУГЛЁННЫЕ УГЛЫ В РАЗДЕЛЕ, И ЛЕН
       if (b.width < 4 || b.height < 4) continue;
       const r = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0;
       if (r < 0.5) continue;
-      /* Что скруглено на лендинге ЗАКОННО: кнопка и плашка срока —
-         пилюли (отсылка к плееру), карта тарифа со своей каймой
-         и слой света за ней — `--card-r`, кольца микроволн и узлы
-         света — круги, плашка поддержки — та же пилюля, что кнопка.
-         Всё остальное обязано быть 0. */
+      /* Что скруглено на лендинге ЗАКОННО: кнопка, плашка срока
+         и плашка выбора аккаунта — пилюли (отсылка к плееру), карта
+         тарифа со своей каймой и слой света за ней — `--card-r`,
+         кольца микроволн и узлы света — круги, плашка поддержки —
+         та же пилюля, что кнопка. Всё остальное обязано быть 0.
+         ⚠️ `.opt` ДОБАВЛЕН В ТРИДЦАТЬ ШЕСТОЙ: выбор аккаунта стал
+         двумя крупными плашками вместо двух кружков, и форма у них
+         та же пилюля, что у плашки срока. Третьего радиуса
+         на лендинге не завелось. */
       if (
         el.closest(
-          '.btn, .seg, .seg__btn, .card, .cards__glow, .burger, .menu, .rstep__wave, .route__node, .pd__knopka',
+          '.btn, .seg, .seg__btn, .opt, .card, .cards__glow, .burger, .menu, .rstep__wave, .route__node, .pd__knopka',
         )
       )
         continue;
@@ -1139,8 +1165,11 @@ console.log('── ПОЧТА ЗАНЯТА: ОТМЕНА, ДЕНЬГИ НА Б�
   chk('деньги вернулись на баланс',
     balansStal === balansBylo + Number(zz.rows[0].money_kop),
     `${balansBylo / 100} → ${balansStal / 100} ₽`);
+  /* ⚠️ БЕЗ УЧЁТА РЕГИСТРА: с тридцать шестой итерации номера заказа
+     в теме письма нет, и тема начинается с этой же фразы — то есть
+     с прописной буквы (закон 48). */
   chk('клиенту ушло письмо «оформите заново, выбрав продление»',
-    server.zhurnal().includes('на эту почту уже есть аккаунт Spotify') &&
+    /на эту почту уже есть аккаунт Spotify/i.test(server.zhurnal()) &&
       server.zhurnal().includes('Продлить существующий'));
 }
 

@@ -1,7 +1,9 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Wordmark from '@/components/wordmark/Wordmark';
 import { CUT_OVER_INK } from '@/lib/wordmark';
+import { prefersReducedMotion } from '@/lib/motion';
 
 /**
  * Нижняя скобка.
@@ -33,7 +35,96 @@ import { CUT_OVER_INK } from '@/lib/wordmark';
  * снизу сами, когда рост кончился и страница едет дальше. Ни атрибута
  * состояния, ни перехода для этого не нужно.
  */
+/**
+ * Реквизиты: что и чем подписано. Пара «подпись — значение».
+ *
+ * ⚠️ ЛЕЖАТ ОНИ ЗДЕСЬ ОДНИМ СПИСКОМ, А НЕ В РАЗМЕТКЕ, потому что
+ * из него собираются ДВА представления: невидимое для поиска
+ * и экранного диктора (оно в разметке всегда) и то, что собирается
+ * из точек по нажатию. Две копии одного юридического реквизита
+ * разошлись бы на первой правке.
+ */
+const REKVIZITY: [string, string, string?][] = [
+  ['Исполнитель', 'Менаше Лев Наумович'],
+  ['ИНН', '526324111452'],
+  ['ОГРНИП', '326527500140369'],
+  ['Телефон', '+7 950 373-80-46', 'tel:+79503738046'],
+  ['Почта', 'lev.menashe@yandex.ru', 'mailto:lev.menashe@yandex.ru'],
+];
+
+/**
+ * Разброс точки до сборки — ДЕТЕРМИНИРОВАННЫЙ, а не случайный.
+ *
+ * ⚠️ `Math.random` ЗДЕСЬ НЕЛЬЗЯ ВОВСЕ: сервер и браузер нарисовали бы
+ * разные числа, и React честно доложил бы о расхождении разметки.
+ * Дешёвый хеш от номера знака даёт тот же разброс на глаз и одно
+ * и то же число на обеих сторонах.
+ */
+function razbros(i: number): { dx: number; dy: number; d: number } {
+  const h = Math.sin(i * 12.9898) * 43758.5453;
+  const a = (h - Math.floor(h)) * Math.PI * 2;
+  const h2 = Math.sin(i * 78.233) * 12345.678;
+  const r = 28 + (h2 - Math.floor(h2)) * 46;
+  return {
+    dx: Math.round(Math.cos(a) * r),
+    dy: Math.round(Math.sin(a) * r * 0.7),
+    /* Задержка идёт по знакам, но по кругу: длинная строка иначе
+       собиралась бы полторы секунды. */
+    d: (i % 24) * 22,
+  };
+}
+
+/** Строка, собранная из точек: каждый знак — своя точка и свой глиф. */
+function Sobiraemaya({ tekst, ot }: { tekst: string; ot: number }) {
+  return (
+    <>
+      {Array.from(tekst).map((z, i) => {
+        const { dx, dy, d } = razbros(ot + i);
+        return (
+          <span
+            key={i}
+            className="req__z"
+            aria-hidden="true"
+            style={{
+              ['--dx' as string]: `${dx}px`,
+              ['--dy' as string]: `${dy}px`,
+              ['--d' as string]: `${d}ms`,
+            }}
+          >
+            <i>{z}</i>
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 export default function Footer() {
+  const [otkryto, setOtkryto] = useState(false);
+  /* Разметка точек живёт ТОЛЬКО пока блок открыт. Держи мы её всегда,
+     две сотни спанов уехали бы в разметку лендинга — в тот самый
+     первый экран, который двадцать шесть итераций доводили. */
+  const [est, setEst] = useState(false);
+  const [sobrano, setSobrano] = useState(false);
+
+  useEffect(() => {
+    if (otkryto) {
+      setEst(true);
+      /* Точки обязаны сначала встать врассыпную и только потом
+         поехать: включи состояние в том же кадре, что и монтирование,
+         и браузер не увидит перехода вовсе. */
+      const id = requestAnimationFrame(() => requestAnimationFrame(() => setSobrano(true)));
+      return () => cancelAnimationFrame(id);
+    }
+    setSobrano(false);
+    if (prefersReducedMotion()) {
+      setEst(false);
+      return;
+    }
+    const id = window.setTimeout(() => setEst(false), 700);
+    return () => window.clearTimeout(id);
+  }, [otkryto]);
+
   return (
     <footer
       id="footer"
@@ -45,35 +136,58 @@ export default function Footer() {
       <Wordmark mode="footer" sectionId="footer" />
 
       <div className="footer__body shell">
+        {/* ⚠️ РЕКВИЗИТЫ СПРЯТАНЫ ЗА ОДНУ ССЫЛКУ (тридцать шестая
+            итерация): «на нажатие данные собираются из мелких летающих
+            точек в читаемый текст, на второе нажатие рассыпаются
+            обратно». Двигаются только `translate` и `opacity` —
+            обе величины композитные, фильтров нет ни одного (закон 29).
+
+            ⚠️ И ОНИ ОСТАЮТСЯ В РАЗМЕТКЕ ВСЕГДА — невидимой строкой
+            для поиска и экранного диктора. Реквизиты исполнителя —
+            обязательная часть публичной оферты, и прятать их
+            от машины нельзя; прячется только их показ человеку.
+            Сами точки при этом живут лишь пока блок открыт: две
+            сотни спанов в разметке лендинга стоили бы первого
+            экрана. */}
         <div className="footer__col">
-          <dl className="footer__req">
-            <dt>Исполнитель</dt>
-            <dd>Менаше Лев Наумович</dd>
-            <dt>ИНН</dt>
-            <dd className="tnum">526324111452</dd>
-            <dt>ОГРНИП</dt>
-            <dd className="tnum">326527500140369</dd>
-          </dl>
+          <button
+            type="button"
+            className="req__knopka"
+            aria-expanded={otkryto}
+            onClick={() => setOtkryto((v) => !v)}
+          >
+            Реквизиты
+          </button>
+          <p className="sr-only">
+            {REKVIZITY.map(([k, v]) => `${k}: ${v}`).join('. ')}
+          </p>
+          {est ? (
+            <dl className="footer__req req" data-on={sobrano ? '' : undefined}>
+              {REKVIZITY.map(([k, v, ssylka], n) => (
+                <div key={k} className="req__para">
+                  <dt>{k}</dt>
+                  <dd className={k === 'ИНН' || k === 'ОГРНИП' || k === 'Телефон' ? 'tnum' : undefined}>
+                    {ssylka ? (
+                      <a href={ssylka}>
+                        <Sobiraemaya tekst={v} ot={n * 37} />
+                      </a>
+                    ) : (
+                      <Sobiraemaya tekst={v} ot={n * 37} />
+                    )}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
         </div>
 
         <div className="footer__col">
           <dl className="footer__req">
-            <dt>Телефон</dt>
-            <dd>
-              <a href="tel:+79503738046" className="tnum">
-                +7 950 373-80-46
-              </a>
-            </dd>
-            <dt>Почта</dt>
-            <dd>
-              <a href="mailto:lev.menashe@yandex.ru">lev.menashe@yandex.ru</a>
-            </dd>
             {/* ⚠️ ССЫЛКИ НА ДОКУМЕНТЫ — ОБЯЗАТЕЛЬНЫЙ РЕКВИЗИТ, а не
                 вежливость: оферта, соглашение, политика и согласие
-                должны быть доступны оттуда, где стоят реквизиты.
-                Отдельной колонки «Документы» не заводим — она была
-                снята в тринадцатой итерации; четыре строки стоят
-                в том же списке реквизитов. */}
+                должны быть доступны оттуда, где стоят реквизиты,
+                и прятать их за нажатие нельзя — постановка прямо
+                говорит «ссылки на документы остаются как есть». */}
             <dt>Документы</dt>
             <dd>
               <a href="/oferta/">Публичная оферта</a>

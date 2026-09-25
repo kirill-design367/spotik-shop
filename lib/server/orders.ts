@@ -321,7 +321,7 @@ async function posleOplaty(zakaz: number): Promise<void> {
     return;
   }
 
-  await pismoZakazOplachen(z.email, zakaz, nazvanie);
+  await pismoZakazOplachen(z.email, nazvanie);
   await soobshchitKomande({
     vid: 'zakaz_oplachen',
     zakaz,
@@ -488,11 +488,18 @@ export async function zavershitZakaz(zakaz: number, staffId: number): Promise<{ 
     [zakaz, staffId],
   );
   if (!r.length) return { ok: false, pochemu: 'Заказ не в работе у вас.' };
-  const u = await odna<{ email: string }>(
-    'select u.email from shop_order o join app_user u on u.id = o.user_id where o.id = $1',
+  const u = await odna<{ email: string; plan_id: string; period: number; kind: 'plan' | 'certificate' }>(
+    `select u.email, o.plan_id, o.period, o.kind
+       from shop_order o join app_user u on u.id = o.user_id where o.id = $1`,
     [zakaz],
   );
-  if (u) await pismoZakazGotov(u.email, zakaz);
+  if (u) {
+    /* Название заказа вместо номера: номера клиент больше нигде
+       не видит (тридцать шестая итерация). */
+    const spisok = await katalog();
+    const t = naytiTarif(spisok, u.plan_id);
+    await pismoZakazGotov(u.email, nazvanieZakaza(t?.name ?? u.plan_id, u.period, u.kind));
+  }
   /* ⚠️ «КТО ВЫПОЛНИЛ» БЕРЁТСЯ ИЗ БАЗЫ, А НЕ ИЗ ВЫЗЫВАЮЩЕГО. Заказ
      закрывает тот, у кого он в работе, и проверено это тем же
      `update … where operator_id = $2`: адрес, пришедший сбоку,
@@ -522,10 +529,28 @@ export async function otmenitZakaz(
      надо не сочувствие, а слова «оформите заново и выберите
      „Продлить существующий“». */
   vid: 'obychno' | 'pochta_zanyata' = 'obychno',
+  /* ⚠️ КТО ОТМЕНИЛ — ОТДЕЛЬНЫЙ ПРИЗНАК, А НЕ ВЫВОД ИЗ `operator_id`.
+     Заказ, отменённый САМИМ покупателем, из кабинета исчезает
+     совсем (постановка тридцать шестой итерации), а отменённый
+     оператором остаётся с причиной. Вывести это из пустого
+     `operator_id` можно было бы сегодня, но это молчаливая связь:
+     достаточно однажды закрыть взятый заказ действием клиента —
+     и карточка перестанет исчезать, а понять почему будет нечем. */
+  kem: 'klient' | 'operator' = 'operator',
 ): Promise<{ ok: boolean; pochemuNet?: string }> {
   const itog = await vTranzakcii(async (c) => {
-    const r = await c.query<{ status: Status; user_id: string; balance_kop: string; money_kop: string; certificate_id: string | null }>(
-      'select status, user_id, balance_kop, money_kop, certificate_id from shop_order where id = $1 for update',
+    const r = await c.query<{
+      status: Status;
+      user_id: string;
+      balance_kop: string;
+      money_kop: string;
+      certificate_id: string | null;
+      plan_id: string;
+      period: number;
+      kind: 'plan' | 'certificate';
+    }>(
+      `select status, user_id, balance_kop, money_kop, certificate_id, plan_id, period, kind
+         from shop_order where id = $1 for update`,
       [zakaz],
     );
     const row = r.rows[0];
@@ -546,18 +571,30 @@ export async function otmenitZakaz(
       await c.query('update certificate set used_at = null, used_order_id = null where id = $1', [row.certificate_id]);
     }
     await c.query(
-      `update shop_order set status = 'cancelled', closed_at = now(), cancel_reason = $2, operator_id = coalesce(operator_id, $3)
+      `update shop_order
+          set status = 'cancelled', closed_at = now(), cancel_reason = $2,
+              operator_id = coalesce(operator_id, $3), cancelled_by_client = $4
         where id = $1`,
-      [zakaz, pochemu.slice(0, 500), staffId],
+      [zakaz, pochemu.slice(0, 500), staffId, kem === 'klient'],
     );
-    return { ok: true as const, vernut, userId: Number(row.user_id) };
+    return {
+      ok: true as const,
+      vernut,
+      userId: Number(row.user_id),
+      planId: row.plan_id,
+      period: row.period,
+      kind: row.kind,
+    };
   });
 
   if (!itog.ok) return itog;
   const u = await odna<{ email: string }>('select email from app_user where id = $1', [itog.userId]);
   if (u) {
-    if (vid === 'pochta_zanyata') await pismoPochtaZanyata(u.email, zakaz, itog.vernut);
-    else await pismoZakazOtmenyon(u.email, zakaz, itog.vernut, pochemu);
+    const spisok = await katalog();
+    const t = naytiTarif(spisok, itog.planId);
+    const chto = nazvanieZakaza(t?.name ?? itog.planId, itog.period, itog.kind);
+    if (vid === 'pochta_zanyata') await pismoPochtaZanyata(u.email, chto, itog.vernut);
+    else await pismoZakazOtmenyon(u.email, chto, itog.vernut, pochemu);
   }
   await soobshchitKomande({ vid: 'zakaz_otmenyon', zakaz });
   return { ok: true };

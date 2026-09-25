@@ -15,12 +15,21 @@ import { rubli } from './money';
 
 const PODPIS = '\n—\nSpotik Shop\nspotik.shop\n';
 
-export async function pismoZakazOplachen(komu: string, zakaz: number, nazvanie: string): Promise<void> {
+/*
+ * ⚠️ НОМЕРА ЗАКАЗА В ПИСЬМАХ НЕТ НИ В ОДНОМ — постановка тридцать
+ * шестой итерации: «номер заказа клиенту не показываем нигде, он
+ * остаётся внутренним». Вместо номера письмо называет САМ ЗАКАЗ —
+ * тариф и срок: человеку это говорит больше, а нам различить его
+ * заказы по названию достаточно. Номер остался там, где он и нужен, —
+ * в админке и в служебном чате.
+ */
+
+export async function pismoZakazOplachen(komu: string, nazvanie: string): Promise<void> {
   await otpravit({
     komu,
-    tema: `Заказ № ${zakaz} оплачен`,
+    tema: 'Заказ оплачен',
     telo:
-      `Оплата прошла, заказ № ${zakaz} принят в работу.\n\n` +
+      `Оплата прошла, заказ принят в работу.\n\n` +
       `Что оформляем: ${nazvanie}\n\n` +
       `Доступ появится в личном кабинете: ${env.siteUrl}/cabinet/\n` +
       `Обычно это занимает несколько часов.\n` +
@@ -28,12 +37,12 @@ export async function pismoZakazOplachen(komu: string, zakaz: number, nazvanie: 
   });
 }
 
-export async function pismoZakazGotov(komu: string, zakaz: number): Promise<void> {
+export async function pismoZakazGotov(komu: string, chto: string): Promise<void> {
   await otpravit({
     komu,
-    tema: `Заказ № ${zakaz} готов`,
+    tema: 'Заказ готов',
     telo:
-      `Доступ оформлен.\n\n` +
+      `Доступ оформлен: ${chto}.\n\n` +
       `Логины и пароли лежат в личном кабинете: ${env.siteUrl}/cabinet/\n` +
       `В письме мы их не присылаем — почта для этого слишком открытое место.\n` +
       PODPIS,
@@ -59,12 +68,12 @@ export async function pismoSertifikatKuplen(komu: string, kod: string, srokDo: D
   });
 }
 
-export async function pismoZakazOtmenyon(komu: string, zakaz: number, naBalans: number, pochemu: string): Promise<void> {
+export async function pismoZakazOtmenyon(komu: string, chto: string, naBalans: number, pochemu: string): Promise<void> {
   await otpravit({
     komu,
-    tema: `Заказ № ${zakaz} отменён`,
+    tema: 'Заказ отменён',
     telo:
-      `Заказ № ${zakaz} отменён.\n\n` +
+      `Заказ отменён: ${chto}.\n\n` +
       (pochemu ? `Причина: ${pochemu}\n\n` : '') +
       (naBalans > 0
         ? `${rubli(naBalans)} вернулись на баланс в личном кабинете — их можно потратить на следующий заказ.\n` +
@@ -83,10 +92,10 @@ export async function pismoZakazOtmenyon(komu: string, zakaz: number, naBalans: 
  * а деньги к этому моменту уже лежат на балансе: оформление
  * получается в один клик.
  */
-export async function pismoPochtaZanyata(komu: string, zakaz: number, naBalans: number): Promise<void> {
+export async function pismoPochtaZanyata(komu: string, chto: string, naBalans: number): Promise<void> {
   await otpravit({
     komu,
-    tema: `Заказ № ${zakaz}: на эту почту уже есть аккаунт Spotify`,
+    tema: 'На эту почту уже есть аккаунт Spotify',
     telo:
       `Мы попробовали завести новый аккаунт Spotify на указанную почту — она уже занята: ` +
       `аккаунт на ней существует.\n\n` +
@@ -94,7 +103,7 @@ export async function pismoPochtaZanyata(komu: string, zakaz: number, naBalans: 
       `мы включим Premium на том аккаунте, который у вас уже есть.\n` +
       `${env.siteUrl}/checkout/\n\n` +
       (naBalans > 0
-        ? `Деньги за заказ № ${zakaz} — ${rubli(naBalans)} — вернулись на баланс в личном кабинете, ` +
+        ? `Деньги за заказ (${chto}) — ${rubli(naBalans)} — вернулись на баланс в личном кабинете, ` +
           `и новый заказ закроется ими же.\n${env.siteUrl}/cabinet/\n`
         : '') +
       PODPIS,
@@ -111,7 +120,6 @@ export async function pismoPochtaZanyata(komu: string, zakaz: number, naBalans: 
  */
 export async function pismoSkoroKonec(opts: {
   komu: string;
-  zakaz: number;
   chto: string;
   kogda: Date;
   ssylka: string;
@@ -120,7 +128,7 @@ export async function pismoSkoroKonec(opts: {
     komu: opts.komu,
     tema: `Подписка Spotify Premium заканчивается ${opts.kogda.toLocaleDateString('ru-RU')}`,
     telo:
-      `Доступ по заказу № ${opts.zakaz} (${opts.chto}) заканчивается ` +
+      `Доступ (${opts.chto}) заканчивается ` +
       `${opts.kogda.toLocaleDateString('ru-RU')}.\n\n` +
       `Продлить на тот же аккаунт можно здесь — тариф, срок и почта уже подставлены:\n` +
       `${opts.ssylka}\n` +
@@ -136,10 +144,10 @@ export async function pismoSkoroKonec(opts: {
  * не работает. Человек, у которого не подошёл пароль, обязан сначала
  * узнать, что делать.
  */
-export async function pismoParolNePodoshyol(komu: string, zakaz: number): Promise<void> {
+export async function pismoParolNePodoshyol(komu: string): Promise<void> {
   await otpravit({
     komu,
-    tema: `Заказ № ${zakaz}: не подошёл пароль от аккаунта Spotify`,
+    tema: 'Не подошёл пароль от аккаунта Spotify',
     telo:
       `Мы попробовали войти в указанный аккаунт Spotify, и пароль не подошёл.\n\n` +
       `Что сделать:\n` +
@@ -147,7 +155,7 @@ export async function pismoParolNePodoshyol(komu: string, zakaz: number): Promis
       `2. Нажмите «Забыли пароль?» и введите почту от аккаунта Spotify.\n` +
       `3. Перейдите по ссылке из письма Spotify и задайте новый пароль.\n` +
       `4. Оформите заказ заново и укажите новый пароль.\n\n` +
-      `Заказ № ${zakaz} мы отменяем, деньги вернутся на баланс в личном кабинете:\n` +
+      `Заказ мы отменяем, деньги вернутся на баланс в личном кабинете:\n` +
       `${env.siteUrl}/cabinet/\n` +
       PODPIS,
   });

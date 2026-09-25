@@ -64,10 +64,27 @@ import { glyphShapes, rectShape } from '@/lib/inkshape';
  * место под него зарезервировано жёстко (122×26 на мобильном, 164×35
  * на десктопе): готовый логотип встанет внутрь без переверстки.
  */
-const LINKS: [id: string, label: string][] = [
+/**
+ * Пункты меню.
+ *
+ * ⚠️ ИХ ПЯТЬ С ТРИДЦАТЬ ШЕСТОЙ ИТЕРАЦИИ, И ДВА ПОСЛЕДНИХ — НАСТОЯЩИЕ
+ * АДРЕСА, А НЕ ЯКОРЯ. Сертификаты уехали с лендинга на свою страницу,
+ * а личный кабинет и раньше жил отдельным адресом, но в меню его
+ * не было вовсе. Поэтому у пункта появился третий элемент — `href`:
+ * есть он — рисуется ссылка, нет — кнопка, которая едет к якорю.
+ *
+ * ⚠️ «ЛИЧНЫЙ КАБИНЕТ» ВЕДЁТ НА `/cabinet/` И НЕ СПРАШИВАЕТ, ВОШЁЛ ЛИ
+ * ЧЕЛОВЕК. Спросить здесь нечем: шапка стоит в корневой раскладке
+ * и обращаться к кукам не имеет права (закон 36 — первое же
+ * `cookies()` там переводит лендинг на посчитанный ответ). Да и незачем:
+ * сам кабинет показывает вход, когда сессии нет.
+ */
+const LINKS: [id: string, label: string, href?: string][] = [
   ['pricing', 'Тарифы'],
   ['how', 'Как это работает'],
   ['faq', 'Вопросы'],
+  ['sertifikaty', 'Сертификаты', '/sertifikaty/'],
+  ['cabinet', 'Личный кабинет', '/cabinet/'],
 ];
 
 /* Полосы бургера: две по 5 px с просветом 4, общий бокс 26×14, концы
@@ -79,6 +96,22 @@ const BURGER_BARS: [number, number][] = [
 ];
 /** Скругление концов полос. Обязано совпадать с `border-radius` в CSS. */
 const BURGER_R = 2;
+
+/**
+ * Переход к якорю ИЗ ЛЮБОЙ страницы.
+ *
+ * Шапка стоит везде, кроме админки, а якоря живут на лендинге:
+ * с `/checkout/` нажатие на «Тарифы» не делало раньше ничего вовсе.
+ * Отсюда две ветки: на лендинге едем прокруткой, снаружи — уходим
+ * на главную с хэшем.
+ */
+function kYakoryu(id: string) {
+  if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+    window.location.href = `/#${id}`;
+    return;
+  }
+  scrollToId(id);
+}
 
 export default function Nav() {
   const [open, setOpen] = useState(false);
@@ -279,20 +312,26 @@ export default function Nav() {
       </div>
 
       <nav className="menu__list" aria-label="Меню разделов">
-        {LINKS.map(([id, label], i) => (
-          <button
-            key={id}
-            type="button"
-            className="menu__item"
-            style={{ ['--i' as string]: i }}
-            onClick={() => {
-              setOpen(false);
-              scrollToId(id);
-            }}
-          >
-            {label}
-          </button>
-        ))}
+        {LINKS.map(([id, label, href], i) =>
+          href ? (
+            <a key={id} className="menu__item" style={{ ['--i' as string]: i }} href={href}>
+              {label}
+            </a>
+          ) : (
+            <button
+              key={id}
+              type="button"
+              className="menu__item"
+              style={{ ['--i' as string]: i }}
+              onClick={() => {
+                setOpen(false);
+                kYakoryu(id);
+              }}
+            >
+              {label}
+            </button>
+          ),
+        )}
       </nav>
 
       <div className="menu__foot shell">
@@ -325,12 +364,22 @@ export default function Nav() {
               </a>
             </div>
 
+            {/* ⚠️ ССЫЛКА И КНОПКА НЕСУТ ОДИН И ТОТ ЖЕ КЛАСС `nav__link`:
+                по нему собирается фигура выворотки шапки. Заведи ссылке
+                свой класс — и её чернила остались бы некрашеными,
+                а цветовой сторож этого не увидит (Р-46). */}
             <div className="nav__links">
-              {LINKS.map(([id, label]) => (
-                <button key={id} type="button" className="nav__link" onClick={() => scrollToId(id)}>
-                  {label}
-                </button>
-              ))}
+              {LINKS.map(([id, label, href]) =>
+                href ? (
+                  <a key={id} className="nav__link" href={href}>
+                    {label}
+                  </a>
+                ) : (
+                  <button key={id} type="button" className="nav__link" onClick={() => kYakoryu(id)}>
+                    {label}
+                  </button>
+                ),
+              )}
             </div>
 
             <button

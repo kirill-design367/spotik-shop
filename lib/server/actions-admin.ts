@@ -180,7 +180,7 @@ export async function adminSendRecovery(_p: OtvetA, fd: FormData): Promise<Otvet
     [zakaz],
   );
   if (!u) return { error: 'o.no_order' };
-  await pismoParolNePodoshyol(u.email, zakaz);
+  await pismoParolNePodoshyol(u.email);
   await zapros('update order_slot set recovery_sent_at = now() where id = $1 and order_id = $2', [slot, zakaz]);
   revalidatePath(`/admin/orders/${zakaz}`);
   return { ok: 'k.recovery_sent' };

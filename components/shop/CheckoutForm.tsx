@@ -105,6 +105,11 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
        обязательных полей — на незаполненной галочке согласия он
        не сработает. */
     <form
+      /* ⚠️ `ozhivayet` ВКЛЮЧАЕТ ПОЯВЛЕНИЕ БЛОКОВ, и это чистый CSS:
+         панели приезжают снизу со сдвигом по очереди. Ни наблюдателя,
+         ни скрипта — страница короткая и вся видна сразу, а при
+         «уменьшить движение» появление снято медиазапросом. */
+      className="ozhivayet"
       action={oformit}
       noValidate
       onSubmit={(e) => {
@@ -224,7 +229,12 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
         <h2 className="panel__h">К оплате</h2>
         <p className="sum">
           <span>{vvod.planName}</span>
-          <span className="tnum">{rubli(cena)}</span>
+          {/* ⚠️ `key` ПО ЗНАЧЕНИЮ — ЭТО И ЕСТЬ ВЕСЬ ПРИЁМ. Сменился
+              срок — React монтирует другой узел, и анимация появления
+              играет заново: число «пересчитывается с движением», как
+              и просили. Без ключа узел тот же, анимация уже отыграла,
+              и цифра менялась бы молча. */}
+          <span key={cena} className="tnum summa">{rubli(cena)}</span>
         </p>
         {vvod.balansKop > 0 ? (
           <>
@@ -244,7 +254,7 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
         ) : null}
         <p className="sum sum--total">
           <span>{kOplate > 0 ? 'Картой или через СБП' : 'К доплате'}</span>
-          <span className="tnum">{rubli(kOplate)}</span>
+          <span key={kOplate} className="tnum summa">{rubli(kOplate)}</span>
         </p>
 
         <Soglasie beda={bedaSoglasiya} />
