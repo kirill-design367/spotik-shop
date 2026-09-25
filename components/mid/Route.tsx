@@ -647,6 +647,16 @@ export default function Route({ steps }: { steps: Step[] }) {
       drawn: boolean;
     };
     let slices: Slice[] = [];
+    /** Свой маленький холст на каждую цифру: только кольца, ничего больше. */
+    type Wave = {
+      el: HTMLCanvasElement;
+      g: CanvasRenderingContext2D;
+      i: number;
+      side: number;
+      pad: number;
+      on: boolean;
+    };
+    let waves: Wave[] = [];
     let chunks: { p: Path2D; y0: number; y1: number; off: number }[] = [];
     let dots: { x: number; y: number }[] = [];
     const lits = [0, 0, 0, 0, 0];
@@ -658,13 +668,12 @@ export default function Route({ steps }: { steps: Step[] }) {
     const rgba = (c: [number, number, number], a: number) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
 
     /**
-     * Рисует ленту, фронт и микроволны в один холст. `r` — окно
-     * в координатах блока: без него рисуется весь кусок, с ним
-     * только оно.
+     * Рисует ленту и фронт в холст куска. `r` — окно в координатах
+     * блока: без него рисуется весь кусок, с ним только оно.
+     * ⚠️ Микроволн здесь нет вовсе — у них свои холсты.
      */
     const drawAll = (
       g: CanvasRenderingContext2D,
-      now: number,
       top0: number,
       bot0: number,
       r: { x: number; y: number; w: number; h: number } | null,
@@ -692,9 +701,18 @@ export default function Route({ steps }: { steps: Step[] }) {
       g.setLineDash(dashes);
       for (const c of chunks) {
         if (c.y1 < y0 - 24 || c.y0 > y1 + 24) continue;
-        /* Фаза пунктира у куска — его длина от начала пути: ровно
-           та же арифметика, что в SVG, поэтому рез не виден. */
-        g.lineDashOffset = -c.off;
+        /* ⚠️ ФАЗА ПУНКТИРА — `+off`, А НЕ `-off`, И ЗНАК ЗДЕСЬ БЫЛ
+           ПРИЧИНОЙ «МИКРОТОЧКИ ВНУТРИ ШТРИХА». У холста и у SVG
+           смещение пунктира значит одно и то же: точка пути `p`
+           попадает в узор на позицию `(p + offset) mod период`.
+           Длины кусков подобраны так, что рез приходится ровно
+           в середину пропуска (38 из 50), — и SVG получал `+38`
+           и резался в пропуске, а холст получал `−38`, то есть
+           12, и резался ВНУТРИ штриха в 26 единиц. Оба конца
+           штриха на стыке скруглены и полупрозрачны, они ложились
+           друг на друга — отсюда двойная яркость. Знак снят,
+           фаза у холста и у SVG теперь одна. */
+        g.lineDashOffset = c.off;
         g.strokeStyle = rgba(dimInk.c, dimInk.a);
         g.lineWidth = dimInk.w;
         g.stroke(c.p);
@@ -704,43 +722,46 @@ export default function Route({ steps }: { steps: Step[] }) {
           g.stroke(c.p);
         }
       }
-      /* ── КРУГИ НА ВОДЕ ОТ ЗАГОРЕВШЕЙСЯ ЦИФРЫ ────────────────────
-         Кольцо за кольцом расходятся из центра номера, нарастая
-         и растворяясь. Яркость помножена на `--n` того же шага,
-         поэтому волны начинаются ровно тогда, когда фронт дошёл
-         до цифры, и гаснут вместе с ней. */
-      if (!still) {
-        g.setLineDash([]);
-        for (let i = 0; i < dots.length; i += 1) {
-          const n = lits[i];
-          if (n < 0.04) continue;
-          const p = dots[i];
-          if (p.y < y0 - WAVE_R || p.y > y1 + WAVE_R) continue;
-          for (let q = 0; q < WAVE_N; q += 1) {
-            const t = (((now / WAVE_T + q / WAVE_N) % 1) + 1) % 1;
-            const a = n * 0.5 * Math.sin(Math.PI * t) ** 1.3;
-            if (a < 0.006) continue;
-            g.beginPath();
-            g.arc(p.x, p.y, WAVE_R * (WAVE_R0 + (1 - WAVE_R0) * t), 0, Math.PI * 2);
-            g.strokeStyle = rgba(CORE, a);
-            g.lineWidth = 1.6 + 5 * t;
-            g.stroke();
-          }
-        }
-      }
+      /* ⚠️ МИКРОВОЛН ЗДЕСЬ БОЛЬШЕ НЕТ, И ЭТО ГЛАВНАЯ ПРАВКА
+         ТРИДЦАТЬ ТРЕТЬЕЙ ИТЕРАЦИИ. Пока кольца жили в этом же
+         холсте, любая ЧАСТИЧНАЯ перерисовка ленты — а она идёт
+         полосой вокруг фронта — стирала и рисовала заново тот
+         кусок кольца, который в полосу попал, и рисовала его
+         при ДРУГОМ `now`. Остальная часть кольца оставалась
+         от прошлого кадра, то есть от другого радиуса: по кругу
+         шла невидимая линия, и половина круга выглядела
+         смещённой. Это и есть «преломление». Теперь у каждой
+         цифры СВОЙ маленький холст (см. `paintWaves`), и кольцо
+         на нём чистится и рисуется ЦЕЛИКОМ каждый кадр: резать
+         его нечему по построению. */
       if (r) g.restore();
     };
 
-    const drawSlice = (s: Slice, now: number) => {
+    const drawSlice = (s: Slice) => {
       s.g.setTransform(cvS, 0, 0, cvS, 0, 0);
       s.g.clearRect(0, 0, cvW, s.h);
       s.g.translate(-cvX, -s.y);
-      drawAll(s.g, now, s.y, s.y + s.h, null);
+      drawAll(s.g, s.y, s.y + s.h, null);
     };
 
-    /** Положение фронта, прижатое к куску: выше него всё темно,
-     *  ниже — всё горит, и обе величины постоянны. */
-    const frontIn = (s: Slice) => Math.max(s.y - EDGE, Math.min(s.y + s.h, frontY));
+    /**
+     * Положение фронта, прижатое к куску: выше него всё темно,
+     * ниже — всё горит, и обе величины постоянны.
+     *
+     * ⚠️ ВЕРХНИЙ ПРИЖИМ — `s.y + s.h + EDGE`, А НЕ `s.y + s.h`,
+     * И ЗДЕСЬ БЫЛ «ДИАГОНАЛЬНЫЙ СРЕЗ ШТРИХА». Кромка фронта мягкая:
+     * градиент идёт от `frontY − EDGE` (непрозрачно) до `frontY`
+     * (пусто). Прижав фронт к самому низу куска, мы ставили начало
+     * этой кромки на `s.y + s.h − EDGE` — то есть у КАЖДОГО
+     * полностью пройденного куска нижние тридцать пикселей плавно
+     * гасли, а следующий кусок начинался снова в полную силу.
+     * По ленте через равные промежутки шла горизонтальная граница
+     * яркости, и на косом штрихе она читается как косой срез.
+     * Прижим на `EDGE` ниже выводит всю кромку за пределы куска:
+     * пройденный кусок горит ровно.
+     */
+    const frontIn = (s: Slice) =>
+      Math.max(s.y - EDGE, Math.min(s.y + s.h + EDGE, frontY));
 
     /** Пересобирает холсты и пути кусков. Зовётся из `measure()`. */
     const cvLayout = (W: number, h: number, bleed: number, over: number, vw: number) => {
@@ -784,6 +805,7 @@ export default function Route({ steps }: { steps: Step[] }) {
         const ht = Math.min(hh, h - y);
         if (ht < 1) continue;
         const el = document.createElement('canvas');
+        el.className = 'route__cv';
         el.style.position = 'absolute';
         el.style.left = '0';
         el.style.top = `${y}px`;
@@ -795,6 +817,33 @@ export default function Route({ steps }: { steps: Step[] }) {
         if (!g) continue;
         cvBox.appendChild(el);
         slices.push({ g, y, h: ht, f: 0, drawn: false });
+      }
+      /* ── ХОЛСТЫ МИКРОВОЛН ─────────────────────────────────────────
+         По одному на цифру, размером ровно с круг. Лежат ПОСЛЕ
+         кусков ленты, то есть рисуются поверх них: кольцо
+         полупрозрачное, и порядок наложения тот же, что был
+         в общем холсте. Буфер крошечный — 200 × 200 CSS-px против
+         390 × 408 у куска ленты, — и чистится он целиком. */
+      waves = [];
+      if (!still) {
+        const wpad = WAVE_R + 8;
+        const side = wpad * 2;
+        for (let i = 0; i < dots.length; i += 1) {
+          const el = document.createElement('canvas');
+          el.className = 'route__wave';
+          el.style.position = 'absolute';
+          el.style.left = `${(dots[i].x - wpad - cvX).toFixed(1)}px`;
+          el.style.top = `${(dots[i].y - wpad).toFixed(1)}px`;
+          el.style.width = `${side}px`;
+          el.style.height = `${side}px`;
+          el.style.display = 'none';
+          el.width = Math.round(side * cvS);
+          el.height = Math.round(side * cvS);
+          const g = el.getContext('2d');
+          if (!g) continue;
+          cvBox.appendChild(el);
+          waves.push({ el, g, i, side, pad: wpad, on: false });
+        }
       }
     };
 
@@ -808,14 +857,14 @@ export default function Route({ steps }: { steps: Step[] }) {
      * тачем давал 468 потерянных кадров в блоке при перерисовке
      * куска целиком.
      */
-    const paintFront = (now: number) => {
+    const paintFront = () => {
       for (const s of slices) {
         const nf = frontIn(s);
         if (s.drawn && nf === s.f) continue;
         if (!s.drawn) {
           s.drawn = true;
           s.f = nf;
-          drawSlice(s, now);
+          drawSlice(s);
           continue;
         }
         const y0 = Math.min(s.f, nf) - EDGE - 14;
@@ -823,38 +872,63 @@ export default function Route({ steps }: { steps: Step[] }) {
         s.f = nf;
         s.g.setTransform(cvS, 0, 0, cvS, 0, 0);
         s.g.translate(-cvX, -s.y);
-        drawAll(s.g, now, s.y, s.y + s.h, { x: cvX, y: y0, w: cvW, h: y1 - y0 });
+        drawAll(s.g, s.y, s.y + s.h, { x: cvX, y: y0, w: cvW, h: y1 - y0 });
       }
     };
 
     /**
-     * ⚠️ КАДР ВОЛН ПЕРЕРИСОВЫВАЕТ ТОЛЬКО ОКНА ВОКРУГ ЦИФР, И ЭТО
-     * НЕ ОПТИМИЗАЦИЯ ПРО ЗАПАС, А ЗАМЕР. Первый заход перерисовывал
-     * в кадре волн всю видимую полосу — и мобильная эмуляция дала
-     * 85…90 % кадров дороже бюджета В ПОКОЕ против 0.0 % до правки.
-     * Волна живёт в круге радиусом 92 px; окно вокруг цифры — это
-     * сотая доля куска.
+     * ⚠️ КАЖДОЕ КОЛЬЦО РИСУЕТСЯ ЦЕЛИКОМ И НА СВОЁМ ХОЛСТЕ.
+     * Прежде волны жили в холсте ленты, и кадр волн перерисовывал
+     * окна вокруг цифр — ради цены: перерисовка всей видимой полосы
+     * давала 85…90 % кадров дороже бюджета В ПОКОЕ. Цена осталась
+     * снятой, а дефект ушёл: холст у цифры свой, чистится он весь,
+     * и ленту не трогает вовсе — то есть ни граница куска, ни край
+     * окна перерисовки через кольцо пройти не могут по построению.
+     *
+     * ⚠️ И ЗДЕСЬ НЕТ НИ ОДНОГО ЧТЕНИЯ ГЕОМЕТРИИ. Видно ли цифру,
+     * выводится из уже известного: фронт стоит на линии отсчёта,
+     * значит верх экрана в координатах блока — это
+     * `frontY − REF_Y · vh`, а низ — `frontY + (1 − REF_Y) · vh`.
      */
     const paintWaves = (now: number) => {
       if (still) return;
-      const pad = WAVE_R + 6;
-      for (let i = 0; i < dots.length; i += 1) {
-        if (lits[i] < 0.04) continue;
-        const p = dots[i];
-        for (const s of slices) {
-          if (p.y + pad < s.y || p.y - pad > s.y + s.h) continue;
-          s.g.setTransform(cvS, 0, 0, cvS, 0, 0);
-          s.g.translate(-cvX, -s.y);
-          drawAll(s.g, now, s.y, s.y + s.h, { x: p.x - pad, y: p.y - pad, w: pad * 2, h: pad * 2 });
+      const top = frontY - REF_Y * vh - WAVE_R;
+      const bot = frontY + (1 - REF_Y) * vh + WAVE_R;
+      for (const w of waves) {
+        const p = dots[w.i];
+        const n = lits[w.i];
+        if (!p || n < 0.04 || p.y < top || p.y > bot) {
+          if (w.on) {
+            w.on = false;
+            w.el.style.display = 'none';
+          }
+          continue;
+        }
+        if (!w.on) {
+          w.on = true;
+          w.el.style.display = '';
+        }
+        const g = w.g;
+        g.setTransform(cvS, 0, 0, cvS, 0, 0);
+        g.clearRect(0, 0, w.side, w.side);
+        for (let q = 0; q < WAVE_N; q += 1) {
+          const t = (((now / WAVE_T + q / WAVE_N) % 1) + 1) % 1;
+          const a = n * 0.5 * Math.sin(Math.PI * t) ** 1.3;
+          if (a < 0.006) continue;
+          g.beginPath();
+          g.arc(w.pad, w.pad, WAVE_R * (WAVE_R0 + (1 - WAVE_R0) * t), 0, Math.PI * 2);
+          g.strokeStyle = rgba(CORE, a);
+          g.lineWidth = 1.6 + 5 * t;
+          g.stroke();
         }
       }
     };
 
     /** Записывает фронт и перерисовывает кусок, в котором он стоит. */
-    const cvPut = (y: number, now: number) => {
+    const cvPut = (y: number) => {
       if (!cvOn || !built) return;
       frontY = y;
-      paintFront(now);
+      paintFront();
     };
 
 
@@ -975,7 +1049,7 @@ export default function Route({ steps }: { steps: Step[] }) {
          микроволны. Берутся из тех же чисел, что и точки маршрута. */
       dots = ax.map((x, i) => ({ x: x + bleed, y: ys[i] }));
       cvLayout(W, h, bleed, over, vw);
-      if (cvOn) cvPut(frontY, performance.now());
+      if (cvOn) cvPut(frontY);
     };
 
     /** Кладёт фронт на высоту `y` внутри блока. */
@@ -1002,7 +1076,7 @@ export default function Route({ steps }: { steps: Step[] }) {
       if (cvOn) {
         /* На касаниях ленту рисует холст: ни кусков-градиентов,
            ни записей в SVG здесь не остаётся вовсе. */
-        cvPut(y, performance.now());
+        cvPut(y);
       } else if (built) {
         for (let k = 0; k < CHUNKS; k += 1) {
           if (!built.ds[k]) continue;
@@ -1162,15 +1236,23 @@ export default function Route({ steps }: { steps: Step[] }) {
     };
 
     /* ── МИКРОВОЛНЫ: СОБСТВЕННЫЙ КАДР ХОЛСТА ──────────────────────
-       Единственное, что будит холст в покое. Не чаще двадцати раз
-       в секунду, только пока блок на экране, только если хоть одна
-       цифра горит, и НЕ во время прокрутки — там кусок и так
-       перерисовывает сам фронт. */
+       Не чаще двадцати раз в секунду, только пока блок на экране
+       и только если хоть одна цифра горит.
+
+       ⚠️ ШЛАГБАУМА ПРОКРУТКИ ЗДЕСЬ БОЛЬШЕ НЕТ, И ЭТО БЫЛА ПРИЧИНА
+       «ВОЛНЫ ЗАМИРАЮТ ПРИ СКРОЛЛЕ». Стояло `now − scrolledAt <
+       GLINT_HOLD`, то есть кадр волн не считался ещё 260 мс после
+       последнего события прокрутки, — а инерция iOS шлёт эти события
+       секунду-полторы после отрыва пальца. Ограничение было взято
+       у ленты, и для неё оно верно: её полосу в это время и так
+       перерисовывает сам фронт. Волны же к фронту отношения
+       не имеют, живут на своих холстах и ленту не трогают —
+       останавливать их не за чем. */
     let wraf = 0;
     let wprev = 0;
     const wave = (now: number) => {
       wraf = requestAnimationFrame(wave);
-      if (now - wprev < CV_MS || now - scrolledAt < GLINT_HOLD) return;
+      if (now - wprev < CV_MS) return;
       if (!lits.some((v) => v > 0.04)) return;
       wprev = now;
       paintWaves(now);

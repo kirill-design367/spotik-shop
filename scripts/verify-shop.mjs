@@ -657,9 +657,177 @@ console.log('── ПОДСКАЗКА ПРО VPN ──');
   const krasnaya = await klient.locator('.err').filter({ hasText: 'VPN' }).count();
   chk('подсказка спокойная, а не предупреждение', tikhaya === 1 && krasnaya === 0, `panel__note ${tikhaya}, err ${krasnaya}`);
 
+  /* ⚠️ И ЭТО ПЛАШКА, А НЕ СТРОКА, И СУДИТСЯ ЭТО ПО ВЫЧИСЛЕННОМУ
+     СТИЛЮ, А НЕ ПО ИМЕНИ КЛАССА. Постановка тридцать третьей
+     итерации: «мягкая подложка чуть светлее панели, скруглённые
+     углы, небольшие внутренние поля». Класс в разметке доказал бы
+     только, что мы его написали; здесь спрашивается результат:
+     подложка непрозрачна и СВЕТЛЕЕ своей панели, угол скруглён,
+     поля ненулевые, и красного в подложке нет — красный канал
+     не превышает зелёный. */
+  /* ⚠️ ЦВЕТ ЧИТАЕТСЯ ХОЛСТОМ, А НЕ РАЗБОРОМ СТРОКИ. `color-mix`
+     браузер отдаёт как `color(srgb 0.23 0.23 0.23)` — доли единицы,
+     а соседнее правило рядом даёт `rgb(33, 33, 33)`. Разбор числами
+     сравнивал 0.23 с 33 и падал на исправной плашке. Холст приводит
+     любую запись к одному виду. */
+  const plashka = await klient.evaluate(() => {
+    const p = [...document.querySelectorAll('p')].find((e) => /включён VPN/.test(e.textContent ?? ''));
+    if (!p) return null;
+    const cv = document.createElement('canvas');
+    cv.width = 1;
+    cv.height = 1;
+    const g2 = cv.getContext('2d');
+    const px = (c) => {
+      g2.clearRect(0, 0, 1, 1);
+      g2.fillStyle = c;
+      g2.fillRect(0, 0, 1, 1);
+      const d = g2.getImageData(0, 0, 1, 1).data;
+      return [d[0], d[1], d[2], d[3] / 255];
+    };
+    const cs = getComputedStyle(p);
+    const ps = getComputedStyle(p.closest('.panel') ?? document.body);
+    return {
+      r: parseFloat(cs.borderTopLeftRadius),
+      padY: parseFloat(cs.paddingTop),
+      padX: parseFloat(cs.paddingLeft),
+      my: px(cs.backgroundColor),
+      up: px(ps.backgroundColor),
+    };
+  });
+  const svetlee = !!plashka && plashka.my[3] > 0.99 && plashka.my[1] > plashka.up[1];
+  chk(
+    'подсказка оформлена плашкой: подложка светлее панели, углы скруглены, поля есть',
+    !!plashka && svetlee && plashka.r >= 6 && plashka.padY >= 8 && plashka.padX >= 8,
+    plashka
+      ? `фон ${plashka.my.slice(0, 3).join(',')} против ${plashka.up.slice(0, 3).join(',')}, радиус ${plashka.r}, поля ${plashka.padY}/${plashka.padX}`
+      : 'строки нет',
+  );
+  chk(
+    'и она не красная: красного канала в подложке не больше зелёного',
+    !!plashka && plashka.my[0] <= plashka.my[1] + 1,
+    plashka ? plashka.my.join(',') : '—',
+  );
+
   await klient.goto(`http://localhost:${PORT}/pay/fail/`, { waitUntil: 'networkidle' });
   const tf = ((await klient.textContent('body')) ?? '').replace(/\s+/g, ' ');
   chk('и на странице неудачной оплаты, рядом с возвратом', VPN.test(tf) && /В личный кабинет/.test(tf));
+  const plashka2 = await klient.evaluate(() => {
+    const p = [...document.querySelectorAll('p')].find((e) => /включён VPN/.test(e.textContent ?? ''));
+    if (!p) return null;
+    const cv = document.createElement('canvas');
+    cv.width = 1;
+    cv.height = 1;
+    const g2 = cv.getContext('2d');
+    g2.fillStyle = getComputedStyle(p).backgroundColor;
+    g2.fillRect(0, 0, 1, 1);
+    const d = g2.getImageData(0, 0, 1, 1).data;
+    const cs = getComputedStyle(p);
+    return {
+      r: parseFloat(cs.borderTopLeftRadius),
+      pad: parseFloat(cs.paddingTop),
+      bg: [d[0], d[1], d[2]],
+    };
+  });
+  chk(
+    'плашка и на странице неудачной оплаты',
+    !!plashka2 && plashka2.r >= 6 && plashka2.pad >= 8 && plashka2.bg[1] > 18,
+    plashka2 ? `радиус ${plashka2.r}, поле ${plashka2.pad}, фон ${plashka2.bg.join(',')}` : 'строки нет',
+  );
+}
+
+console.log('── СКРУГЛЁННЫЕ УГЛЫ В РАЗДЕЛЕ, И ЛЕНДИНГ НЕ ТРОНУТ ──');
+{
+  /* Постановка тридцать третьей итерации: «скругли углы у всех
+     интерактивных элементов и панелей во всём кабинете, оформлении,
+     на страницах оплаты и в админке; радиус небольшой и единый, одна
+     переменная; лендинг не трогай».
+
+     ⚠️ СУДИМ ПО ВЫЧИСЛЕННОМУ РАДИУСУ ЖИВОЙ СТРАНИЦЫ, А НЕ ПО ТОМУ,
+     ЧТО МЫ НАПИСАЛИ В CSS. Имя класса доказало бы только, что правило
+     существует; здесь спрашивается, доехало ли оно до элемента.
+     И ⚠️ ВЕЛИЧИНА ОБЯЗАНА БЫТЬ ОДНА: собираем РАЗНЫЕ радиусы у полей
+     и кнопок выбора и требуем ровно один — второй означал бы, что
+     кто-то завёл своё число мимо токена. */
+  const kruglo = async (page, url, sel) => {
+    await page.goto(`http://localhost:${PORT}${url}`, { waitUntil: 'networkidle' });
+    return page.evaluate((s2) => {
+      const out = [];
+      for (const el of document.querySelectorAll(s2)) {
+        const b = el.getBoundingClientRect();
+        if (b.width < 4 || b.height < 4) continue;
+        out.push({
+          r: parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0,
+          kto: `${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}`,
+        });
+      }
+      return out;
+    }, sel);
+  };
+  /* Токены читаются с живой страницы: сторож не имеет права знать
+     их значения заранее — иначе он проверял бы нашу же память. */
+  const tokeny = await klient.evaluate(() => {
+    const cs = getComputedStyle(document.documentElement);
+    return [cs.getPropertyValue('--ui-r'), cs.getPropertyValue('--ui-r-lg')].map((v) =>
+      parseFloat(v),
+    );
+  });
+  const hudshy = (a) => (a.length ? Math.min(...a.map((v) => v.r)) : -1);
+  const imena = (a) =>
+    [...new Set(a.filter((v) => v.r < 6).map((v) => `${v.kto} ${v.r}`))].slice(0, 4).join(' · ');
+  const ost = await kruglo(
+    klient,
+    '/checkout/?plan=duo&period=12',
+    '.panel, .pick__btn, .field input, .field select',
+  );
+  chk('в оформлении скруглены все панели, поля и кнопки выбора',
+    ost.length >= 6 && ost.every((v) => v.r >= 6),
+    `${ost.length} шт., наименьший ${hudshy(ost)}${imena(ost) ? `: ${imena(ost)}` : ''}`);
+
+  const kab = await kruglo(klient, '/cabinet/', '.panel, .order-card, .cred, .cert, .badge');
+  chk('в кабинете скруглены панели, карточки заказов и плашки',
+    kab.length >= 2 && kab.every((v) => v.r >= 6),
+    `${kab.length} шт., наименьший ${hudshy(kab)}${imena(kab) ? `: ${imena(kab)}` : ''}`);
+
+  const adm1 = await kruglo(admin, '/admin/', '.ad__card, .ad input, .ad select, .ad__tag, .ad__secret');
+  const adm2 = await kruglo(admin, '/admin/settings/', '.ad__card, .ad input, .ad select, .ad__tag, .ad__secret');
+  const adm = [...adm1, ...adm2];
+  chk('в админке скруглены карточки, поля и теги',
+    adm.length >= 3 && adm.every((v) => v.r >= 6),
+    `${adm.length} шт., наименьший ${hudshy(adm)}${imena(adm) ? `: ${imena(adm)}` : ''}`);
+
+  /* ⚠️ ВЕЛИЧИНА ОДНА, А НЕ НАБОР: каждый измеренный радиус обязан
+     СОВПАСТЬ с одним из двух токенов. Третье число означало бы,
+     что кто-то завёл своё мимо `--ui-r`. */
+  const chuzhie = [...new Set(
+    [...ost, ...kab, ...adm].map((v) => v.r).filter((r) => !tokeny.some((t) => Math.abs(t - r) < 0.6)),
+  )];
+  chk('радиус один на всё, а не набор чисел',
+    tokeny.length === 2 && tokeny.every((t) => t > 0) && chuzhie.length === 0,
+    `токены ${tokeny.join(' и ')} px, чужих значений ${chuzhie.length ? chuzhie.join(', ') : 'нет'}`);
+
+  /* ⚠️ ЛЕНДИНГ ОБЯЗАН ОСТАТЬСЯ С РАДИУСОМ 0. Проверяется перебором
+     ВСЕХ видимых элементов первого экрана и середины: скруглено может
+     быть только то, чему это разрешено законом раздела 3 — кнопка
+     (пилюля), карта тарифа и слой света за ней. Всё остальное 0. */
+  await klient.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' });
+  const lend = await klient.evaluate(() => {
+    const bad = [];
+    for (const el of document.querySelectorAll('body *')) {
+      const b = el.getBoundingClientRect();
+      if (b.width < 4 || b.height < 4) continue;
+      const r = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0;
+      if (r < 0.5) continue;
+      /* Что скруглено на лендинге ЗАКОННО: кнопка и плашка срока —
+         пилюли (отсылка к плееру), карта тарифа и слой света за ней —
+         `--card-r`, кольца микроволн и узлы света — круги. Всё
+         остальное обязано быть 0. */
+      if (el.closest('.btn, .seg, .seg__btn, .card, .cards__glow, .burger, .menu, .rstep__wave, .route__node')) continue;
+      bad.push(`${el.className || el.tagName} ${r}`);
+    }
+    return bad;
+  });
+  chk('лендинг не тронут: скруглены только кнопка, карта и свет за ней',
+    lend.length === 0, lend.slice(0, 4).join(' · ') || 'ни одного лишнего');
 }
 
 console.log('── ЛИМИТ НА ВВОД КОДА СЕРТИФИКАТА ──');

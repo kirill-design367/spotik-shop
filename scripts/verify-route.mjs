@@ -538,7 +538,7 @@ for (const [w, h, mob] of [
      полосе вокруг экрана. Отдельной строкой проверяется, что
      холст ЖИВОЙ: пустой прошёл бы и так. */
   const chunk = await page.evaluate((dpr) => {
-    const cvs = [...document.querySelectorAll('.route[data-cv] .route__cvs canvas')];
+    const cvs = [...document.querySelectorAll('.route[data-cv] .route__cvs .route__cv')];
     if (cvs.length) {
       let wm = 0;
       let hm = 0;
@@ -565,7 +565,138 @@ for (const [w, h, mob] of [
   }, mob ? 3 : 1);
   const okChunk = chunk.live !== 0 && chunk.w > 10 && chunk.w <= 2048 && chunk.h <= 2048;
 
-  if (!okLayer || !okCurve || !okChunk) failed = true;
+
+  /* ── ШТРИХИ ЛЕНТЫ ОДИНАКОВЫЕ ───────────────────────────────────────
+     Постановка тридцать третьей итерации: «эталон — ровный чистый
+     штрих: одинаковая длина, скруглённые концы, равномерное свечение
+     без точек и срезов. Проверь растром вдоль всей ленты».
+
+     СКЕЛЕТ СНИМАЕТСЯ С РАСТРА, а не берётся из пути (Р-47). В каждой
+     строке кадра ищется наибольший ИЗБЫТОК ЗЕЛЁНОГО над красным —
+     это ядро ленты; белый набор блока в счёт не идёт вовсе, у него
+     избыток нулевой. Подряд идущие яркие строки складываются
+     в ШТРИХ, и на каждый снимаются три числа: высота, яркость ядра
+     и СУММА ЗЕЛЕНИ ПОПЕРЁК СТРОКИ — то есть сколько всего света
+     в этом месте ленты.
+
+       ВЫСОТА ловит СРЕЗ: стык кусков, попавший внутрь штриха, режет
+       его — в контрольном прогоне на прежнем коде среди штрихов
+       в 29 px нашёлся один в 19.
+
+       ПОПЕРЕЧНАЯ СУММА ловит МИКРОТОЧКУ: на том же стыке сходятся
+       два полупрозрачных скруглённых конца, их прозрачности
+       складываются, и света в этом месте становится в полтора раза
+       больше. Ядро при этом непрозрачно и не меняется вовсе —
+       поэтому «яркую точку» видно только по сумме, а не по пику.
+
+     ⚠️ СЧИТАЮТСЯ ТОЛЬКО БЛИЗКИЕ К ВЕРТИКАЛИ ШТРИХИ: на пологом
+     участке строка кадра идёт вдоль ленты, и «высота штриха» там
+     не значит ничего. Вертикальный участок есть у каждой цифры
+     по построению — линия выходит из номера прямо вниз.
+
+     ⚠️ И ПРИХОДИТЬ СЮДА НАДО ПЛАВНОЙ ПРОКРУТКОЙ, А НЕ ТЕЛЕПОРТОМ:
+     холст перерисовывается ПОЛОСОЙ вокруг фронта, и что осталось
+     на нём от прошлых кадров — это и есть предмет проверки. */
+  await page.evaluate(() => {
+    const st = document.createElement('style');
+    st.id = 'lenta-tikho';
+    st.textContent =
+      '.route__list{visibility:hidden!important}.route__wave{display:none!important}';
+    document.head.appendChild(st);
+  });
+  const lenta = { runs: 0, lenMed: 0, lenMin: 0, lenMax: 0, pkMin: 0, bumps: 0, ratio: 0 };
+  {
+    const target = range.from + total * 0.62;
+    let cur = Math.max(0, range.from - 40);
+    await park(cur);
+    while (cur < target) {
+      cur = Math.min(target, cur + 50);
+      await page.evaluate((t) => {
+        document.getElementById('scroller').scrollTop = t;
+      }, cur);
+      await page.waitForTimeout(24);
+    }
+    await page.waitForTimeout(SETTLE * 2);
+
+    const clip = await page.evaluate(() => {
+      const r = document.querySelector('.route').getBoundingClientRect();
+      const y = Math.max(0, Math.round(r.top));
+      const hh = Math.round(Math.min(r.bottom, window.innerHeight) - y);
+      return hh > 120 ? { x: 0, y, width: window.innerWidth, height: hh } : null;
+    });
+    if (clip) {
+      const A = PNG.sync.read(await page.screenshot({ clip, scale: 'css' }));
+      const gv = (x, y) => {
+        if (x < 0 || y < 0 || x >= A.width || y >= A.height) return 0;
+        const i = (y * A.width + x) * 4;
+        return Math.max(0, A.data[i + 1] - A.data[i]);
+      };
+      const P = [];
+      const X = [];
+      for (let y = 0; y < A.height; y += 1) {
+        let b = 0;
+        let bx = 0;
+        for (let x = 0; x < A.width; x += 1) {
+          const v = gv(x, y);
+          if (v > b) {
+            b = v;
+            bx = x;
+          }
+        }
+        P.push(b);
+        X.push(bx);
+      }
+      const C = Math.max(...P);
+      const hi = C * 0.55;
+      const runs = [];
+      let y0 = -1;
+      for (let y = 0; y <= A.height; y += 1) {
+        const on = y < A.height && P[y] >= hi;
+        if (on && y0 < 0) y0 = y;
+        if (!on && y0 >= 0) {
+          const y1 = y - 1;
+          const L = y1 - y0 + 1;
+          if (y0 > 0 && y1 < A.height - 1 && L >= 8 && Math.abs(X[y1] - X[y0]) <= L * 0.4) {
+            let pk = 0;
+            const sums = [];
+            for (let k = y0; k <= y1; k += 1) {
+              pk = Math.max(pk, P[k]);
+              let sm = 0;
+              for (let x = Math.max(0, X[k] - 24); x < Math.min(A.width, X[k] + 25); x += 1)
+                sm += gv(x, k);
+              sums.push(sm);
+            }
+            sums.sort((a2, b2) => a2 - b2);
+            runs.push({ L, pk: pk / C, med: sums[sums.length >> 1], max: sums[sums.length - 1] });
+          }
+          y0 = -1;
+        }
+      }
+      const lens = runs.map((r) => r.L).sort((a2, b2) => a2 - b2);
+      const meds = runs.map((r) => r.med).sort((a2, b2) => a2 - b2);
+      const base = meds.length ? meds[meds.length >> 1] : 1;
+      lenta.runs = runs.length;
+      lenta.lenMed = lens.length ? lens[lens.length >> 1] : 0;
+      lenta.lenMin = lens.length ? lens[0] : 0;
+      lenta.lenMax = lens.length ? lens[lens.length - 1] : 0;
+      lenta.pkMin = runs.length ? Math.min(...runs.map((r) => r.pk)) : 0;
+      lenta.ratio = runs.length ? Math.max(...runs.map((r) => r.max)) / base : 0;
+      lenta.bumps = runs.filter((r) => r.max > base * 1.4).length;
+    }
+  }
+  await page.evaluate(() => document.getElementById('lenta-tikho')?.remove());
+  /* Пороги взяты из КОНТРОЛЬНОГО ПРОГОНА НА ПРЕЖНЕМ КОДЕ: там среди
+     штрихов в 29 px нашёлся один в 19 (0.66 медианы) и четыре места
+     со светом в 1.44…1.55 медианы. На починенном — 26 px (0.90)
+     и ни одного места ярче 1.35. */
+  const okShtrih =
+    lenta.runs >= 5 &&
+    lenta.lenMin >= lenta.lenMed * 0.8 &&
+    lenta.lenMax <= lenta.lenMed * 1.3 &&
+    lenta.pkMin >= 0.6 &&
+    lenta.bumps === 0;
+
+  if (!okLayer || !okCurve || !okChunk || !okShtrih) failed = true;
 
   if (
     backSlip || fwdSlip || orderBad || !okEnds || !okDraw || !okLive || !okWhen || !okAhead ||
@@ -593,6 +724,13 @@ for (const [w, h, mob] of [
       `в момент зажигания 3-го номера ленты выше точки ${aboveN} px, ниже ${belowN} px` +
       (okFront ? '' : '   !!! НОМЕР ЗАГОРАЕТСЯ РАНЬШЕ ЛИНИИ') +
       '',
+  );
+  console.log(
+    `            штрихов промерено ${lenta.runs}  длина ${lenta.lenMin}…${lenta.lenMax} px ` +
+      `при медиане ${lenta.lenMed} (допуск ×0.8…×1.3)  ядро не тусклее ` +
+      `${(lenta.pkMin * 100).toFixed(0)} %  света в штрихе не больше ` +
+      `${lenta.ratio.toFixed(2)} медианы, мест ярче 1.40 — ${lenta.bumps}` +
+      (okShtrih ? '' : '   !!! ШТРИХИ РАЗНЫЕ'),
   );
   console.log(
     `            ядро ленты от центра цифры: ${thru

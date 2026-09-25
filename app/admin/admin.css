@@ -10,6 +10,12 @@
 
   This file is imported by the admin layout only and never reaches
   the landing bundle.
+
+  ⚠️ Corner radius comes from ONE place — `--ui-r` / `--ui-r-lg`
+  in globals.css, shared with the cabinet. No literal radius here:
+  a second source would drift from the first on the next edit.
+  The landing is untouched: radius there is still 0 everywhere
+  except the button and the plan card.
 */
 
 .ad {
@@ -42,6 +48,7 @@
   appearance: none;
   background: transparent;
   border: 0;
+  border-radius: var(--ui-r);
   padding: 4px 8px;
   font: inherit;
   font-size: 12px;
@@ -62,7 +69,7 @@
 .ad tr[data-mine] td { background: color-mix(in srgb, var(--green) 10%, transparent); }
 .ad__scroll { overflow-x: auto; }
 
-.ad__card { background: var(--surface); padding: 18px; margin: 0 0 14px; }
+.ad__card { background: var(--surface); border-radius: var(--ui-r-lg); padding: 18px; margin: 0 0 14px; }
 .ad__card h3 { margin: 0 0 12px; font-size: 15px; font-variation-settings: 'wght' 700; }
 
 .ad__kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0 0 14px; }
@@ -70,6 +77,7 @@
 .ad__kv dd { margin: 0; overflow-wrap: anywhere; }
 .ad__secret {
   background: var(--ink);
+  border-radius: var(--ui-r);
   padding: 8px 10px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 14px;
@@ -88,6 +96,7 @@
   min-height: 44px;
   padding: 0 12px;
   border: 0;
+  border-radius: var(--ui-r);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.34);
   background: var(--ink);
   color: #fff;
@@ -96,11 +105,11 @@
 }
 .ad__actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0 0; }
 
-.ad .err, .ad .ok { padding: 10px 12px; margin: 0 0 14px; font-size: 14px; }
+.ad .err, .ad .ok { border-radius: var(--ui-r); padding: 10px 12px; margin: 0 0 14px; font-size: 14px; }
 .ad .err { background: color-mix(in srgb, #ff5a5a 16%, var(--ink)); box-shadow: inset 0 0 0 1px rgba(255, 90, 90, 0.5); }
 .ad .ok { background: color-mix(in srgb, var(--green) 14%, var(--ink)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 50%, transparent); }
 
-.ad__tag { display: inline-block; padding: 2px 8px; font-size: 12px; background: var(--ink); color: var(--dim); }
+.ad__tag { display: inline-block; border-radius: var(--ui-r); padding: 2px 8px; font-size: 12px; background: var(--ink); color: var(--dim); }
 .ad__tag--paid { background: var(--green); color: var(--on-green-dim); }
 .ad__tag--work { background: #fff; color: var(--ink); }
 /* Подарочный заказ: денег за ним нет, и это видно с первого взгляда. */

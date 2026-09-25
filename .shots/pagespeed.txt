@@ -1,17 +1,17 @@
 сервер поднят: http://localhost:4182/
 
 === МОБИЛЬНЫЙ, прогон 1 ===
-производительность  95   доступность 100   практики  96   SEO 100
+производительность  93   доступность 100   практики  96   SEO 100
   First Contentful Paint            0.9 s
   Largest Contentful Paint          2.8 s
-  Total Blocking Time              140 ms
+  Total Blocking Time              190 ms
   Cumulative Layout Shift               0
-  Speed Index                       1.4 s
+  Speed Index                       1.5 s
   не прошло: errors-in-console
 
 === ДЕСКТОП, прогон 1 ===
 производительность 100   доступность 100   практики  96   SEO 100
-  First Contentful Paint            0.2 s
+  First Contentful Paint            0.3 s
   Largest Contentful Paint          0.7 s
   Total Blocking Time                0 ms
   Cumulative Layout Shift               0
@@ -19,12 +19,12 @@
   не прошло: errors-in-console
 
 === МОБИЛЬНЫЙ, прогон 2 ===
-производительность  94   доступность 100   практики  96   SEO 100
+производительность  95   доступность 100   практики  96   SEO 100
   First Contentful Paint            0.9 s
-  Largest Contentful Paint          2.8 s
-  Total Blocking Time              160 ms
+  Largest Contentful Paint          2.7 s
+  Total Blocking Time              110 ms
   Cumulative Layout Shift               0
-  Speed Index                       1.4 s
+  Speed Index                       1.3 s
   не прошло: errors-in-console
 
 === ДЕСКТОП, прогон 2 ===
@@ -39,15 +39,15 @@
 === МОБИЛЬНЫЙ, прогон 3 ===
 производительность  94   доступность 100   практики  96   SEO 100
   First Contentful Paint            0.9 s
-  Largest Contentful Paint          2.7 s
-  Total Blocking Time              150 ms
+  Largest Contentful Paint          2.8 s
+  Total Blocking Time              170 ms
   Cumulative Layout Shift               0
   Speed Index                       1.4 s
   не прошло: errors-in-console
 
 === ДЕСКТОП, прогон 3 ===
 производительность 100   доступность 100   практики  96   SEO 100
-  First Contentful Paint            0.2 s
+  First Contentful Paint            0.3 s
   Largest Contentful Paint          0.7 s
   Total Blocking Time                0 ms
   Cumulative Layout Shift               0
