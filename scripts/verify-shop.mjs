@@ -1183,7 +1183,9 @@ console.log('── ДАТА ОКОНЧАНИЯ И НАПОМИНАНИЕ ЗА �
       },
     });
     /* Ждём СОБЫТИЯ, а не секунд: отметки в базе. */
-    const do_ = Date.now() + 30_000;
+    /* Потолок с запасом: на загруженном раннере второй сервер
+       поднимается заметно дольше, чем здесь. */
+    const do_ = Date.now() + 90_000;
     while (Date.now() < do_) {
       const r = await p2.query('select reminded_at from shop_order where id = $1', [zakazN]);
       if (r.rows[0].reminded_at) break;
@@ -1250,6 +1252,23 @@ console.log('── ОБРАЩЕНИЕ В ПОДДЕРЖКУ ──');
   chk('плашка «Поддержка» появилась после первого экрана',
     await klient.$eval('.pd__knopka', (e) => e.hasAttribute('data-vidna')));
 
+  /* ⚠️ ЖДЁМ ОТВЕТА ФОРМЫ, А НЕ СЕКУНД. Фиксированная выдержка после
+     нажатия проходила здесь и падала на раннере: серверное действие
+     под нагрузкой отвечает дольше, и следующий шаг видел форму
+     в прежнем состоянии. Ровно этот класс ошибки уже ронял выкладки
+     № 84 и № 85 (Р-97, Р-94) — ждать надо СОБЫТИЯ. Событие тут одно
+     и общее для удачи и отказа: содержимое окна изменилось. */
+  const otpravitIZhdat = async () => {
+    const bylo = (await klient.textContent('.pd__okno')) ?? '';
+    await klient.click('.pd__okno button[type="submit"]');
+    await klient.waitForFunction(
+      (b) => (document.querySelector('.pd__okno')?.textContent ?? '') !== b,
+      bylo,
+      { timeout: 20000 },
+    );
+    await klient.waitForTimeout(250);
+  };
+
   await klient.click('.pd__knopka');
   await klient.waitForSelector('textarea[name="tekst"]', { timeout: 15000 });
   await klient.fill('textarea[name="tekst"]', 'Не приходит письмо с кодом входа, проверьте пожалуйста.');
@@ -1258,9 +1277,8 @@ console.log('── ОБРАЩЕНИЕ В ПОДДЕРЖКУ ──');
      отсекает отправку, случившуюся раньше секунды с небольшим после
      открытия: обходчик шлёт её, не открывая. Сторож заполняет поля
      мгновенно, то есть выглядит ровно как обходчик. */
-  await klient.waitForTimeout(1500);
-  await klient.click('.pd__okno button[type="submit"]');
-  await klient.waitForTimeout(800);
+  await klient.waitForTimeout(2000);
+  await otpravitIZhdat();
   const prinyato = (await klient.textContent('body')) ?? '';
   chk('ответ спокойный: обращение принято', /Обращение принято/.test(prinyato));
 
@@ -1285,9 +1303,8 @@ console.log('── ОБРАЩЕНИЕ В ПОДДЕРЖКУ ──');
     await klient.waitForSelector('textarea[name="tekst"]', { timeout: 15000 });
     await klient.fill('textarea[name="tekst"]', tekst);
     await klient.fill('input[name="svyaz"]', '@spotik_klient');
-    await klient.waitForTimeout(1500);
-    await klient.click('.pd__okno button[type="submit"]');
-    await klient.waitForTimeout(700);
+    await klient.waitForTimeout(2000);
+    await otpravitIZhdat();
   };
   await poslat('Ещё одно обращение номер два, всё подробно.');
   await poslat('Ещё одно обращение номер три, всё подробно.');
