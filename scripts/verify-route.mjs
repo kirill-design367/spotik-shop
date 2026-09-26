@@ -604,11 +604,26 @@ for (const [w, h, mob] of [
   await page.evaluate(() => {
     const st = document.createElement('style');
     st.id = 'lenta-tikho';
+    /* ⚠️ ШАПКА НА ВРЕМЯ СНИМКА ТОЖЕ ГАСИТСЯ, И ЭТО НЕ ПЕРЕСТРАХОВКА.
+       Её чернила рисует ВЫВОРОТКА СОБСТВЕННОГО ФОНА (Р-47): слой
+       с `backdrop-filter: grayscale(1) invert(1) …`, обрезанный
+       по контурам логотипа. Лента, проходящая под буквой логотипа,
+       становится там АХРОМАТИЧНОЙ — а штрих меряется по избытку
+       зелени над красным, и в этом месте он падает до нуля. Один
+       штрих разрезается надвое, и сторож честно докладывает «штрихи
+       разные» на исправной ленте: 11 px и 8 px подряд при медиане 29,
+       ровно под логотипом (x = 49, y = 16 и 30 при высоте шапки 68).
+       Поймано это в сорок первой итерации: блок порядка стал выше,
+       точка съёмки (0.62 хода) уехала, и под шапку впервые попал
+       ВЕРТИКАЛЬНЫЙ участок ленты. Выворотка над ним — приём, а не
+       дефект, и мерить ленту сквозь неё нельзя. `visibility` раскладку
+       не трогает: у обоих элементов высота и так нулевая. */
     st.textContent =
-      '.route__list{visibility:hidden!important}.route__wave{display:none!important}';
+      '.route__list{visibility:hidden!important}.route__wave{display:none!important}' +
+      '.nav,.nav-ink{visibility:hidden!important}';
     document.head.appendChild(st);
   });
-  const lenta = { runs: 0, lenMed: 0, lenMin: 0, lenMax: 0, pkMin: 0, bumps: 0, ratio: 0 };
+  const lenta = { runs: 0, lenMed: 0, lenMin: 0, lenMax: 0, pkMin: 0, bumps: 0, ratio: 0, list: [] };
   {
     const target = range.from + total * 0.62;
     let cur = Math.max(0, range.from - 40);
@@ -689,7 +704,18 @@ for (const [w, h, mob] of [
               sums.push(sm);
             }
             sums.sort((a2, b2) => a2 - b2);
-            runs.push({ L, pk: pk / C, med: sums[sums.length >> 1], max: sums[sums.length - 1] });
+            runs.push({
+              L,
+              pk: pk / C,
+              med: sums[sums.length >> 1],
+              max: sums[sums.length - 1],
+              /* Для ДИАГНОЗА: где штрих стоит и насколько он косой.
+                 Без этого «штрихи разные» не говорит ничего — а сторож
+                 обязан называть причину, а не факт (Р-85, Р-94). */
+              y: y0,
+              x: X[y0],
+              skew: Math.abs(X[y1] - X[y0]),
+            });
           }
           y0 = -1;
         }
@@ -704,6 +730,7 @@ for (const [w, h, mob] of [
       lenta.pkMin = runs.length ? Math.min(...runs.map((r) => r.pk)) : 0;
       lenta.ratio = runs.length ? Math.max(...runs.map((r) => r.max)) / base : 0;
       lenta.bumps = runs.filter((r) => r.max > base * 1.4).length;
+      lenta.list = runs.map((r) => `${r.L}px@y${r.y},x${r.x},косина${r.skew}`);
     }
   }
   await page.evaluate(() => document.getElementById('lenta-tikho')?.remove());
@@ -765,6 +792,7 @@ for (const [w, h, mob] of [
       `${lenta.ratio.toFixed(2)} медианы, мест ярче 1.40 — ${lenta.bumps}` +
       (okShtrih ? '' : '   !!! ШТРИХИ РАЗНЫЕ'),
   );
+  if (!okShtrih) console.log(`            ДИАГНОЗ штрихов: ${lenta.list.join(' · ')}`);
   console.log(
     `            ядро ленты от центра цифры: ${thru
       .map((v) => (v === null ? 'нет линии' : `${v.toFixed(1)} px`))
