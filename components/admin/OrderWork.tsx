@@ -1,46 +1,57 @@
 'use client';
 
-import { useActionState } from 'react';
+import { useActionState, useState } from 'react';
 import type { ZakazOperatoru, SlotOperatoru } from '@/lib/server/views';
-import {
-  adminCancel,
-  adminEmailTaken,
-  adminFinish,
-  adminIssue,
-  adminRelease,
-  adminRenewDone,
-  adminSendRecovery,
-  adminTake,
-  type OtvetA,
-} from '@/lib/server/actions-admin';
+import { adminRelease, adminShag, adminTake, type OtvetA } from '@/lib/server/actions-admin';
 import { slovar, sostoyanie, type Perevod, type Yazyk } from '@/lib/admin/slova';
-import { imyaTarifa, srokKratkoDlyaSotrudnika } from '@/lib/plans';
+import { imyaTarifaIz, srokKratkoDlyaSotrudnika, type ImenaTarifov } from '@/lib/plans';
+import { prichinaSotrudniku, prichinyDlya } from '@/lib/admin/prichiny';
 
 /**
- * Рабочий экран оператора.
+ * Рабочий экран оператора: ЗАКАЗ РАЗБИТ НА ШАГИ.
  *
- * Постановка требует «максимально пошагово и дружелюбно», поэтому
- * каждый участник — это отдельная карточка с пронумерованными
- * шагами, а не набор полей. Оператор читает сверху вниз и делает
- * ровно то, что написано.
+ * Постановка сорок второй итерации: «Переделать так, чтобы разобрался
+ * и пятилетний ребёнок: заказ разбит на шаги (по шагу на каждый
+ * аккаунт плюс последний шаг „Завершение"); экран показывает только
+ * текущий шаг с одной главной кнопкой; пройденные шаги свёрнуты
+ * с галочкой; следующие видны серыми и недоступны».
  *
- * ⚠️ ОТМЕНА ИЗ-ЗА НЕВЕРНОГО ПАРОЛЯ НЕДОСТУПНА, ПОКА НЕ ОТПРАВЛЕНО
- * ПИСЬМО. Кнопка выключена в разметке И проверка стоит на сервере:
- * порядок жёсткий, а разметка — это то, что человек может обойти.
+ * ⚠️ ТЕКУЩИЙ ШАГ ВЫВОДИТСЯ ИЗ БАЗЫ, А НЕ ХРАНИТСЯ ОТДЕЛЬНО. Это
+ * первый аккаунт без отметки «готово»; все с отметкой — значит идёт
+ * «Завершение». Своего поля «на каком шаге заказ» не заводится:
+ * оно разошлось бы с отметками на первом же откате, и понять,
+ * какое из двух чисел право, было бы нечем.
+ *
+ * ⚠️ СОСТОЯНИЕ У ЭКРАНА ОДНО, И ЭТО ТОЖЕ ПОСТАНОВКА («на экране нет
+ * двух сообщений о состоянии одновременно»). Все шаги идут через ОДНО
+ * серверное действие `adminShag` с полем `op`: прежде их было шесть,
+ * и ответ каждого жил до следующей отправки своей формы — «Отмечено
+ * выполненным» спокойно висело рядом с отказом отмены.
  *
  * ⚠️ ШАГА «КОД ДВУХФАКТОРНОЙ ПРОВЕРКИ» ЗДЕСЬ НЕТ ВОВСЕ и таймера
  * тоже: у Spotify такой проверки нет, и лишний шаг в инструкции
  * заставляет оператора искать то, чего не существует.
  */
-export default function OrderWork({ z, staffId, y }: { z: ZakazOperatoru; staffId: number; y: Yazyk }) {
+export default function OrderWork({
+  z,
+  staffId,
+  y,
+  imena,
+}: {
+  z: ZakazOperatoru;
+  staffId: number;
+  y: Yazyk;
+  imena: ImenaTarifov;
+}) {
   const t = slovar(y);
   const moy = z.operatorId === staffId;
-  const [fin, finish, busyFin] = useActionState<OtvetA, FormData>(adminFinish, {});
-  const [can, cancel, busyCan] = useActionState<OtvetA, FormData>(adminCancel, {});
-
-  const vseGotovy = z.slots.every((s) => s.gotov);
   const zakryt = z.status === 'done' || z.status === 'cancelled';
-  const nuzhnoPismo = z.slots.some((s) => s.mode === 'renew' && !s.recoverySent);
+  const [otvet, shag, idyot] = useActionState<OtvetA, FormData>(adminShag, {});
+
+  const neproydennyy = z.slots.findIndex((s) => !s.gotov);
+  /** Номер текущего шага. Равен числу аккаунтов — значит «Завершение». */
+  const tekushchiy = neproydennyy === -1 ? z.slots.length : neproydennyy;
+  const vsego = z.slots.length + 1;
   const rub = (kop: number) => (kop / 100).toFixed(2);
 
   return (
@@ -50,7 +61,7 @@ export default function OrderWork({ z, staffId, y }: { z: ZakazOperatoru; staffI
         <dl className="ad__kv">
           <dt>{t('t.plan')}</dt>
           <dd>
-            {imyaTarifa(z.planId, y === 'en')} · {srokKratkoDlyaSotrudnika(z.period, y === 'en')}
+            {imyaTarifaIz(imena, z.planId, y === 'en')} · {srokKratkoDlyaSotrudnika(z.period, y === 'en')}
             {z.bySertificate ? <span className="ad__tag ad__tag--gift">{t('q.gift')}</span> : null}
           </dd>
           <dt>{t('t.client')}</dt>
@@ -60,22 +71,29 @@ export default function OrderWork({ z, staffId, y }: { z: ZakazOperatoru; staffI
             {sostoyanie(t, z.status)}
             {z.operatorEmail ? ` · ${t('z.taken_by', { kto: z.operatorEmail })}` : ''}
           </dd>
-          <dt>{t('z.money')}</dt>
-          <dd>
-            {/* ⚠️ У ПОДАРОЧНОГО ЗАКАЗА СУММА НУЛЕВАЯ, И ЭТО НОРМА (Р-93):
-                деньги взяли раньше, когда покупали сертификат. */}
-            {z.bySertificate
-              ? t('z.money_gift')
-              : t('z.money_sum', {
-                  total: rub(z.totalKop),
-                  balance: rub(z.balanceKop),
-                  card: rub(z.moneyKop),
-                })}
-          </dd>
-          {/* ⚠️ ОТКУДА ПРИШЁЛ ЗАКАЗ — ЭТО ДАННЫЕ, А НЕ НАДПИСЬ: имена
-              меток и их значения не переводятся ни на каком языке
-              админки (закон 40). Строки нет вовсе, если меток не было:
-              «источник: —» на каждом прямом заходе — это шум. */}
+          {/* ⚠️ ДЕНЬГИ ВИДНЫ ТОЛЬКО АДМИНИСТРАТОРУ с сорок второй
+              итерации (постановка). Строки нет не потому, что она
+              спрятана стилем, а потому, что САМИХ ЧИСЕЛ в этой
+              карточке нет: сервер их исполнителю не отдаёт вовсе
+              (`zakazDlyaAdminki`). Признак подарочного заказа при
+              этом остаётся — он рядом с тарифом, и по нему видно,
+              что работы те же, а денег за заказом нет. */}
+          {z.totalKop !== null && z.balanceKop !== null && z.moneyKop !== null ? (
+            <>
+              <dt>{t('z.money')}</dt>
+              <dd>
+                {z.bySertificate
+                  ? t('z.money_gift')
+                  : t('z.money_sum', {
+                      total: rub(z.totalKop),
+                      balance: rub(z.balanceKop),
+                      card: rub(z.moneyKop),
+                    })}
+              </dd>
+            </>
+          ) : null}
+          {/* Метки кампании — ДАННЫЕ, а не надпись: они не переводятся
+              ни на каком языке админки (закон 40). */}
           {z.utm.length ? (
             <>
               <dt>{t('z.utm')}</dt>
@@ -112,171 +130,243 @@ export default function OrderWork({ z, staffId, y }: { z: ZakazOperatoru; staffI
             </button>
           </form>
         ) : null}
-        {/* ⚠️ ЗАКРЫТЫЙ ЗАКАЗ ГОВОРИТ ОБ ЭТОМ САМ. Карточки завершения
-            и отмены после закрытия пропадают вместе со своим ответом,
-            и без этой строки оператор видел бы страницу без единого
-            следа того, что он только что сделал. */}
+        {/* ⚠️ ЗАКРЫТЫЙ ЗАКАЗ ГОВОРИТ ОБ ЭТОМ САМ. Шаги после закрытия
+            остаются свёрнутыми, и без этой строки оператор видел бы
+            страницу без единого следа того, что он только что сделал. */}
         {zakryt ? <p className="ok">{z.status === 'done' ? t('z.done_note') : t('z.cancelled_note')}</p> : null}
         {z.secretsWiped ? <p className="hint">{t('z.wiped')}</p> : null}
       </div>
 
       {!moy && !zakryt ? <p className="hint">{t('z.take_first')}</p> : null}
 
-      {moy ? z.slots.map((s) => <SlotCard key={s.id} z={z} s={s} n={z.slots.length} t={t} />) : null}
+      {/* ⚠️ ОДНО МЕСТО ДЛЯ СООБЩЕНИЯ, И ОНО ЗДЕСЬ — ВЫШЕ ШАГОВ.
+          Двух сообщений не бывает по построению: состояние одно. */}
+      {moy && otvet.error ? <p className="err">{t(otvet.error, otvet.polya)}</p> : null}
+      {moy && otvet.ok ? <p className="ok">{t(otvet.ok, otvet.polya)}</p> : null}
 
-      {moy && !zakryt ? (
-        <div className="ad__card">
-          <h3>{t('z.finish')}</h3>
-          {fin.error ? <p className="err">{t(fin.error)}</p> : null}
-          {fin.ok ? <p className="ok">{t(fin.ok, fin.polya)}</p> : null}
-          <form action={finish}>
-            <input type="hidden" name="order" value={z.id} />
-            <button type="submit" className="btn btn--sm" disabled={!vseGotovy || busyFin}>
-              {busyFin ? t('z.closing') : t('z.finish_btn')}
-            </button>
-          </form>
-          {!vseGotovy ? <p className="hint">{t('z.need_all')}</p> : null}
-        </div>
-      ) : null}
+      {moy
+        ? z.slots.map((s) => (
+            <ShagAkkaunta
+              key={s.id}
+              z={z}
+              s={s}
+              t={t}
+              en={y === 'en'}
+              vsego={vsego}
+              tekushchiy={zakryt ? -1 : tekushchiy}
+              shag={shag}
+              idyot={idyot}
+            />
+          ))
+        : null}
 
-      {moy && !zakryt ? (
-        <div className="ad__card">
-          <h3>{t('z.cancel')}</h3>
-          {can.error ? <p className="err">{t(can.error)}</p> : null}
-          {can.ok ? <p className="ok">{t(can.ok, can.polya)}</p> : null}
-          <form action={cancel} className="ad__form">
-            <input type="hidden" name="order" value={z.id} />
-            <label>
-              {t('z.reason')}
-              <input type="text" name="reason" placeholder={t('z.reason_ph')} />
-            </label>
-            <label style={{ flexDirection: 'row', alignItems: 'center', display: 'flex', gap: 8 }}>
-              <input type="checkbox" name="badPassword" defaultChecked={z.slots.some((x) => x.mode === 'renew')} />
-              {t('z.badpass')}
-            </label>
-            <div className="ad__actions">
-              <button type="submit" className="btn btn--ghost btn--sm" disabled={busyCan}>
-                {busyCan ? t('z.cancelling') : t('z.cancel_btn')}
-              </button>
-            </div>
-          </form>
-          {nuzhnoPismo ? <p className="hint">{t('z.need_letter')}</p> : null}
-        </div>
+      {moy ? (
+        <ShagZaversheniya
+          z={z}
+          t={t}
+          vsego={vsego}
+          tekushchiy={zakryt ? -1 : tekushchiy}
+          shag={shag}
+          idyot={idyot}
+        />
       ) : null}
     </>
   );
 }
 
-function SlotCard({ z, s, n, t }: { z: ZakazOperatoru; s: SlotOperatoru; n: number; t: Perevod }) {
-  const [iss, issue, busy1] = useActionState<OtvetA, FormData>(adminIssue, {});
-  const [don, done, busy2] = useActionState<OtvetA, FormData>(adminRenewDone, {});
-  const [rec, recovery, busy3] = useActionState<OtvetA, FormData>(adminSendRecovery, {});
-  const [zan, zanyata, busy4] = useActionState<OtvetA, FormData>(adminEmailTaken, {});
-  const zakryt = z.status === 'done' || z.status === 'cancelled';
+/**
+ * ГЛАВНАЯ КНОПКА ШАГА: сначала спрашивает, потом делает.
+ *
+ * Постановка: «Каждая главная кнопка шага сначала спрашивает „Вы
+ * уверены, что всё заполнено верно?" — „Да" / „Нет", и только „Да"
+ * проводит шаг».
+ *
+ * ⚠️ СПРАШИВАЕМ СВОИМИ СРЕДСТВАМИ, А НЕ `confirm()`. Системное окно
+ * приходит шрифтом системы, на языке системы и в чужом визуальном
+ * языке — ровно та причина, по которой у форм сайта стоит
+ * `noValidate` (Р-114). Здесь вопрос набран тем же, чем всё
+ * остальное, и переводится как любая другая надпись.
+ */
+function Glavnaya({
+  t,
+  podpis,
+  idyot,
+  hod,
+}: {
+  t: Perevod;
+  podpis: string;
+  idyot: boolean;
+  hod?: string;
+}) {
+  const [sprosili, setSprosili] = useState(false);
+  if (!sprosili) {
+    return (
+      <div className="ad__actions">
+        <button type="button" className="btn btn--sm" onClick={() => setSprosili(true)} disabled={idyot}>
+          {podpis}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="ad__sure">
+      <p>{t('w.sure')}</p>
+      <div className="ad__actions">
+        <button type="submit" className="btn btn--sm" disabled={idyot}>
+          {idyot ? (hod ?? t('o.saving')) : t('w.yes')}
+        </button>
+        <button type="button" className="btn btn--ghost btn--sm" onClick={() => setSprosili(false)} disabled={idyot}>
+          {t('w.no')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Отмена заказа: закрытый список причин плюс тот же вопрос. */
+function Otmena({
+  z,
+  t,
+  en,
+  shag,
+  idyot,
+}: {
+  z: ZakazOperatoru;
+  t: Perevod;
+  /* ⚠️ ЯЗЫК ПРИХОДИТ ПРИЗНАКОМ, А НЕ УГАДЫВАЕТСЯ ПО НАДПИСИ. Причины
+     отмены живут своей парой (`lib/admin/prichiny.ts`), потому что
+     их русская половина — текст КЛИЕНТУ, а не надпись; выбрать
+     половину надо явно. */
+  en: boolean;
+  shag: (fd: FormData) => void;
+  idyot: boolean;
+}) {
+  const [otkryto, setOtkryto] = useState(false);
+  if (!otkryto) {
+    return (
+      <div className="ad__actions">
+        <button type="button" className="btn btn--ghost btn--sm" onClick={() => setOtkryto(true)}>
+          {t('w.cancel_open')}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <form action={shag} className="ad__form">
+      <input type="hidden" name="order" value={z.id} />
+      <input type="hidden" name="op" value="otmena" />
+      <label>
+        {t('z.reason')}
+        {/* ⚠️ СПИСОК ЗАКРЫТЫЙ, И ПУСТОГО ВЫБОРА В НЁМ НЕТ ВОВСЕ БЫТЬ
+            НЕ МОЖЕТ: без причины отменить нельзя (постановка), и это
+            проверяется ещё и на сервере — `required` человек снимает
+            в браузере за секунду. */}
+        <select name="reason" required defaultValue="">
+          <option value="" disabled>
+            {t('w.reason_pick')}
+          </option>
+          {prichinyDlya(z.slots.length).map((k) => (
+            <option key={k} value={k}>
+              {prichinaSotrudniku(k, en)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="hint" style={{ margin: 0 }}>
+        {t('w.reason_hint')}
+      </p>
+      <Glavnaya t={t} podpis={t('z.cancel_btn')} idyot={idyot} hod={t('z.cancelling')} />
+      <div className="ad__actions">
+        <button type="button" className="btn btn--ghost btn--sm" onClick={() => setOtkryto(false)} disabled={idyot}>
+          {t('w.no')}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** Кнопка «Назад»: снимает отметку с предыдущего аккаунта. */
+function Nazad({
+  z,
+  t,
+  shag,
+  idyot,
+}: {
+  z: ZakazOperatoru;
+  t: Perevod;
+  shag: (fd: FormData) => void;
+  idyot: boolean;
+}) {
+  return (
+    <form action={shag}>
+      <input type="hidden" name="order" value={z.id} />
+      <input type="hidden" name="op" value="nazad" />
+      <button type="submit" className="btn btn--ghost btn--sm" disabled={idyot}>
+        ← {t('w.back')}
+      </button>
+    </form>
+  );
+}
+
+function ShagAkkaunta({
+  z,
+  s,
+  t,
+  en,
+  vsego,
+  tekushchiy,
+  shag,
+  idyot,
+}: {
+  z: ZakazOperatoru;
+  s: SlotOperatoru;
+  t: Perevod;
+  en: boolean;
+  vsego: number;
+  tekushchiy: number;
+  shag: (fd: FormData) => void;
+  idyot: boolean;
+}) {
+  const proyden = s.gotov;
+  const seychas = tekushchiy === s.idx;
+  const zhdyot = !proyden && !seychas;
+  const imya = `${z.slots.length > 1 ? t('u.account', { n: s.idx + 1 }) : ''}${s.mode === 'new' ? t('u.new') : t('u.renew')}`;
+  /* Старый заказ: доступы заводил оператор, и доделывать его надо тем
+     же способом, каким он начинался (до тридцать четвёртой итерации). */
+  const staryy = s.mode === 'new' && !s.clientLogin && !s.clientPassword;
 
   return (
-    <div className="ad__card">
+    <div className="ad__shag" data-sost={proyden ? 'proyden' : seychas ? 'seychas' : 'zhdyot'}>
       <h3>
-        {n > 1 ? t('u.account', { n: s.idx + 1 }) : ''}
-        {s.mode === 'new' ? t('u.new') : t('u.renew')}
-        {s.gotov ? t('u.done') : ''}
+        <span className="ad__shag-n" aria-hidden="true">
+          {proyden ? '✓' : s.idx + 1}
+        </span>
+        <span>
+          {t('w.step', { n: s.idx + 1, vsego })} · {imya}
+        </span>
+        {proyden ? <span className="ad__shag-p">{t('w.passed')}</span> : null}
       </h3>
 
-      {s.mode === 'renew' ? (
+      {zhdyot ? <p className="hint">{t('w.locked')}</p> : null}
+
+      {seychas ? (
         <>
-          <p className="hint">{t('u.renew_steps')}</p>
-          <dl className="ad__kv">
-            <dt>{t('t.email')}</dt>
-            <dd className="ad__secret">{s.clientLogin ?? t('u.wiped')}</dd>
-            <dt>{t('u.password')}</dt>
-            <dd className="ad__secret">{s.clientPassword ?? t('u.wiped')}</dd>
-          </dl>
+          <p className="hint">{staryy ? t('u.new_steps_old') : s.mode === 'renew' ? t('u.renew_steps') : t('u.new_steps')}</p>
 
-          {don.error ? <p className="err">{t(don.error)}</p> : null}
-          {don.ok ? <p className="ok">{t(don.ok, don.polya)}</p> : null}
-          {rec.error ? <p className="err">{t(rec.error)}</p> : null}
-          {rec.ok ? <p className="ok">{t(rec.ok, rec.polya)}</p> : null}
-
-          <div className="ad__actions">
-            {!s.gotov && !zakryt ? (
-              <form action={done}>
-                <input type="hidden" name="order" value={z.id} />
-                <input type="hidden" name="slot" value={s.id} />
-                <button type="submit" className="btn btn--sm" disabled={busy2}>
-                  {busy2 ? t('o.saving') : t('u.renew_done')}
-                </button>
-              </form>
-            ) : null}
-            {!zakryt ? (
-              <form action={recovery}>
-                <input type="hidden" name="order" value={z.id} />
-                <input type="hidden" name="slot" value={s.id} />
-                <button type="submit" className="btn btn--ghost btn--sm" disabled={busy3 || s.recoverySent}>
-                  {s.recoverySent ? t('u.recovery_sent') : busy3 ? t('u.sending') : t('u.recovery')}
-                </button>
-              </form>
-            ) : null}
-          </div>
-        </>
-      ) : s.clientLogin || s.clientPassword ? (
-        /* НОВЫЙ ПОРЯДОК: почту и пароль дал КЛИЕНТ, оператор заводит
-           аккаунт ровно на них и не вписывает ничего. */
-        <>
-          <p className="hint">{t('u.new_steps')}</p>
-          <dl className="ad__kv">
-            <dt>{t('t.email')}</dt>
-            <dd className="ad__secret">{s.clientLogin ?? t('u.wiped')}</dd>
-            <dt>{t('u.password')}</dt>
-            <dd className="ad__secret">{s.clientPassword ?? t('u.wiped')}</dd>
-          </dl>
-
-          {don.error ? <p className="err">{t(don.error)}</p> : null}
-          {don.ok ? <p className="ok">{t(don.ok, don.polya)}</p> : null}
-          {zan.error ? <p className="err">{t(zan.error)}</p> : null}
-          {zan.ok ? <p className="ok">{t(zan.ok, zan.polya)}</p> : null}
-
-          <div className="ad__actions">
-            {!s.gotov && !zakryt ? (
-              <form action={done}>
-                <input type="hidden" name="order" value={z.id} />
-                <input type="hidden" name="slot" value={s.id} />
-                <button type="submit" className="btn btn--sm" disabled={busy2}>
-                  {busy2 ? t('o.saving') : t('u.new_done')}
-                </button>
-              </form>
-            ) : null}
-            {!zakryt ? (
-              <form action={zanyata}>
-                <input type="hidden" name="order" value={z.id} />
-                <button type="submit" className="btn btn--ghost btn--sm" disabled={busy4}>
-                  {busy4 ? t('z.cancelling') : t('u.email_taken')}
-                </button>
-              </form>
-            ) : null}
-          </div>
-          {!zakryt ? <p className="hint">{t('u.email_taken_hint')}</p> : null}
-        </>
-      ) : (
-        /* СТАРЫЙ ЗАКАЗ: доступы заводил оператор, и доделывать его
-           надо тем же способом, каким он начинался. */
-        <>
-          <p className="hint">{t('u.new_steps_old')}</p>
-          {iss.error ? <p className="err">{t(iss.error)}</p> : null}
-          {iss.ok ? <p className="ok">{t(iss.ok, iss.polya)}</p> : null}
-          {s.outLogin ? (
+          {!staryy ? (
             <dl className="ad__kv">
-              <dt>{t('u.login')}</dt>
-              <dd className="ad__secret">{s.outLogin}</dd>
-              <dt>{t('u.mailpass')}</dt>
-              <dd className="ad__secret">{s.outMailPass}</dd>
-              <dt>{t('u.spotpass')}</dt>
-              <dd className="ad__secret">{s.outPassword}</dd>
+              <dt>{t('t.email')}</dt>
+              <dd className="ad__secret">{s.clientLogin ?? t('u.wiped')}</dd>
+              <dt>{t('u.password')}</dt>
+              <dd className="ad__secret">{s.clientPassword ?? t('u.wiped')}</dd>
             </dl>
           ) : null}
-          {!zakryt ? (
-            <form action={issue} className="ad__form">
+
+          {staryy ? (
+            <form action={shag} className="ad__form">
               <input type="hidden" name="order" value={z.id} />
               <input type="hidden" name="slot" value={s.id} />
+              <input type="hidden" name="op" value="vydacha" />
               <div className="ad__row">
                 <label>
                   {t('u.login_email')}
@@ -297,15 +387,116 @@ function SlotCard({ z, s, n, t }: { z: ZakazOperatoru; s: SlotOperatoru; n: numb
                   />
                 </label>
               </div>
-              <div className="ad__actions">
-                <button type="submit" className="btn btn--sm" disabled={busy1}>
-                  {busy1 ? t('o.saving') : s.outLogin ? t('u.update_creds') : t('u.save_creds')}
-                </button>
-              </div>
+              <Glavnaya t={t} podpis={s.outLogin ? t('u.update_creds') : t('u.save_creds')} idyot={idyot} />
             </form>
-          ) : null}
+          ) : (
+            <form action={shag}>
+              <input type="hidden" name="order" value={z.id} />
+              <input type="hidden" name="slot" value={s.id} />
+              <input type="hidden" name="op" value="gotov" />
+              <Glavnaya
+                t={t}
+                podpis={s.mode === 'renew' ? t('u.renew_done') : t('u.new_done')}
+                idyot={idyot}
+              />
+            </form>
+          )}
+
+          {/* ⚠️ «ОТМЕНИТЬ ЗАКАЗ» СТОИТ НА КАЖДОМ ШАГЕ, ГДЕ ОПЕРАТОР
+              РАБОТАЕТ С ПОЧТАМИ И ПАРОЛЯМИ (постановка) — то есть
+              на шагах аккаунтов, и только на них: на «Завершении»
+              работать уже нечем. */}
+          <Otmena z={z} t={t} en={en} shag={shag} idyot={idyot} />
+          {/* На первом шаге назад идти некуда, и кнопки там нет. */}
+          {s.idx > 0 ? <Nazad z={z} t={t} shag={shag} idyot={idyot} /> : null}
         </>
-      )}
+      ) : null}
+
+      {proyden && s.endsAt ? (
+        <p className="hint">
+          {t('w.ends')}: {s.endsAt}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Последний шаг.
+ *
+ * ⚠️ У ПРОДЛЕНИЯ ДАТА ОКОНЧАНИЯ СПРАШИВАЕТСЯ, И ОНА ОБЯЗАТЕЛЬНА
+ * (постановка). Причина не в аккуратности: у клиента на аккаунте мог
+ * остаться неистёкший срок, и «сегодня плюс срок заказа» тогда врёт —
+ * Spotify показывает дату позже. От введённой даты считается письмо
+ * за три дня до конца (закон 44). Поле заранее заполнено расчётной
+ * датой, и считает её СЕРВЕР (закон 49).
+ *
+ * ⚠️ У НОВОГО АККАУНТА ПОЛЯ НЕТ ВОВСЕ — «для новых аккаунтов как
+ * сейчас»: официальной даты там взять негде, аккаунт только что
+ * заведён, и срок считается от выдачи.
+ */
+function ShagZaversheniya({
+  z,
+  t,
+  vsego,
+  tekushchiy,
+  shag,
+  idyot,
+}: {
+  z: ZakazOperatoru;
+  t: Perevod;
+  vsego: number;
+  tekushchiy: number;
+  shag: (fd: FormData) => void;
+  idyot: boolean;
+}) {
+  const nomer = z.slots.length;
+  const seychas = tekushchiy === nomer;
+  const zakryt = z.status === 'done' || z.status === 'cancelled';
+  const prodleniya = z.slots.filter((s) => s.mode === 'renew');
+
+  return (
+    <div className="ad__shag" data-sost={zakryt ? 'proyden' : seychas ? 'seychas' : 'zhdyot'}>
+      <h3>
+        <span className="ad__shag-n" aria-hidden="true">
+          {zakryt ? '✓' : nomer + 1}
+        </span>
+        <span>
+          {t('w.step', { n: nomer + 1, vsego })} · {t('w.finish_h')}
+        </span>
+      </h3>
+
+      {!seychas && !zakryt ? <p className="hint">{t('w.locked')}</p> : null}
+
+      {seychas ? (
+        <>
+          <p className="hint">{t('w.all_done')}</p>
+          <form action={shag} className="ad__form">
+            <input type="hidden" name="order" value={z.id} />
+            <input type="hidden" name="op" value="zavershit" />
+            {prodleniya.map((s) => (
+              <label key={s.id}>
+                {z.slots.length > 1
+                  ? `${t('u.account', { n: s.idx + 1 })}${t('w.ends')}`
+                  : t('w.ends')}
+                <input
+                  type="date"
+                  name={`ends_${s.id}`}
+                  required
+                  defaultValue={s.endsAt ?? z.raschyotnayaData}
+                />
+              </label>
+            ))}
+            {prodleniya.length ? (
+              <p className="hint" style={{ margin: 0 }}>
+                {t('w.ends_hint')}
+              </p>
+            ) : null}
+            <Glavnaya t={t} podpis={t('w.finish_btn')} idyot={idyot} hod={t('z.closing')} />
+          </form>
+          <Nazad z={z} t={t} shag={shag} idyot={idyot} />
+        </>
+      ) : null}
     </div>
   );
 }

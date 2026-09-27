@@ -11,7 +11,8 @@ import { moiSertifikaty } from '@/lib/server/certificates';
 import { bazaEst } from '@/lib/server/db';
 import { otpechatokKabineta } from '@/lib/server/otpechatok';
 import { rubli } from '@/lib/server/money';
-import { deystvieOplatit, deystvieOtmenitSvoy, deystvieVyyti } from '@/lib/server/actions-client';
+import KnopkaOplaty from '@/components/shop/KnopkaOplaty';
+import { deystvieOtmenitSvoy, deystvieVyyti } from '@/lib/server/actions-client';
 import type { Status } from '@/lib/server/orders';
 
 export const metadata: Metadata = { title: 'Личный кабинет — Spotik Shop', robots: { index: false, follow: false } };
@@ -206,10 +207,10 @@ export default async function Cabinet({
 
                 {z.status === 'new' && z.kDoplate > 0 ? (
                   <div className="order-card__knopki">
-                    <form action={deystvieOplatit}>
-                      <input type="hidden" name="order" value={z.id} />
-                      <button type="submit" className="btn btn--sm">Оплатить {rubli(z.kDoplate)}</button>
-                    </form>
+                    {/* ⚠️ КНОПКА КЛИЕНТСКАЯ, И ЭТО НЕ УКРАШЕНИЕ: уйти
+                        на Робокассу обязан САМ БРАУЗЕР, иначе нажатие
+                        «назад» со страницы оплаты роняет сайт (Р-143). */}
+                    <KnopkaOplaty zakaz={z.id} podpis={`Оплатить ${rubli(z.kDoplate)}`} />
                     {/* ⚠️ ПРИЗНАК `data-otmena` ЛОВИТ ОБЁРТКА: по нему
                         карточка схлопывается. Без него отмена сработает
                         всё равно — просто без плавного ухода. */}

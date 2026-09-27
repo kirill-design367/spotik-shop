@@ -45,7 +45,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               {s.role === 'admin' ? <a href="/admin/settings/">{t('nav.prices')}</a> : null}
               {s.role === 'admin' ? <a href="/admin/certificates/">{t('nav.certs')}</a> : null}
               {s.role === 'admin' ? <a href="/admin/staff/">{t('nav.staff')}</a> : null}
-              {s.role === 'admin' ? <a href="/admin/stats/">{t('nav.stats')}</a> : null}
+              {/* ⚠️ СТАТИСТИКА ОТКРЫТА И ИСПОЛНИТЕЛЮ с сорок второй
+                  итерации — постановка. Без ссылки в шапке «открыта»
+                  означало бы «доступна тому, кто знает адрес». */}
+              <a href="/admin/stats/">{t('nav.stats')}</a>
               <a href="/">{t('nav.site')}</a>
             </nav>
             <span className="ad__who">

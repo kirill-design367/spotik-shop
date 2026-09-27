@@ -57,6 +57,9 @@ export async function ubrat(): Promise<void> {
     // же срок, что у кода сертификата.
     await zapros(`delete from support_try where created_at < now() - interval '2 days'`);
     await zapros('delete from session where expires_at < now()');
+    // Ссылки восстановления пароля Spotify: живут семь дней, дальше
+    // не нужны вовсе — за ними и почта к тому времени стёрта.
+    await zapros('delete from recovery_link where expires_at < now()');
     // Ушедшие уведомления держать незачем: разбор беды идёт
     // по журналу, а неушедшие остаются в очереди до последней попытки.
     await zapros(`delete from notify_outbox where sent_at is not null and sent_at < now() - interval '14 days'`);

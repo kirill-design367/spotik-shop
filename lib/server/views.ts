@@ -165,6 +165,46 @@ export async function pochtyZakaza(userId: number, zakaz: number): Promise<strin
   return rows.map((r) => poprobovatRasshifrovat(r.in_login_enc) ?? '');
 }
 
+/**
+ * ВСЕ ПОЧТЫ, КОТОРЫЕ ЧЕЛОВЕК УЖЕ УКАЗЫВАЛ В СВОИХ ЗАКАЗАХ.
+ *
+ * Постановка сорок второй итерации: на продлении под полем почты
+ * выезжает список — нажатие подставляет адрес.
+ *
+ * ⚠️ ЧИТАТЕЛЬ ТОТ ЖЕ, ЧТО У КАБИНЕТА: владелец и его собственные
+ * данные (закон 35). Ни новой двери, ни нового места расшифровки
+ * не заводится — запрос сам проверяет `user_id`.
+ *
+ * ⚠️ ТОЛЬКО ПОЧТА. Пароли в подсказку не попадают ни при каких
+ * условиях: их ценность ровно та же, что у пароля от аккаунта
+ * Spotify, и выпадающий список был бы третьим местом, где открытый
+ * пароль оказывается на экране.
+ *
+ * ⚠️ РАЗЛИЧНЫЕ СЧИТАЮТСЯ ПОСЛЕ РАСШИФРОВКИ, А НЕ `distinct` В SQL.
+ * AES-GCM со случайным вектором двух одинаковых адресов одинаковыми
+ * не делает (то же, что в Р-115), поэтому `distinct in_login_enc`
+ * отдал бы одну и ту же почту столько раз, сколько заказов.
+ */
+export async function pochtyKlienta(userId: number, skolko = 8): Promise<string[]> {
+  const rows = await zapros<{ in_login_enc: string | null }>(
+    `select s.in_login_enc
+       from order_slot s join shop_order o on o.id = s.order_id
+      where o.user_id = $1 and s.in_login_enc is not null
+      order by o.created_at desc, s.idx
+      limit 60`,
+    [userId],
+  );
+  const vidno: string[] = [];
+  for (const r of rows) {
+    const p = poprobovatRasshifrovat(r.in_login_enc);
+    if (!p) continue;
+    if (vidno.some((x) => x.toLowerCase() === p.toLowerCase())) continue;
+    vidno.push(p);
+    if (vidno.length >= skolko) break;
+  }
+  return vidno;
+}
+
 export async function balans(userId: number): Promise<number> {
   const r = await odna<{ balance_kop: string }>('select balance_kop from app_user where id = $1', [userId]);
   return Number(r?.balance_kop ?? 0);
@@ -233,6 +273,8 @@ export type SlotOperatoru = {
   mode: Rezhim;
   gotov: boolean;
   recoverySent: boolean;
+  /** Официальная дата окончания из Spotify, «ГГГГ-ММ-ДД». */
+  endsAt: string | null;
   /** Открытый текст: только оператору, который взял ЭТОТ заказ. */
   clientLogin: string | null;
   clientPassword: string | null;
@@ -250,11 +292,29 @@ export type ZakazOperatoru = {
   operatorId: number | null;
   operatorEmail: string | null;
   bySertificate: boolean;
-  totalKop: number;
-  balanceKop: number;
-  moneyKop: number;
+  /**
+   * Деньги. `null` — СПРАШИВАЛ НЕ АДМИНИСТРАТОР.
+   *
+   * ⚠️ ИСПОЛНИТЕЛЮ ИХ НЕ ВИДНО ВОВСЕ с сорок второй итерации
+   * (постановка), и «не показываем» сделано НЕ РАЗМЕТКОЙ: наружу
+   * не уходит само число. Спрячь мы строку стилем — сумма всё равно
+   * лежала бы в разметке страницы, то есть была бы видна всякому,
+   * кто её откроет.
+   */
+  totalKop: number | null;
+  balanceKop: number | null;
+  moneyKop: number | null;
   cancelReason: string | null;
   secretsWiped: boolean;
+  /**
+   * Дата, которой заранее заполняется поле окончания: сегодня плюс
+   * срок заказа, «ГГГГ-ММ-ДД».
+   *
+   * ⚠️ СЧИТАЕТ ЕЁ СЕРВЕР, А НЕ БРАУЗЕР. Спроси мы часы устройства —
+   * оператор из другого пояса получил бы другую подстановку (то же
+   * правило, что у плашки рабочего времени, закон 49).
+   */
+  raschyotnayaData: string;
   /**
    * Откуда пришёл заказ. Пары «имя — значение» в порядке `METKI`;
    * пустых меток тут нет вовсе, поэтому пустой список означает
@@ -289,6 +349,7 @@ export async function zakazDlyaAdminki(id: number, staffId: number, admin: boole
     money_kop: string;
     cancel_reason: string | null;
     secrets_wiped_at: Date | null;
+    raschyot: Date;
     utm_source: string | null;
     utm_medium: string | null;
     utm_campaign: string | null;
@@ -298,6 +359,7 @@ export async function zakazDlyaAdminki(id: number, staffId: number, admin: boole
     `select o.id, o.plan_id, o.period, o.status, o.source, u.email,
             o.operator_id, f.email as operator_email,
             o.total_kop, o.balance_kop, o.money_kop, o.cancel_reason, o.secrets_wiped_at,
+            (now() + (o.period || ' months')::interval)::date as raschyot,
             o.utm_source, o.utm_medium, o.utm_campaign, o.utm_term, o.utm_content
        from shop_order o
        join app_user u on u.id = o.user_id
@@ -318,9 +380,10 @@ export async function zakazDlyaAdminki(id: number, staffId: number, admin: boole
     out_password_enc: string | null;
     recovery_sent_at: Date | null;
     done_at: Date | null;
+    ends_at: Date | null;
   }>(
     `select id, idx, mode, in_login_enc, in_password_enc, out_login_enc, out_mail_pass_enc,
-            out_password_enc, recovery_sent_at, done_at
+            out_password_enc, recovery_sent_at, done_at, ends_at
        from order_slot where order_id = $1 order by idx`,
     [id],
   );
@@ -334,17 +397,19 @@ export async function zakazDlyaAdminki(id: number, staffId: number, admin: boole
     operatorEmail: r.operator_email,
     bySertificate: r.source === 'certificate',
     utm: METKI.flatMap((m) => (r[m] ? [{ imya: m as string, znachenie: r[m] as string }] : [])),
-    totalKop: Number(r.total_kop),
-    balanceKop: Number(r.balance_kop),
-    moneyKop: Number(r.money_kop),
+    totalKop: admin ? Number(r.total_kop) : null,
+    balanceKop: admin ? Number(r.balance_kop) : null,
+    moneyKop: admin ? Number(r.money_kop) : null,
     cancelReason: r.cancel_reason,
     secretsWiped: Boolean(r.secrets_wiped_at),
+    raschyotnayaData: new Date(r.raschyot).toISOString().slice(0, 10),
     slots: slots.map((s) => ({
       id: Number(s.id),
       idx: s.idx,
       mode: s.mode,
       gotov: Boolean(s.done_at),
       recoverySent: Boolean(s.recovery_sent_at),
+      endsAt: s.ends_at ? new Date(s.ends_at).toISOString().slice(0, 10) : null,
       clientLogin: moy ? poprobovatRasshifrovat(s.in_login_enc) : null,
       clientPassword: moy ? poprobovatRasshifrovat(s.in_password_enc) : null,
       outLogin: moy ? poprobovatRasshifrovat(s.out_login_enc) : null,

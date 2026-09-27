@@ -10,7 +10,8 @@ import { telegramNastroen } from '@/lib/server/telegram';
 import { env } from '@/lib/server/env';
 import { yazykSotrudnika } from '@/lib/server/yazyk';
 import { slovar, sostoyanie } from '@/lib/admin/slova';
-import { imyaTarifa } from '@/lib/plans';
+import { imyaTarifaIz } from '@/lib/plans';
+import { imenaTarifov } from '@/lib/server/imena';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,7 +29,7 @@ export default async function AdminHome() {
   if (!bazaEst()) return <p className="err">{t('o.no_db')}</p>;
   if (!s) redirect('/admin/login/');
 
-  const [rows, closed] = await Promise.all([ochered(), zakrytye(20)]);
+  const [rows, closed, imena] = await Promise.all([ochered(), zakrytye(20), imenaTarifov()]);
   const kogda = y === 'en' ? 'en-GB' : 'ru-RU';
 
   return (
@@ -55,7 +56,7 @@ export default async function AdminHome() {
         </ul>
       </div>
 
-      <Queue rows={rows} me={s.email} y={y} sek={s.queueSec} />
+      <Queue rows={rows} me={s.email} y={y} sek={s.queueSec} imena={imena} />
 
       <h2>{t('q.closed')}</h2>
       <div className="ad__scroll">
@@ -75,7 +76,7 @@ export default async function AdminHome() {
                 <td>
                   <a href={`/admin/orders/${r.id}/`}>{r.id}</a>
                 </td>
-                <td>{imyaTarifa(r.planId, y === 'en')}</td>
+                <td>{imyaTarifaIz(imena, r.planId, y === 'en')}</td>
                 <td>{r.client}</td>
                 <td>{sostoyanie(t, r.status)}</td>
                 <td>{new Date(r.closedAt).toLocaleString(kogda)}</td>

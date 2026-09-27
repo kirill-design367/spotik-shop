@@ -4,7 +4,8 @@ import { bazaEst } from '@/lib/server/db';
 import { vypushchennyeSertifikaty } from '@/lib/server/views';
 import { yazykSotrudnika } from '@/lib/server/yazyk';
 import { slovar, type Klyuch } from '@/lib/admin/slova';
-import { imyaTarifa, srokKratkoDlyaSotrudnika } from '@/lib/plans';
+import { imyaTarifaIz, srokKratkoDlyaSotrudnika } from '@/lib/plans';
+import { imenaTarifov } from '@/lib/server/imena';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,7 @@ export default async function AdminCertificates() {
   if (s.role !== 'admin') return <p className="err">{t('o.only_admin')}</p>;
 
   const rows = await vypushchennyeSertifikaty();
+  const imena = await imenaTarifov();
   const kogda = y === 'en' ? 'en-GB' : 'ru-RU';
   const den = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(kogda) : '—');
   const sostoyanie: Record<string, Klyuch> = { used: 's.used', expired: 's.expired' };
@@ -60,7 +62,7 @@ export default async function AdminCertificates() {
                 <tr key={r.id}>
                   <td>…{r.tail}</td>
                   <td>
-                    {imyaTarifa(r.planId, y === 'en')} ·{' '}
+                    {imyaTarifaIz(imena, r.planId, y === 'en')} ·{' '}
                     {srokKratkoDlyaSotrudnika(r.period, y === 'en')}
                   </td>
                   <td>

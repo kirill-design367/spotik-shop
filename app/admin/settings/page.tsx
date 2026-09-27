@@ -4,7 +4,8 @@ import { ktoSotrudnik } from '@/lib/server/auth';
 import { bazaEst, zapros } from '@/lib/server/db';
 import { katalogPoUmolchaniyu, skidkiIVyklyuchennye, SROKI } from '@/lib/server/catalog';
 import { srokSertifikataDney } from '@/lib/server/settings';
-import { DARIMYE, imyaTarifa, srokDlyaSotrudnika } from '@/lib/plans';
+import { DARIMYE, imyaTarifaIz, srokDlyaSotrudnika } from '@/lib/plans';
+import { imenaTarifov } from '@/lib/server/imena';
 import { yazykSotrudnika } from '@/lib/server/yazyk';
 import { slovar } from '@/lib/admin/slova';
 
@@ -31,6 +32,16 @@ export default async function AdminSettings() {
      у сертификата больше не бывает, он стоит ровно столько, сколько
      подаренный тариф. Осталась только настройка срока жизни кода. */
   const { skidki, vyklyucheny } = await skidkiIVyklyuchennye();
+  const imena = await imenaTarifov();
+  /* ⚠️ ПОЛЯ ЗАПОЛНЕНЫ ДЕЙСТВУЮЩИМ ИМЕНЕМ, А НЕ ПУСТЫЕ. Пустое поле
+     читалось бы как «имени нет», а имя есть всегда — либо своё,
+     либо из кода. Очистить оба и сохранить — это и есть «вернуть
+     как было», и так сказано в подсказке. */
+  const plany = DARIMYE.map((p) => ({
+    id: p.id,
+    name: imena[p.id]?.name ?? p.name,
+    nameEn: imena[p.id]?.nameEn ?? p.nameEn,
+  }));
   const rows: Stroka[] = [];
   for (const p of DARIMYE) {
     for (const s2 of SROKI) {
@@ -43,7 +54,7 @@ export default async function AdminSettings() {
         /* ⚠️ НАЗВАНИЕ ТАРИФА И СРОК — НАДПИСИ, А НЕ ДАННЫЕ ЗАКАЗА
            (закон 40 с тридцать девятой итерации): в английской
            админке они английские. */
-        planName: imyaTarifa(p.id, y === 'en'),
+        planName: imyaTarifaIz(imena, p.id, y === 'en'),
         period: s2.key,
         label: srokDlyaSotrudnika(s2.key, y === 'en'),
         rub: kop === undefined ? '' : String(kop / 100),
@@ -64,5 +75,5 @@ export default async function AdminSettings() {
     }
   }
 
-  return <Prices rows={rows} days={await srokSertifikataDney()} y={y} />;
+  return <Prices rows={rows} plany={plany} days={await srokSertifikataDney()} y={y} />;
 }

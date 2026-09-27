@@ -1,5 +1,5 @@
 import Hero from '@/components/sections/Hero';
-import Pricing, { type CenyTarifov, type SkidkiTarifov } from '@/components/sections/Pricing';
+import Pricing, { type CenyTarifov, type ImenaKart, type SkidkiTarifov } from '@/components/sections/Pricing';
 import Marquee from '@/components/mid/Marquee';
 import HowItWorks from '@/components/sections/HowItWorks';
 import Faq from '@/components/sections/Faq';
@@ -36,6 +36,12 @@ export default async function Page() {
      ОТДЕЛЬНО и нужна ровно одному месту — зачёркнутой строке
      на карточке. */
   const skidki: SkidkiTarifov = {};
+  /* ⚠️ НАЗВАНИЯ ТОЖЕ ЕДУТ ИЗ КАТАЛОГА, А НЕ ИЗ `lib/plans.ts`.
+     С сорок второй итерации их правят в админке, то есть это данные,
+     и второго источника у них быть не должно: пока карточка читала
+     имя прямо из `DARIMYE`, переименованный тариф менялся везде,
+     кроме главной (Р-142). */
+  const imena: ImenaKart = {};
   for (const t of spisok) {
     const m: Partial<Record<PeriodKey, number>> = {};
     const sk: Partial<Record<PeriodKey, { bylo: number; doDaty: string }>> = {};
@@ -44,6 +50,7 @@ export default async function Page() {
       if (c.bezSkidki && c.doDaty) sk[c.period] = { bylo: c.bezSkidki / 100, doDaty: c.doDaty };
     }
     ceny[t.id] = m;
+    imena[t.id] = { name: t.name, short: t.short };
     if (Object.keys(sk).length) skidki[t.id] = sk;
   }
 
@@ -51,7 +58,7 @@ export default async function Page() {
     <>
       <main id="main" tabIndex={-1}>
         <Hero />
-        <Pricing ceny={ceny} skidki={skidki} />
+        <Pricing ceny={ceny} skidki={skidki} imena={imena} />
         <Marquee items={PERKS} />
         <HowItWorks />
         <Faq />

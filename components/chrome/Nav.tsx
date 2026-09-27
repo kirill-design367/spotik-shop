@@ -346,14 +346,14 @@ export default function Nav() {
         )}
       </nav>
 
+      {/* ⚠️ ПОЧТЫ И ТЕЛЕФОНА ЗДЕСЬ БОЛЬШЕ НЕТ — постановка сорок
+          второй итерации. Реквизиты со связью остались в футере
+          (за ссылкой «Реквизиты», Р-124) и в тексте оферты, то есть
+          обязательная часть публичной оферты на месте; в меню они
+          были третьим местом одного и того же. Слово внизу накладки
+          остаётся: оно знак, а не контакт. */}
       <div className="menu__foot shell">
         <WordmarkMark className="menu__mark" />
-        <p className="menu__contacts">
-          <a href="mailto:lev.menashe@yandex.ru">lev.menashe@yandex.ru</a>
-          <a href="tel:+79503738046" className="tnum">
-            +7 950 373-80-46
-          </a>
-        </p>
       </div>
     </div>
   );

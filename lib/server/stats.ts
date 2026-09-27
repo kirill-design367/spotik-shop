@@ -14,23 +14,45 @@
  * сумма и вовсе нулевая: деньги взяли, когда покупали сертификат
  * (Р-93), — и они уже посчитаны там.
  *
- * ⚠️ ПЕРИОД ОТСЧИТЫВАЕТСЯ ОТ `now()` НАЗАД, А НЕ ОТ ПОЛУНОЧИ.
+ * ⚠️ БЫСТРЫЙ ПЕРИОД ОТСЧИТЫВАЕТСЯ ОТ `now()` НАЗАД, А НЕ ОТ ПОЛУНОЧИ.
  * «За сутки» — это последние 24 часа, и такой счёт не зависит
  * от часового пояса базы вовсе. Календарные сутки потребовали бы
  * знать, в каком поясе живёт заказчик, а сервер стоит в UTC.
+ *
+ * ⚠️ А ВЫБРАННЫЕ ДАТЫ — ИМЕННО КАЛЕНДАРНЫЕ, И ЭТО ДРУГОЕ. Человек,
+ * набравший «с 12.09 по 12.09», спрашивает про ЭТОТ ДЕНЬ целиком,
+ * а не про сутки от текущего часа: граница идёт `>= дата`
+ * и `< дата + 1`, то есть последний день входит полностью.
+ *
+ * ⚠️ ПЕРИОД ОДИН НА ВЕСЬ ЭКРАН (сорок вторая итерация). Прежде
+ * первая таблица показывала сутки, неделю и месяц сразу, а таблицы
+ * тарифов и источников молча считались за 30 дней — два разных
+ * периода на одной странице, и второй из них не был назван нигде.
+ * Теперь их один, он выбирается и он написан.
  */
 
 import { odna, zapros } from './db';
 
-export type StrokaPerioda = { kluch: 'day' | 'week' | 'month'; zakazov: number; vyruchkaKop: number };
 /* ⚠️ ТАРИФ И СРОК СЫРЫЕ: переводит их страница, зная свой язык. */
 export type StrokaTarifa = { planId: string; period: number; zakazov: number; vyruchkaKop: number };
 export type StrokaIstochnika = { istochnik: string | null; zakazov: number; dolya: number };
 
+export type BystryPeriod = 'day' | 'week' | 'month';
+
+/** Быстрый период или пара календарных дат. */
+export type Period = { vid: BystryPeriod } | { vid: 'daty'; ot: string; do: string | null };
+
+export const BYSTRYE: { kluch: BystryPeriod; sql: string }[] = [
+  { kluch: 'day', sql: '1 day' },
+  { kluch: 'week', sql: '7 days' },
+  { kluch: 'month', sql: '30 days' },
+];
+
 export type Svodka = {
-  periody: StrokaPerioda[];
+  zakazov: number;
+  vyruchkaKop: number;
   vOcheredi: number;
-  /** Минуты. `null` — выполненных заказов ещё не было. */
+  /** Минуты. `null` — выполненных заказов за период не было. */
   srednyayaMinut: number | null;
   tarify: StrokaTarifa[];
   sertifikatovKupleno: number;
@@ -38,26 +60,49 @@ export type Svodka = {
   istochniki: StrokaIstochnika[];
 };
 
-const PERIODY = [
-  { kluch: 'day' as const, sql: '1 day' },
-  { kluch: 'week' as const, sql: '7 days' },
-  { kluch: 'month' as const, sql: '30 days' },
-];
+/**
+ * Разобрать период из адреса.
+ *
+ * ⚠️ ЧУЖОЕ ЗНАЧЕНИЕ ПАДАЕТ В УМОЛЧАНИЕ, А НЕ РОНЯЕТ СТРАНИЦУ. Период
+ * приходит из адресной строки, то есть его пишет кто угодно; «месяц»
+ * тут безопасное умолчание, и оно же сохраняет прежний смысл таблиц
+ * тарифов и источников (они считались за 30 суток).
+ */
+export function ponyatPeriod(vid: string, ot: string, doDaty: string): Period {
+  const data = /^\d{4}-\d{2}-\d{2}$/;
+  if (data.test(ot)) return { vid: 'daty', ot, do: data.test(doDaty) ? doDaty : null };
+  const b = BYSTRYE.find((x) => x.kluch === vid);
+  return { vid: b ? b.kluch : 'month' };
+}
 
-export async function svodka(): Promise<Svodka> {
-  const periody: StrokaPerioda[] = [];
-  for (const p of PERIODY) {
-    /* ⚠️ ИНТЕРВАЛ ПОДСТАВЛЯЕТСЯ ПАРАМЕТРОМ, А НЕ СКЛЕЙКОЙ. Строка тут
-       своя и безопасная, но склейка в SQL — привычка, которая однажды
-       встретит чужую строку. */
-    const r = await odna<{ n: string; kop: string }>(
-      `select count(*)::text as n, coalesce(sum(money_kop), 0)::text as kop
-         from shop_order
-        where paid_at is not null and paid_at > now() - ($1)::interval`,
-      [p.sql],
-    );
-    periody.push({ kluch: p.kluch, zakazov: Number(r?.n ?? 0), vyruchkaKop: Number(r?.kop ?? 0) });
+/**
+ * Границы периода одним условием.
+ *
+ * ⚠️ ИНТЕРВАЛ И ДАТЫ ПОДСТАВЛЯЮТСЯ ПАРАМЕТРАМИ, А НЕ СКЛЕЙКОЙ. Строки
+ * тут свои и безопасные, но склейка в SQL — привычка, которая однажды
+ * встретит чужую строку. Имя колонки — единственное, что попадает
+ * в текст запроса, и оно приходит из этого же файла, а не снаружи.
+ */
+function granicy(p: Period, kolonka: 'paid_at' | 'closed_at' = 'paid_at'): { uslovie: string; params: string[] } {
+  if (p.vid === 'daty') {
+    return {
+      uslovie: `${kolonka} >= $1::date and ${kolonka} < ($2::date + 1)`,
+      params: [p.ot, p.do ?? p.ot],
+    };
   }
+  const sql = BYSTRYE.find((x) => x.kluch === p.vid)?.sql ?? '30 days';
+  return { uslovie: `${kolonka} > now() - ($1)::interval`, params: [sql] };
+}
+
+export async function svodka(p: Period): Promise<Svodka> {
+  const g = granicy(p);
+
+  const itog = await odna<{ n: string; kop: string }>(
+    `select count(*)::text as n, coalesce(sum(money_kop), 0)::text as kop
+       from shop_order
+      where paid_at is not null and ${g.uslovie}`,
+    g.params,
+  );
 
   const och = await odna<{ n: string }>(
     `select count(*)::text as n from shop_order where status in ('paid', 'in_work')`,
@@ -66,20 +111,23 @@ export async function svodka(): Promise<Svodka> {
   /* Среднее время выполнения: от оплаты до закрытия. Незакрытые
      заказы в счёт не идут вовсе — у них этого времени ещё нет,
      а подставлять «сейчас» значило бы считать незаконченную работу
-     законченной. */
+     законченной. Период здесь берётся по ЗАКРЫТИЮ: вопрос «сколько
+     мы делали заказы за эти дни», а не «когда их оплатили». */
+  const gz = granicy(p, 'closed_at');
   const sr = await odna<{ min: string | null }>(
     `select round(avg(extract(epoch from (closed_at - paid_at)) / 60))::text as min
        from shop_order
-      where status = 'done' and paid_at is not null and closed_at is not null
-        and closed_at > now() - interval '30 days'`,
+      where status = 'done' and paid_at is not null and closed_at is not null and ${gz.uslovie}`,
+    gz.params,
   );
 
   const potarif = await zapros<{ plan_id: string; period: number; n: string; kop: string }>(
     `select plan_id, period, count(*)::text as n, coalesce(sum(money_kop), 0)::text as kop
        from shop_order
-      where paid_at is not null and paid_at > now() - interval '30 days'
+      where paid_at is not null and ${g.uslovie}
       group by plan_id, period
       order by count(*) desc, plan_id`,
+    g.params,
   );
   const tarify: StrokaTarifa[] = potarif.map((r) => ({
     planId: r.plan_id,
@@ -88,6 +136,12 @@ export async function svodka(): Promise<Svodka> {
     vyruchkaKop: Number(r.kop),
   }));
 
+  /* ⚠️ СЕРТИФИКАТЫ СЧИТАЮТСЯ ЗА ВСЁ ВРЕМЯ, И ЭТО НАЗВАНО НА ЭКРАНЕ.
+     «Куплено» и «активировано» — это остаток, а не поток: код живёт
+     год и активируется когда угодно, поэтому «за неделю активировано
+     ноль» не значит ничего. Считать их за период можно, но тогда две
+     величины на одном экране мерили бы разное, и на экране это
+     не было бы видно. */
   const sert = await odna<{ kupleno: string; aktivirovano: string }>(
     `select count(*)::text as kupleno,
             count(*) filter (where used_at is not null)::text as aktivirovano
@@ -100,9 +154,10 @@ export async function svodka(): Promise<Svodka> {
   const ist = await zapros<{ utm_source: string | null; n: string }>(
     `select utm_source, count(*)::text as n
        from shop_order
-      where paid_at is not null and paid_at > now() - interval '30 days'
+      where paid_at is not null and ${g.uslovie}
       group by utm_source
       order by count(*) desc`,
+    g.params,
   );
   const vsego = ist.reduce((a, r) => a + Number(r.n), 0);
   const istochniki: StrokaIstochnika[] = ist.map((r) => ({
@@ -114,7 +169,8 @@ export async function svodka(): Promise<Svodka> {
   }));
 
   return {
-    periody,
+    zakazov: Number(itog?.n ?? 0),
+    vyruchkaKop: Number(itog?.kop ?? 0),
     vOcheredi: Number(och?.n ?? 0),
     srednyayaMinut: sr?.min == null ? null : Number(sr.min),
     tarify,

@@ -31,6 +31,21 @@ export type CenyTarifov = Record<string, Partial<Record<PeriodKey, number>>>;
 export type SkidkiTarifov = Record<string, Partial<Record<PeriodKey, { bylo: number; doDaty: string }>>>;
 
 /**
+ * Названия тарифов — те, что задал администратор.
+ *
+ * ⚠️ ОНИ ПРИХОДЯТ СВЕРХУ ТОЧНО ТАК ЖЕ, КАК ЦЕНЫ, И ЭТО НЕ СИММЕТРИЯ
+ * РАДИ СИММЕТРИИ. Состав тарифов лежит в `lib/plans.ts` и правится
+ * кодом; название с сорок второй итерации правится в админке, значит
+ * это ДАННЫЕ, и второго их источника быть не должно. Пока имена
+ * читались прямо из `DARIMYE`, переименованный тариф менялся везде,
+ * кроме главной, — и заметить это можно было только глазами (Р-142).
+ *
+ * Базы нет — приходит `undefined`, и работают имена из кода: лендинг
+ * обязан собираться на раннере, где PostgreSQL нет вовсе.
+ */
+export type ImenaKart = Record<string, { name: string; short: string }>;
+
+/**
  * БЛОК ТАРИФОВ — КАРТЫ ПО ЧИСЛУ ВКЛЮЧЁННЫХ ТАРИФОВ.
  *
  * ⚠️ СЕТКИ 2×2 БОЛЬШЕ НЕТ, И СЕРТИФИКАТА В НЕЙ ТОЖЕ (тридцать шестая
@@ -54,16 +69,25 @@ export type SkidkiTarifov = Record<string, Partial<Record<PeriodKey, { bylo: num
  * коротком сроке: человек сначала видит цену входа, а уже потом
  * выбирает срок подлиннее и видит, сколько экономит.
  */
-export default function Pricing({ ceny, skidki }: { ceny?: CenyTarifov; skidki?: SkidkiTarifov }) {
+export default function Pricing({
+  ceny,
+  skidki,
+  imena,
+}: {
+  ceny?: CenyTarifov;
+  skidki?: SkidkiTarifov;
+  imena?: ImenaKart;
+}) {
   /* ⚠️ ТАРИФ БЕЗ ЕДИНОЙ ЦЕНЫ В СЕТКУ НЕ ПОПАДАЕТ ВОВСЕ. Это и есть
      «тариф, скрытый на всех сроках, не показывается нигде»: выключают
      его в админке снятием всех цен или всех ячеек доступности. */
   const tarify: KartaTarifa[] = DARIMYE.map((p) => {
     const ceny_ = ceny?.[p.id] ?? p.prices;
+    const svoyo = imena?.[p.id];
     return {
       id: p.id,
-      name: p.name,
-      short: p.short ?? p.name,
+      name: svoyo?.name ?? p.name,
+      short: svoyo?.short ?? p.short ?? p.name,
       ceny: PERIODS.flatMap((s) => {
         const rub = ceny_[s.key];
         if (typeof rub !== 'number') return [];

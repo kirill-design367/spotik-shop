@@ -5,6 +5,7 @@ import { zakazDlyaAdminki } from '@/lib/server/views';
 import { bazaEst } from '@/lib/server/db';
 import { yazykSotrudnika } from '@/lib/server/yazyk';
 import { slovar } from '@/lib/admin/slova';
+import { imenaTarifov } from '@/lib/server/imena';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,13 +18,14 @@ export default async function AdminOrder({ params }: { params: Promise<{ id: str
   const { id } = await params;
   const z = await zakazDlyaAdminki(Number(id), s.id, s.role === 'admin');
   if (!z) return <p className="err">{t('o.no_order')}</p>;
+  const imena = await imenaTarifov();
   return (
     <>
       <h1>{t('z.h', { n: z.id })}</h1>
       <p className="hint">
         <a href="/admin/">{t('z.back')}</a>
       </p>
-      <OrderWork z={z} staffId={s.id} y={y} />
+      <OrderWork z={z} staffId={s.id} y={y} imena={imena} />
     </>
   );
 }

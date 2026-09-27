@@ -4,6 +4,7 @@ import { useActionState } from 'react';
 import {
   adminSetCertDays,
   adminSetDiscount,
+  adminSetPlanName,
   adminSetPrice,
   adminToggleCell,
   type OtvetA,
@@ -37,12 +38,26 @@ export type Stroka = {
  * строка означала бы два числа на одну цену, и они разошлись бы
  * на первой же правке.
  */
-export default function Prices({ rows, days, y }: { rows: Stroka[]; days: number; y: Yazyk }) {
+export type StrokaTarifa = { id: string; name: string; nameEn: string };
+
+export default function Prices({
+  rows,
+  plany,
+  days,
+  y,
+}: {
+  rows: Stroka[];
+  /** Тарифы с ДЕЙСТВУЮЩИМИ именами: своими или из кода. */
+  plany: StrokaTarifa[];
+  days: number;
+  y: Yazyk;
+}) {
   const t = slovar(y);
   const [p, setPrice, busy1] = useActionState<OtvetA, FormData>(adminSetPrice, {});
   const [d, setDays, busy2] = useActionState<OtvetA, FormData>(adminSetCertDays, {});
   const [sk, setSkidka, busy3] = useActionState<OtvetA, FormData>(adminSetDiscount, {});
   const [gr, setYacheyka, busy4] = useActionState<OtvetA, FormData>(adminToggleCell, {});
+  const [im, setImya, busy5] = useActionState<OtvetA, FormData>(adminSetPlanName, {});
   const otkuda: Record<Stroka['iz'], Klyuch | null> = { baza: 'c.from_db', umolchanie: 'c.from_default', net: null };
 
   return (
@@ -156,6 +171,51 @@ export default function Prices({ rows, days, y }: { rows: Stroka[]; days: number
                     <input type="hidden" name="on" value={r.prodayom ? '0' : '1'} />
                     <button type="submit" className="btn btn--ghost btn--sm" disabled={busy4}>
                       {r.prodayom ? t('c.off') : t('c.on')}
+                    </button>
+                  </form>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ── НАЗВАНИЯ ТАРИФОВ ────────────────────────────────────────
+          Сорок вторая итерация: русское имя видит КЛИЕНТ (главная,
+          сертификаты, оформление, кабинет, письма), английское —
+          только сотрудники (бот и английская админка, закон 40).
+
+          ⚠️ РУССКОЕ ИМЯ СТОИТ И НА КАРТОЧКЕ ТАРИФА. Второго,
+          короткого имени у заданного человеком названия нет вовсе,
+          и выдумать его нам неоткуда: оставь мы на карточке прежнее
+          слово — админ переименовал бы тариф, а главная осталась бы
+          с тем, что было (Р-142). Отсюда просьба в подсказке держать
+          имя коротким. */}
+      <h2>{t('c.names_h')}</h2>
+      <p className="hint">{t('c.names_hint')}</p>
+      {im.error ? <p className="err">{t(im.error)}</p> : null}
+      {im.ok ? <p className="ok">{t(im.ok, im.polya)}</p> : null}
+      <div className="ad__scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>{t('t.plan')}</th>
+              <th>{t('c.name_ru')}</th>
+              <th>{t('c.name_en')}</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {plany.map((pl) => (
+              <tr key={`im-${pl.id}`}>
+                <td>{pl.id}</td>
+                <td colSpan={3}>
+                  <form action={setImya} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <input type="hidden" name="plan" value={pl.id} />
+                    <input type="text" name="name" defaultValue={pl.name} style={{ minWidth: 180 }} />
+                    <input type="text" name="nameEn" defaultValue={pl.nameEn} style={{ minWidth: 180 }} />
+                    <button type="submit" className="btn btn--sm" disabled={busy5}>
+                      {t('o.save')}
                     </button>
                   </form>
                 </td>

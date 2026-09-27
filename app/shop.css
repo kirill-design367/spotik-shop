@@ -80,6 +80,44 @@
 .page > .panel__note--plate,
 .ozhivayet > .panel__note--plate { background: var(--surface); margin: 0 0 var(--ritm-lg); }
 
+/* Строка, за которой сразу идёт кнопка во всю ширину: у `.panel__note`
+   нижнего поля нет, и кнопка прижималась к ней вплотную. Величина —
+   вторая ступень ритма раздела, своего числа не заводится (Р-133). */
+.panel__note--pered-knopkoy { margin-bottom: var(--ritm-lg); }
+
+/* ── ПЛАШКА ПРО РАБОЧЕЕ ВРЕМЯ ────────────────────────────────────────────
+   Сорок вторая итерация: «сделать яркой, чтобы бросалась в глаза:
+   зелёный акцент и иконка часов, в стиле сайта. Текст не менять».
+
+   ⚠️ ЗЕЛЁНОЕ ЗДЕСЬ АКЦЕНТ, А НЕ ПОЛЕ. Заливка — зелёный, подмешанный
+   к `--ink` на шестнадцать процентов, то есть тёмная подложка
+   с зелёным оттенком; сплошное зелёное поле в разделе читалось бы
+   как вторая зелёная зона в кадре и спорило бы с кнопкой оплаты.
+   Яркость даёт КАЙМА и ЗНАК, а не площадь.
+
+   ⚠️ ТЕКСТ БЕЛЫЙ, И ЭТО ЗАМЕР, А НЕ ВКУС. На этой подложке `--dim`
+   (#B3B3B3) даёт около 7:1, белый — около 15:1; плашка обязана
+   бросаться в глаза, а приглушённый текст на ней читался бы как
+   очередная подсказка. Седьмого цвета при этом не появилось:
+   и зелёный, и белый — из палитры.
+
+   ⚠️ ЗНАК РИСУЕМ САМИ, инлайновым SVG: чужих иконочных шрифтов
+   в проекте нет ни одного (закон 15 про покупные ассеты и правило
+   из `Polya.tsx`). */
+.plashka-chasy {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: color-mix(in srgb, var(--green) 16%, var(--ink));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 62%, transparent);
+  border-radius: var(--ui-r);
+  padding: 14px 16px;
+  margin: 0 0 var(--ritm-lg);
+  color: #fff;
+  font-size: 14px;
+}
+.plashka-chasy svg { flex: none; color: var(--green); }
+
 /* ── ВЫБОР ТАРИФА КАРТАМИ (страница сертификатов) ───────────────────────
    Тридцать девятая итерация: «Приведи его к виду тарифов на главной».
    Сами карты и плашки срока — общий компонент с лендингом и его же
@@ -169,6 +207,51 @@
 /* Подсказка стоит под полем ЗАРАНЕЕ, а не после отказа: правило
    пароля человек обязан узнать до того, как придумает его. */
 .field__hint { margin: 6px 0 0; font-size: 12px; line-height: 1.45; color: var(--dim-2); }
+
+/* ── ПОДСКАЗКА ПОЧТ ИЗ ПРОШЛЫХ ЗАКАЗОВ ──────────────────────────────────
+   Сорок вторая итерация: встал в поле почты на продлении — под полем
+   плавно выезжает список почт, которые человек уже указывал.
+
+   ⚠️ ВЫСОТА НЕ МЕРЯЕТСЯ: список схлопывается `grid-template-rows`
+   от 0fr к 1fr — тот же приём, что у «Изменить» и у карточки заказа
+   в кабинете (Р-126, Р-132). Ни одного чтения геометрии из JS.
+
+   ⚠️ СВОИХ ЧИСЕЛ РАДИУСА ЗДЕСЬ НЕТ: поверхность берёт `--ui-r`,
+   как всё в разделе (Р-111). */
+.pochty {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 260ms var(--ease);
+}
+.pochty[data-on] { grid-template-rows: 1fr; }
+.pochty__nutro { overflow: hidden; min-height: 0; }
+.pochty[data-on] .pochty__nutro {
+  padding: 8px;
+  margin: 8px 0 0;
+  background: var(--ink);
+  border-radius: var(--ui-r);
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+.pochty__z { margin: 0 0 6px; font-size: 12px; color: var(--dim-2); }
+.pochty__p {
+  display: block;
+  width: 100%;
+  text-align: left;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--ui-r);
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.pochty__p:hover { background: color-mix(in srgb, var(--green) 18%, transparent); }
+@media (prefers-reduced-motion: reduce) {
+  .pochty { transition: none; }
+}
 /* Отказ — тот же кегль, но цветом и с тяжелее набранной строкой.
    Красная плашка `err` здесь не годится: она про весь экран,
    а это про одно поле. */
@@ -601,6 +684,23 @@
 .cab__pusto-knopki { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
 .cab__sert-verh { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 14px; }
 .order-card__knopki { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+/* Кнопки в подвале страницы оплаты: «В личный кабинет» и «Вернуться
+   на сайт». Вторая появилась в сорок второй итерации — на странице
+   Робокассы своей кнопки поставить нельзя, и вернуться человеку
+   должно быть чем и без кнопки «назад» браузера. */
+.page__knopki { display: flex; gap: 10px; flex-wrap: wrap; margin-top: var(--ritm-lg); }
+
+/* Почта аккаунта на странице восстановления: крупно и выделяемо.
+   Радиус и подложка — общие токены раздела (Р-111), своих чисел нет. */
+.pochta-krupno {
+  margin: 0 0 var(--ritm);
+  padding: 12px 14px;
+  background: var(--ink);
+  border-radius: var(--ui-r);
+  font-size: clamp(1rem, 4.4vw, 1.25rem);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
 .cred__stroka { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .cert__stroka { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
@@ -704,7 +804,8 @@
 /* Плашка про рабочее время — не панель, но приезжает тем же ходом
    и в свою очередь: между первой панелью и второй. `nth-of-type`
    ниже считает ДИВЫ, и абзац их счёт не сбивает. */
-.ozhivayet > .panel__note--plate { animation: panel-vhod 420ms var(--ease) 75ms both; }
+.ozhivayet > .panel__note--plate,
+.ozhivayet > .plashka-chasy { animation: panel-vhod 420ms var(--ease) 75ms both; }
 .ozhivayet > .panel:nth-of-type(1) { animation-delay: 40ms; }
 .ozhivayet > .panel:nth-of-type(2) { animation-delay: 110ms; }
 .ozhivayet > .panel:nth-of-type(3) { animation-delay: 180ms; }
@@ -724,6 +825,6 @@
 @media (prefers-reduced-motion: reduce) {
   .svorach { transition: none; }
   .galka__krug, .galka__put { animation: none; stroke-dashoffset: 0; }
-  .ozhivayet > .panel, .ozhivayet > .panel__note--plate, .summa { animation: none; }
+  .ozhivayet > .panel, .ozhivayet > .panel__note--plate, .ozhivayet > .plashka-chasy, .summa { animation: none; }
   .shkala__tochka { transition: none; }
 }

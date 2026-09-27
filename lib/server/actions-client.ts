@@ -32,6 +32,21 @@ export type Otvet = {
   shag?: string;
   email?: string;
   /**
+   * Куда уйти БРАУЗЕРОМ. Только внешний адрес платёжной формы.
+   *
+   * ⚠️ НА РОБОКАССУ УВОДИТ КЛИЕНТ, А НЕ `redirect()` ИЗ ДЕЙСТВИЯ,
+   * и это починка настоящей поломки: нажатие «назад» со страницы
+   * оплаты роняло сайт «Application error: a client-side exception
+   * has occurred» (Р-143). Серверное действие не умеет уходить
+   * на чужой домен обычным перенаправлением — оно отдаёт адрес
+   * роутеру Next, и тот сам двигает `window.location`, оставляя
+   * в истории запись, которой на возврате уже нечего показать.
+   * Адрес, отданный сюда, переводит навигацию в обычный
+   * `location.assign` с обычной страницы оформления: в истории
+   * остаётся GET-запрос страницы, и возврат открывает её как всегда.
+   */
+  kuda?: string;
+  /**
    * Что подарено по проверенному коду сертификата. Приходит на шаге
    * «код принят»: до него мы не знаем ни тарифа, ни числа участников,
    * а форма активации обязана показать ровно столько полей, сколько
@@ -195,17 +210,26 @@ export async function deystvieOformit(_prosh: Otvet, fd: FormData): Promise<Otve
   if (itog.kDoplate === 0) redirect(`/cabinet/?order=${itog.zakaz}`);
   const schet = await vystavitSchet(itog.zakaz, kto.userId);
   if (!schet.ok) return { oshibka: `${schet.pochemu} Заказ № ${itog.zakaz} сохранён и ждёт оплаты в кабинете.` };
-  redirect(schet.adres);
+  /* ⚠️ АДРЕС ОТДАЁТСЯ НАРУЖУ, А НЕ `redirect(schet.adres)`: уходить
+     на чужой домен обязан сам браузер — см. `kuda` выше и Р-143. */
+  return { kuda: schet.adres };
 }
 
-/** Доплатить по уже созданному заказу — из кабинета. */
-export async function deystvieOplatit(fd: FormData): Promise<void> {
+/**
+ * Доплатить по уже созданному заказу — из кабинета.
+ *
+ * ⚠️ ТОТ ЖЕ ПОРЯДОК, ЧТО У ОФОРМЛЕНИЯ: адрес платёжной формы уходит
+ * наружу, а браузер идёт туда сам. Прежняя редакция делала
+ * `redirect(schet.adres)` и ломала возврат назад ровно так же
+ * (Р-143) — а из кабинета возвращаются чаще, чем из оформления.
+ */
+export async function deystvieOplatit(_prosh: Otvet, fd: FormData): Promise<Otvet> {
   const kto = await ktoKlient();
-  if (!kto) redirect('/cabinet/');
+  if (!kto) return { oshibka: 'Сначала войдите по коду из письма.' };
   const zakaz = Number(fd.get('order') ?? 0);
   const schet = await vystavitSchet(zakaz, kto.userId);
-  if (!schet.ok) redirect('/cabinet/?error=pay');
-  redirect(schet.adres);
+  if (!schet.ok) return { oshibka: schet.pochemu };
+  return { kuda: schet.adres };
 }
 
 export async function deystvieOtmenitSvoy(fd: FormData): Promise<void> {

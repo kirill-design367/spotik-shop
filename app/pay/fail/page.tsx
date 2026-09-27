@@ -20,7 +20,12 @@ export default function PayFail() {
         Если у вас включён VPN, выключите его на время оплаты — банк может не
         пропустить платёж.
       </p>
-      <a className="btn" href="/cabinet/">В личный кабинет</a>
+      {/* Та же пара кнопок, что на успешной странице: вернуться
+          на сайт со страницы оплаты нечем, кроме этой ссылки. */}
+      <div className="page__knopki">
+        <a className="btn" href="/cabinet/">В личный кабинет</a>
+        <a className="btn btn--ghost" href="/">Вернуться на сайт</a>
+      </div>
     </main>
   );
 }

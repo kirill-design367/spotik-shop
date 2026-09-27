@@ -12,8 +12,9 @@
  * в сервер они домножаются на сто ОДИН раз, здесь.
  */
 
-import { DARIMYE, PERIODS, type Plan, type PeriodKey } from '@/lib/plans';
+import { DARIMYE, PERIODS, type ImenaTarifov, type Plan, type PeriodKey } from '@/lib/plans';
 import { tikho, zapros } from './db';
+import { imenaTarifov } from './imena';
 
 /**
  * Цена на срок.
@@ -98,7 +99,11 @@ export async function katalog(): Promise<TarifSCenami[]> {
     [] as { plan_id: string; period: number }[],
   );
 
-  return DARIMYE.map((p) => svesti(p, ceny.get(p.id), skidki, vyklyucheny));
+  /* ⚠️ ИМЯ ТАРИФА ТЕПЕРЬ ТОЖЕ МОЖЕТ ПРИЙТИ ИЗ БАЗЫ, и накладывается
+     оно ровно так же, как цена: недоступна база — работает имя
+     из кода (Р-142). */
+  const imena = await imenaTarifov();
+  return DARIMYE.map((p) => svesti(p, ceny.get(p.id), skidki, vyklyucheny, imena));
 }
 
 /** Скидки и выключенные пары — для админки, без наложения на цены. */
@@ -150,7 +155,8 @@ export async function katalogPolny(): Promise<TarifSCenami[]> {
     m.set(Number(r.period), Number(r.price_kop));
     ceny.set(r.plan_id, m);
   }
-  return DARIMYE.map((p) => svesti(p, ceny.get(p.id)));
+  const imena = await imenaTarifov();
+  return DARIMYE.map((p) => svesti(p, ceny.get(p.id), [], [], imena));
 }
 
 function svesti(
@@ -158,6 +164,7 @@ function svesti(
   ceny: Map<number, number> | undefined,
   skidki: { plan_id: string; period: number; price_kop: string; until: Date }[] = [],
   vyklyucheny: { plan_id: string; period: number }[] = [],
+  imena: ImenaTarifov | null = null,
 ): TarifSCenami {
   const spisok: Cena[] = [];
   for (const s of PERIODS) {
@@ -177,10 +184,18 @@ function svesti(
     }
     spisok.push({ period: s.key, kop });
   }
+  /* ⚠️ СВОЁ ИМЯ ЗАМЕНЯЕТ И `short` — ТО, ЧТО СТОИТ НА КАРТОЧКЕ.
+     У имени, заданного человеком, второй, короткой формы нет вовсе,
+     и выдумать её нам неоткуда: подставь мы сюда `p.short`, админ
+     переименовал бы тариф, а карточка на главной осталась бы
+     с прежним словом — второй источник одного названия (Р-142).
+     Цена этому названа в отчёте: длинное имя карточка ужимает
+     кеглем сама, но на 320 px места мало. */
+  const svoyo = imena?.[p.id];
   return {
     id: p.id,
-    name: p.name,
-    short: p.short ?? p.name,
+    name: svoyo?.name ?? p.name,
+    short: svoyo?.name ?? p.short ?? p.name,
     people: p.people,
     note: p.note,
     gift: Boolean(p.gift),

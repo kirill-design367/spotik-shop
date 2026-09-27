@@ -6,7 +6,7 @@ import { CELI } from '@/lib/metrika';
 import LoginBox from '@/components/shop/LoginBox';
 import { ktoKlient } from '@/lib/server/auth';
 import { katalog, naytiTarif, srokPolno } from '@/lib/server/catalog';
-import { balans, pochtyZakaza } from '@/lib/server/views';
+import { balans, pochtyKlienta, pochtyZakaza } from '@/lib/server/views';
 import { bazaEst } from '@/lib/server/db';
 import { rabocheeVremya } from '@/lib/chasy';
 
@@ -91,6 +91,12 @@ export default async function Checkout({
   const prodlit = Number(odin('renew'));
   const pochty = kto && prodlit > 0 ? await pochtyZakaza(kto.userId, prodlit) : [];
 
+  /* ⚠️ ПОДСКАЗКА ПОЧТ — ТОТ ЖЕ ЧИТАТЕЛЬ, ЧТО У КАБИНЕТА: владелец
+     и его собственные адреса (закон 35). Ни новой двери, ни второго
+     места расшифровки не завелось. Не вошёл — списка нет вовсе,
+     и спрашивать базу незачем. */
+  const podskazki = kto ? await pochtyKlienta(kto.userId) : [];
+
   /* ⚠️ В ФОРМУ ЕДЕТ ВЕСЬ КАТАЛОГ, А НЕ ОДИН ТАРИФ (тридцать седьмая
      итерация). Постановка: «выбранный на лендинге вариант показывается
      одной строкой — тариф, срок, цена и „Изменить“, а остальные
@@ -121,6 +127,7 @@ export default async function Checkout({
     periodPoUmolchaniyu: period,
     rezhimPoUmolchaniyu: odin('mode') === 'renew' || pochty.length ? 'renew' : 'new',
     pochtyPoUmolchaniyu: pochty,
+    pochtyPodskazki: podskazki,
     balansKop: kto ? await balans(kto.userId) : 0,
     /* ⚠️ ВРЕМЯ СЧИТАЕТ СЕРВЕР, А НЕ БРАУЗЕР — постановка прямо
        требует «по Москве, а не по часам устройства клиента».
@@ -143,7 +150,7 @@ export default async function Checkout({
       {kto ? (
         <>
           <p className="cab__mail">
-            Заказ оформляется на {kto.email}. <a href="/cabinet/">Личный кабинет</a>
+            Информация о заказе придёт на {kto.email}. <a href="/cabinet/">Личный кабинет</a>
           </p>
           <CheckoutForm vvod={vvod} />
         </>
@@ -156,7 +163,11 @@ export default async function Checkout({
              начинается с `/checkout/?`), но дописать своих
              параметров — вполне. */
           next={`/checkout/?plan=${tarif.id}&period=${period}${podarok ? '&gift=1' : prodlit > 0 ? `&renew=${prodlit}` : vvod.rezhimPoUmolchaniyu === 'renew' ? '&mode=renew' : ''}`}
-          zagolovok={podarok ? 'Сначала вход — на эту же почту придёт код сертификата' : 'Сначала вход — на эту же почту придёт доступ'}
+          zagolovok={
+            podarok
+              ? 'Сначала войдите в личный кабинет — на эту же почту придёт код сертификата'
+              : 'Сначала войдите в личный кабинет — на эту же почту будет приходить информация о заказе'
+          }
         />
       )}
     </main>

@@ -5,7 +5,7 @@ import type { StrokaOcheredi } from '@/lib/server/views';
 import { adminSetQueueRate, adminTake, type OtvetA } from '@/lib/server/actions-admin';
 import { CHASTOTY_OCHEREDI } from '@/lib/admin/chastoty';
 import { slovar, type Yazyk } from '@/lib/admin/slova';
-import { imyaTarifa, srokKratkoDlyaSotrudnika } from '@/lib/plans';
+import { imyaTarifaIz, srokKratkoDlyaSotrudnika, type ImenaTarifov } from '@/lib/plans';
 
 /**
  * Очередь заказов, которая обновляется сама.
@@ -30,12 +30,23 @@ export default function Queue({
   me,
   y,
   sek,
+  imena,
 }: {
   rows: StrokaOcheredi[];
   me: string;
   y: Yazyk;
   /** Частота опроса в секундах; 0 — выключено. */
   sek: number;
+  /**
+   * Названия тарифов, заданные в админке.
+   *
+   * ⚠️ ЕДУТ ПРОПОМ, А НЕ ЧИТАЮТСЯ ЗДЕСЬ. Очередь обновляется сама,
+   * то есть это клиентский компонент, а имена лежат в базе: серверный
+   * модуль сюда не протащить. Карта снимается один раз на странице
+   * и дальше не меняется — цены и названия правит администратор,
+   * и его правка доезжает перезагрузкой раздела.
+   */
+  imena: ImenaTarifov;
 }) {
   const t = slovar(y);
   const [spisok, setSpisok] = useState(rows);
@@ -126,7 +137,7 @@ export default function Queue({
                       админке оно тоже английское (закон 40 с тридцать
                       девятой итерации). Сервер отдаёт `planId`, переводит
                       страница — как любой другой ключ. */}
-                  {imyaTarifa(r.planId, y === 'en')}
+                  {imyaTarifaIz(imena, r.planId, y === 'en')}
                   {/* ⚠️ ПОМЕТКА «ПОДАРОЧНЫЙ» ОБЯЗАТЕЛЬНА (Р-93): такой заказ
                       оплачен ЗАРАНЕЕ, покупателем сертификата, и денег
                       за ним не числится вовсе. Без пометки оператор

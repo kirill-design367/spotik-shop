@@ -8,6 +8,7 @@ import { cel, CELI } from '@/lib/metrika';
 import { Pole, PoleParolya } from './Polya';
 import { parolNeGoditsya, pochtaNeVerna, PRAVILO_PAROLYA } from '@/lib/proverka';
 import { CHASY_SLOVAMI } from '@/lib/chasy';
+import { useUhodNaOplatu } from './uhod';
 
 export type SrokVybor = { period: number; kop: number; label: string };
 
@@ -32,6 +33,11 @@ export type Vvod = {
   rezhimPoUmolchaniyu: 'new' | 'renew';
   /** Почты из заказа, который продлевают по ссылке из письма. */
   pochtyPoUmolchaniyu: string[];
+  /**
+   * Все почты, которые человек уже указывал в своих заказах.
+   * Пусто — подсказки не будет вовсе (постановка).
+   */
+  pochtyPodskazki: string[];
   balansKop: number;
   /** Посчитано НА СЕРВЕРЕ и по Москве — см. `lib/chasy.ts`. */
   vneRabochego: boolean;
@@ -106,6 +112,12 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
   };
   const [bedaSoglasiya, setBedaSoglasiya] = useState<string | null>(null);
   const [otvet, oformit, idyot] = useActionState<Otvet, FormData>(deystvieOformit, {});
+  /* ⚠️ НА РОБОКАССУ УХОДИТ БРАУЗЕР, А НЕ РОУТЕР NEXT. Прежде это
+     делал `redirect()` внутри серверного действия, и нажатие «назад»
+     со страницы оплаты роняло сайт «Application error» — разбор
+     в `uhod.ts` и в Р-143. */
+  useUhodNaOplatu(otvet.kuda);
+  const uhodim = Boolean(otvet.kuda);
 
   const pravitDannye = (i: number, klyuch: 'login' | 'password', v: string) => {
     setDannye((s) => s.map((x, j) => (j === i ? { ...x, [klyuch]: v } : x)));
@@ -133,6 +145,23 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
     const soglasie = (document.querySelector('input[name="consent"]') as HTMLInputElement | null)?.checked;
     setBedaSoglasiya(soglasie ? null : 'Без согласия оформить заказ нельзя');
     return Boolean(soglasie) && svezhie.every((b) => !b.login && !b.password);
+  };
+
+  /**
+   * Что предложить участнику `i`.
+   *
+   * ⚠️ ПОЧТА, УЖЕ ВЫБРАННАЯ У ДРУГОГО УЧАСТНИКА, В СПИСОК НЕ ИДЁТ —
+   * постановка. Один и тот же аккаунт Spotify нельзя продлить дважды
+   * в одном заказе, и предлагать это значило бы вести человека
+   * в отказ. Сравнение по нижнему регистру: почта от регистра
+   * не зависит.
+   */
+  const podskazkiDlya = (i: number): string[] => {
+    const zanyaty = dannye
+      .slice(0, mest)
+      .map((d, j) => (j === i ? '' : d.login.trim().toLowerCase()))
+      .filter(Boolean);
+    return vvod.pochtyPodskazki.filter((p) => !zanyaty.includes(p.toLowerCase()));
   };
 
   const cena = sroki.find((s) => s.period === period)?.kop ?? 0;
@@ -250,8 +279,19 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
           выдаёт не оператор, а сам сервер сразу после оплаты: обещать
           там «выполним в рабочее время» значило бы сказать неправду. */}
       {vvod.vneRabochego && !vvod.sertifikat ? (
-        <p className="panel__note panel__note--plate">
-          Заказ будет выполнен в рабочее время сервиса ({CHASY_SLOVAMI}).
+        /* ⚠️ С СОРОК ВТОРОЙ ИТЕРАЦИИ ПЛАШКА ЯРКАЯ: зелёный акцент
+           и знак часов — постановка «чтобы бросалась в глаза». Текст
+           не тронут ни словом. Зелёное здесь КАЙМА И ЗНАК, а не поле:
+           сплошная зелёная заливка читалась бы как вторая зелёная
+           зона в кадре и спорила бы с кнопкой оплаты.
+           ⚠️ Знак рисуем сами: чужих иконочных шрифтов в проекте
+           нет ни одного. */
+        <p className="panel__note plashka-chasy">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="1.8" />
+            <path d="M12 7.4V12l3.4 2.1" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+          <span>Заказ будет выполнен в рабочее время сервиса ({CHASY_SLOVAMI}).</span>
         </p>
       ) : null}
 
@@ -293,6 +333,12 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
                   znachenie={dannye[i]?.login ?? ''}
                   menyat={(v) => pravitDannye(i, 'login', v)}
                   beda={bedy[i]?.login}
+                  /* ⚠️ ПОДСКАЗКА ТОЛЬКО НА ПРОДЛЕНИИ — постановка.
+                     При «новом аккаунте» человек называет почту,
+                     на которой аккаунта ЕЩЁ НЕТ: подсказывать ему
+                     адреса, где Premium уже стоит, значило бы вести
+                     его прямо в отказ «эта почта уже занята». */
+                  pochty={r === 'renew' ? podskazkiDlya(i) : undefined}
                   podskazka={
                     r === 'new'
                       ? 'Мы заведём аккаунт на неё и включим Premium'
@@ -386,8 +432,14 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
           </p>
         ) : null}
 
-        <button type="submit" className="btn btn--wide" disabled={idyot || cena <= 0}>
-          {idyot ? 'Оформляем…' : kOplate > 0 ? `Перейти к оплате · ${rubli(kOplate)}` : 'Оформить'}
+        <button type="submit" className="btn btn--wide" disabled={idyot || uhodim || cena <= 0}>
+          {idyot || uhodim
+            ? uhodim
+              ? 'Переходим к оплате…'
+              : 'Оформляем…'
+            : kOplate > 0
+              ? `Перейти к оплате · ${rubli(kOplate)}`
+              : 'Оформить'}
         </button>
       </div>
     </form>

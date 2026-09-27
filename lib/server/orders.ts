@@ -21,7 +21,8 @@ import { utmVRyad, type Utm } from './utm';
 import { pismoPochtaZanyata, pismoZakazGotov, pismoZakazOplachen, pismoZakazOtmenyon } from './letters';
 import { vydatSertifikat } from './certificates';
 import { cenaTarifa, katalog, naytiTarif, srokKratko } from './catalog';
-import { imyaTarifa, srokDlyaSotrudnika } from '@/lib/plans';
+import { imyaTarifaIz, srokDlyaSotrudnika } from '@/lib/plans';
+import { imenaTarifov } from './imena';
 import { parolNeGoditsya, pochtaNeVerna } from '@/lib/proverka';
 
 export type Status = 'new' | 'paid' | 'in_work' | 'done' | 'cancelled';
@@ -332,7 +333,7 @@ async function posleOplaty(zakaz: number): Promise<void> {
   await soobshchitKomande({
     vid: 'zakaz_oplachen',
     zakaz,
-    tarif: imyaTarifa(z.plan_id, true),
+    tarif: imyaTarifaIz(await imenaTarifov(), z.plan_id, true),
     srok: srokDlyaSotrudnika(z.period, true),
     mest: tarif?.people ?? 1,
     podarok: false,
@@ -401,7 +402,7 @@ export async function zakazPoSertifikatu(opts: {
   await soobshchitKomande({
     vid: 'zakaz_oplachen',
     zakaz,
-    tarif: imyaTarifa(opts.planId, true),
+    tarif: imyaTarifaIz(await imenaTarifov(), opts.planId, true),
     srok: srokDlyaSotrudnika(opts.period, true),
     mest: opts.uchastniki.length,
     podarok: true,
@@ -475,12 +476,83 @@ export async function otmetitSlotGotovym(slotId: number, zakaz: number): Promise
   return r.length > 0;
 }
 
-export async function zavershitZakaz(zakaz: number, staffId: number): Promise<{ ok: boolean; pochemu?: string }> {
-  const slots = await zapros<{ id: string; done_at: Date | null }>(
-    'select id, done_at from order_slot where order_id = $1',
+/**
+ * Закрыть заказ.
+ *
+ * ⚠️ С СОРОК ВТОРОЙ ИТЕРАЦИИ ДАТУ ОКОНЧАНИЯ У ПРОДЛЕНИЯ НАЗЫВАЕТ
+ * SPOTIFY, А НЕ АРИФМЕТИКА. У клиента на аккаунте мог остаться
+ * неистёкший срок, и «сегодня плюс срок заказа» тогда врёт: Spotify
+ * показывает дату ПОЗЖЕ. Оператор переписывает её с экрана на шаге
+ * «Завершение», и от неё же считается письмо за три дня (закон 44).
+ *
+ * ⚠️ `expires_at` — САМАЯ РАННЯЯ ИЗ ДАТ, а не последняя. Напоминание
+ * обязано уйти до того, как кончится ПЕРВЫЙ из аккаунтов заказа:
+ * позже — значит уже после.
+ *
+ * ⚠️ У СЛОТА БЕЗ СВОЕЙ ДАТЫ (новый аккаунт) СРОК ПО-ПРЕЖНЕМУ
+ * СЧИТАЕТСЯ ОТ ВЫДАЧИ — там официальной даты взять негде, аккаунт
+ * только что заведён. `least` в Postgres пропускает NULL, поэтому
+ * одна строка накрывает все три случая: все даты введены, ни одной,
+ * и смесь.
+ */
+/**
+ * Шаг назад: снять отметку с ПОСЛЕДНЕГО пройденного аккаунта.
+ *
+ * Постановка сорок второй итерации: «На каждом шаге есть кнопка
+ * „Назад" — возвращает к предыдущему шагу и снимает с него отметку».
+ *
+ * ⚠️ «ПРЕДЫДУЩИЙ ШАГ» — ЭТО САМЫЙ ПОЗДНИЙ ИЗ ПРОЙДЕННЫХ, и считать
+ * его надо ЗАПРОСОМ, а не номером из формы. Номер в форме человек
+ * правит в браузере за секунду, и «назад» тогда снимало бы отметку
+ * с произвольного аккаунта; здесь снимать нечего, кроме последнего.
+ *
+ * ⚠️ И ВМЕСТЕ С ОТМЕТКОЙ СНИМАЕТСЯ ОФИЦИАЛЬНАЯ ДАТА. Оператор вернулся
+ * шагом назад — значит этот аккаунт он будет проходить заново, и дата,
+ * введённая за прошлый проход, к новому отношения не имеет.
+ */
+export async function shagNazad(zakaz: number, staffId: number): Promise<boolean> {
+  const r = await zapros(
+    `update order_slot set done_at = null, ends_at = null
+      where id = (
+        select s.id from order_slot s join shop_order o on o.id = s.order_id
+         where s.order_id = $1 and o.operator_id = $2 and o.status = 'in_work' and s.done_at is not null
+         order by s.idx desc limit 1
+      )
+      returning id`,
+    [zakaz, staffId],
+  );
+  return r.length > 0;
+}
+
+export async function zavershitZakaz(
+  zakaz: number,
+  staffId: number,
+  /** Официальные даты окончания: номер слота → «ГГГГ-ММ-ДД». */
+  daty: Record<number, string> = {},
+): Promise<{ ok: boolean; pochemu?: string }> {
+  const slots = await zapros<{ id: string; done_at: Date | null; mode: Rezhim }>(
+    'select id, done_at, mode from order_slot where order_id = $1',
     [zakaz],
   );
   if (slots.some((s) => !s.done_at)) return { ok: false, pochemu: 'Не все участники заполнены.' };
+
+  const svoi: string[] = [];
+  let estBezDaty = false;
+  for (const sl of slots) {
+    const d = daty[Number(sl.id)];
+    if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      svoi.push(d);
+      await zapros('update order_slot set ends_at = $2::date where id = $1 and order_id = $3', [
+        Number(sl.id),
+        d,
+        zakaz,
+      ]);
+    } else {
+      estBezDaty = true;
+    }
+  }
+  const rannyaya = svoi.length ? svoi.slice().sort()[0]! : null;
+
   /* ⚠️ ДАТА ОКОНЧАНИЯ СТАВИТСЯ ЗДЕСЬ, А НЕ ПРИ ОПЛАТЕ, и это
      не мелочь. Доступ начинается тогда, когда его выдали, а между
      оплатой и выдачей стоит очередь оператора: посчитай мы от оплаты —
@@ -488,9 +560,12 @@ export async function zavershitZakaz(zakaz: number, staffId: number): Promise<{ 
      Срок тарифа приходит числом месяцев из той же строки заказа. */
   const r = await zapros(
     `update shop_order set status = 'done', closed_at = now(),
-            expires_at = now() + (period || ' months')::interval
+            expires_at = least(
+              $3::date::timestamptz,
+              case when $4 then now() + (period || ' months')::interval else null end
+            )
       where id = $1 and status = 'in_work' and operator_id = $2 returning user_id`,
-    [zakaz, staffId],
+    [zakaz, staffId, rannyaya, estBezDaty],
   );
   if (!r.length) return { ok: false, pochemu: 'Заказ не в работе у вас.' };
   const u = await odna<{ email: string; plan_id: string; period: number; kind: 'plan' | 'certificate' }>(
@@ -533,7 +608,14 @@ export async function otmenitZakaz(
      видна клиенту. «Почта занята» — это не отказ, а развилка: человеку
      надо не сочувствие, а слова «оформите заново и выберите
      „Продлить существующий“». */
-  vid: 'obychno' | 'pochta_zanyata' = 'obychno',
+  /* ⚠️ `parol` НЕ ПОСЫЛАЕТ НИЧЕГО, И ЭТО НЕ ПРОПУСК. При причине
+     «неправильный логин или пароль» письмо клиенту уходит ДРУГОЕ
+     и уходит само — «Не подошёл пароль» со ссылкой на страницу
+     восстановления (постановка сорок второй итерации). В его тексте
+     уже сказано и что заказ отменён, и что деньги вернулись
+     на баланс: второе письмо про то же самое — это два письма
+     на одно событие. */
+  vid: 'obychno' | 'pochta_zanyata' | 'parol' = 'obychno',
   /* ⚠️ КТО ОТМЕНИЛ — ОТДЕЛЬНЫЙ ПРИЗНАК, А НЕ ВЫВОД ИЗ `operator_id`.
      Заказ, отменённый САМИМ покупателем, из кабинета исчезает
      совсем (постановка тридцать шестой итерации), а отменённый
@@ -599,7 +681,7 @@ export async function otmenitZakaz(
     const t = naytiTarif(spisok, itog.planId);
     const chto = nazvanieZakaza(t?.name ?? itog.planId, itog.period, itog.kind);
     if (vid === 'pochta_zanyata') await pismoPochtaZanyata(u.email, chto, itog.vernut);
-    else await pismoZakazOtmenyon(u.email, chto, itog.vernut, pochemu);
+    else if (vid !== 'parol') await pismoZakazOtmenyon(u.email, chto, itog.vernut, pochemu);
   }
   await soobshchitKomande({ vid: 'zakaz_otmenyon', zakaz });
   return { ok: true };

@@ -21,8 +21,8 @@ import { ktoSotrudnik, normPochta, poprositKod, proveritKod, vyyti, zavestiSessi
 import { bazaEst, zapros } from './db';
 import {
   otmenitZakaz,
-  PRICHINA_POCHTA_ZANYATA,
   otmetitSlotGotovym,
+  shagNazad,
   vernutVOchered,
   vzyatZakaz,
   zapisatVydachu,
@@ -30,6 +30,9 @@ import {
 } from './orders';
 import { soobshchitKomande } from './notify';
 import { pismoParolNePodoshyol } from './letters';
+import { zavestiSsylku } from './vosstanovlenie';
+import { ponyatPrichinu, prichinaKlientu, slotPrichiny } from '@/lib/admin/prichiny';
+import { zadatImyaTarifa } from './imena';
 import { odna } from './db';
 import { zadatNastroyku, SROK_SERTIFIKATA } from './settings';
 import { shifrGotov } from './crypto';
@@ -121,114 +124,139 @@ export async function adminRelease(fd: FormData): Promise<void> {
   redirect('/admin/');
 }
 
-export async function adminIssue(_p: OtvetA, fd: FormData): Promise<OtvetA> {
-  const s = await ktoSotrudnik();
-  if (!s) return { error: 'e.session' };
-  if (!shifrGotov()) return { error: 'e.no_key' };
-  const zakaz = Number(fd.get('order') ?? 0);
-  const slot = Number(fd.get('slot') ?? 0);
-  if (!(await tolkoSvoy(zakaz, s.id))) return { error: 'e.not_yours' };
-
-  const login = String(fd.get('login') ?? '').trim();
-  const mailPass = String(fd.get('mailPass') ?? '');
-  const spotifyPass = String(fd.get('spotifyPass') ?? '');
-  if (!login || !mailPass || !spotifyPass) return { error: 'e.fill_three' };
-
-  const ok = await zapisatVydachu({ slotId: slot, zakaz, staffId: s.id, login, mailPass, spotifyPass });
-  if (!ok) return { error: 'e.save_creds' };
-  revalidatePath(`/admin/orders/${zakaz}`);
-  return { ok: 'k.creds_saved' };
-}
-
-export async function adminRenewDone(_p: OtvetA, fd: FormData): Promise<OtvetA> {
-  const s = await ktoSotrudnik();
-  if (!s) return { error: 'e.session' };
-  const zakaz = Number(fd.get('order') ?? 0);
-  const slot = Number(fd.get('slot') ?? 0);
-  if (!(await tolkoSvoy(zakaz, s.id))) return { error: 'e.not_yours' };
-  const ok = await otmetitSlotGotovym(slot, zakaz);
-  if (!ok) return { error: 'e.mark_done' };
-  revalidatePath(`/admin/orders/${zakaz}`);
-  return { ok: 'k.marked' };
-}
-
-export async function adminFinish(_p: OtvetA, fd: FormData): Promise<OtvetA> {
-  const s = await ktoSotrudnik();
-  if (!s) return { error: 'e.session' };
-  const zakaz = Number(fd.get('order') ?? 0);
-  const r = await zavershitZakaz(zakaz, s.id);
-  if (!r.ok) return { error: r.pochemu === 'Не все участники заполнены.' ? 'e.not_all_done' : 'e.not_yours' };
-  revalidatePath('/admin');
-  return { ok: 'k.order_closed' };
-}
-
 /**
- * Неверный пароль у существующего аккаунта.
+ * ОДНО ДЕЙСТВИЕ НА ВСЕ ШАГИ ЗАКАЗА.
  *
- * ⚠️ ПОРЯДОК ЖЁСТКИЙ (постановка): сначала письмо с инструкцией,
- * и только потом отмена. Кнопка отмены до письма не работает,
- * и это проверяется здесь, а не только в разметке.
- */
-export async function adminSendRecovery(_p: OtvetA, fd: FormData): Promise<OtvetA> {
-  const s = await ktoSotrudnik();
-  if (!s) return { error: 'e.session' };
-  const zakaz = Number(fd.get('order') ?? 0);
-  const slot = Number(fd.get('slot') ?? 0);
-  if (!(await tolkoSvoy(zakaz, s.id))) return { error: 'e.not_yours' };
-  const u = await odna<{ email: string }>(
-    'select u.email from shop_order o join app_user u on u.id = o.user_id where o.id = $1',
-    [zakaz],
-  );
-  if (!u) return { error: 'o.no_order' };
-  await pismoParolNePodoshyol(u.email);
-  await zapros('update order_slot set recovery_sent_at = now() where id = $1 and order_id = $2', [slot, zakaz]);
-  revalidatePath(`/admin/orders/${zakaz}`);
-  return { ok: 'k.recovery_sent' };
-}
-
-/**
- * Особый случай: на почту клиента уже есть аккаунт Spotify, и новый
- * на неё не завести.
+ * Постановка сорок второй итерации: «На экране нет двух сообщений
+ * о состоянии одновременно». Прежде у экрана было ШЕСТЬ независимых
+ * `useActionState`, и ответ каждого жил до следующей отправки своей
+ * формы: «Отмечено выполненным» от первого аккаунта спокойно висело
+ * рядом с отказом отмены. Свести их в одно сообщение подбором нельзя —
+ * состояний шесть, и любое из них может быть непустым.
  *
- * ⚠️ ЭТО ОТДЕЛЬНАЯ ДВЕРЬ, А НЕ ГАЛОЧКА В ОБЩЕЙ ОТМЕНЕ, и причина
- * тому одна: у оператора это ОДНО нажатие в тот момент, когда он
- * упёрся, — а не «вернись наверх, напиши причину, поставь галочку».
- * Причина при этом фиксированная: её видит клиент, и формулировать
- * её каждый раз заново значило бы получить пять разных формулировок
- * одного и того же.
+ * ⚠️ ПОЭТОМУ ДЕЙСТВИЕ ОДНО, А ШАГ ПРИХОДИТ ПОЛЕМ `op`. Тогда
+ * состояние у экрана тоже одно, и двух сообщений не бывает
+ * ПО ПОСТРОЕНИЮ, а не потому, что мы аккуратно их гасим.
+ *
+ * ⚠️ ПРОВЕРКА «ЭТО ВАШ ЗАКАЗ» СТОИТ ОДИН РАЗ, ЗДЕСЬ, и её больше
+ * негде забыть: мимо этой функции ни один шаг не проходит.
  */
-export async function adminEmailTaken(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+export async function adminShag(_p: OtvetA, fd: FormData): Promise<OtvetA> {
   const s = await ktoSotrudnik();
   if (!s) return { error: 'e.session' };
   const zakaz = Number(fd.get('order') ?? 0);
   if (!(await tolkoSvoy(zakaz, s.id))) return { error: 'e.not_yours' };
-  const r = await otmenitZakaz(zakaz, PRICHINA_POCHTA_ZANYATA, s.id, 'pochta_zanyata');
-  if (!r.ok) return { error: 'e.cancel_fail' };
-  revalidatePath('/admin');
-  return { ok: 'k.order_cancelled' };
-}
+  const op = String(fd.get('op') ?? '');
 
-export async function adminCancel(_p: OtvetA, fd: FormData): Promise<OtvetA> {
-  const s = await ktoSotrudnik();
-  if (!s) return { error: 'e.session' };
-  const zakaz = Number(fd.get('order') ?? 0);
-  if (!(await tolkoSvoy(zakaz, s.id))) return { error: 'e.not_yours' };
+  /* ── Аккаунт пройден ─────────────────────────────────────────── */
+  if (op === 'gotov') {
+    const ok = await otmetitSlotGotovym(Number(fd.get('slot') ?? 0), zakaz);
+    if (!ok) return { error: 'e.mark_done' };
+    revalidatePath(`/admin/orders/${zakaz}`);
+    return { ok: 'k.marked' };
+  }
 
-  const prichina = String(fd.get('reason') ?? '').trim();
-  const parolNePodoshyol = fd.get('badPassword') === 'on';
-  if (parolNePodoshyol) {
-    const nepislan = await odna<{ id: string }>(
-      `select id from order_slot where order_id = $1 and mode = 'renew' and recovery_sent_at is null limit 1`,
+  /* ── Старый заказ: доступы заводит оператор ──────────────────── */
+  if (op === 'vydacha') {
+    if (!shifrGotov()) return { error: 'e.no_key' };
+    const login = String(fd.get('login') ?? '').trim();
+    const mailPass = String(fd.get('mailPass') ?? '');
+    const spotifyPass = String(fd.get('spotifyPass') ?? '');
+    if (!login || !mailPass || !spotifyPass) return { error: 'e.fill_three' };
+    const ok = await zapisatVydachu({
+      slotId: Number(fd.get('slot') ?? 0),
+      zakaz,
+      staffId: s.id,
+      login,
+      mailPass,
+      spotifyPass,
+    });
+    if (!ok) return { error: 'e.save_creds' };
+    revalidatePath(`/admin/orders/${zakaz}`);
+    return { ok: 'k.creds_saved' };
+  }
+
+  /* ── Шаг назад ───────────────────────────────────────────────── */
+  if (op === 'nazad') {
+    const ok = await shagNazad(zakaz, s.id);
+    if (!ok) return { error: 'e.no_back' };
+    revalidatePath(`/admin/orders/${zakaz}`);
+    return { ok: 'k.back' };
+  }
+
+  /* ── Завершение ──────────────────────────────────────────────── */
+  if (op === 'zavershit') {
+    /* ⚠️ ДАТА У ПРОДЛЕНИЯ ОБЯЗАТЕЛЬНА, И ПРОВЕРЯЕТСЯ ЭТО НА СЕРВЕРЕ.
+       Поле в разметке человек правит в браузере за секунду, а от этой
+       даты считается письмо за три дня до конца подписки (закон 44):
+       пустая дата означала бы либо молчание, либо письмо не в тот
+       день. У нового аккаунта официальной даты взять негде — там
+       срок по-прежнему считается от выдачи. */
+    const slots = await zapros<{ id: string; mode: string; idx: number }>(
+      'select id, mode, idx from order_slot where order_id = $1 order by idx',
       [zakaz],
     );
-    if (nepislan) return { error: 'e.recovery_first' };
+    const daty: Record<number, string> = {};
+    for (const sl of slots) {
+      const v = String(fd.get(`ends_${sl.id}`) ?? '').trim();
+      if (sl.mode !== 'renew') continue;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return { error: 'e.need_date', polya: { n: sl.idx + 1 } };
+      daty[Number(sl.id)] = v;
+    }
+    const r = await zavershitZakaz(zakaz, s.id, daty);
+    if (!r.ok) return { error: r.pochemu === 'Не все участники заполнены.' ? 'e.not_all_done' : 'e.not_yours' };
+    revalidatePath('/admin');
+    return { ok: 'k.order_closed' };
   }
-  // ⚠️ ПРИЧИНА ОТМЕНЫ — ДАННЫЕ, А НЕ НАДПИСЬ: её видит КЛИЕНТ
-  // в своём кабинете и в письме, и язык там русский всегда.
-  const r = await otmenitZakaz(zakaz, prichina || 'Отменён оператором', s.id);
-  if (!r.ok) return { error: 'e.cancel_fail' };
-  revalidatePath('/admin');
-  return { ok: 'k.order_cancelled' };
+
+  /* ── Отмена ──────────────────────────────────────────────────── */
+  if (op === 'otmena') {
+    /* ⚠️ ПРИЧИНА ОБЯЗАТЕЛЬНА И БЕРЁТСЯ ИЗ ЗАКРЫТОГО СПИСКА
+       (постановка). Свободная строка давала пять разных формулировок
+       одного и того же, а клиент видит её дословно. Текст клиенту
+       всегда РУССКИЙ, каким бы ни был язык админки: его написали мы
+       не для сотрудника (закон 40, `lib/admin/prichiny.ts`). */
+    const kod = ponyatPrichinu(String(fd.get('reason') ?? ''));
+    if (!kod) return { error: 'e.pick_reason' };
+    const tekst = prichinaKlientu(kod);
+    const nomer = slotPrichiny(kod);
+
+    if (nomer === null) {
+      const r = await otmenitZakaz(zakaz, tekst, s.id, kod === 'zanyata' ? 'pochta_zanyata' : 'obychno');
+      if (!r.ok) return { error: 'e.cancel_fail' };
+      revalidatePath('/admin');
+      return { ok: 'k.order_cancelled' };
+    }
+
+    /* ⚠️ ПИСЬМО «НЕ ПОДОШЁЛ ПАРОЛЬ» УХОДИТ САМО, и отдельной кнопки
+       для него больше нет. Прежде порядок «сначала письмо, потом
+       отмена» держался проверкой на сервере (закон 37); теперь
+       нарушить его нельзя по построению — это один шаг. */
+    const sl = await odna<{ id: string }>('select id from order_slot where order_id = $1 and idx = $2', [zakaz, nomer]);
+    if (!sl) return { error: 'e.no_slot' };
+    const u = await odna<{ email: string }>(
+      'select u.email from shop_order o join app_user u on u.id = o.user_id where o.id = $1',
+      [zakaz],
+    );
+    if (!u) return { error: 'o.no_order' };
+    /* ⚠️ ОТМЕНА ПЕРВОЙ, ПИСЬМО ВТОРЫМ. Не сошлось с отменой — письма
+       не было вовсе; наоборот было бы хуже: человек получил бы
+       инструкцию по заказу, который так и остался в работе. Вид
+       `parol` при этом гасит обычное письмо об отмене: про отмену
+       и про деньги на балансе сказано в самом письме о пароле. */
+    const r = await otmenitZakaz(zakaz, tekst, s.id, 'parol');
+    if (!r.ok) return { error: 'e.cancel_fail' };
+    const ssylka = await zavestiSsylku(zakaz, Number(sl.id));
+    await pismoParolNePodoshyol(u.email, ssylka);
+    await zapros('update order_slot set recovery_sent_at = now() where id = $1 and order_id = $2', [
+      Number(sl.id),
+      zakaz,
+    ]);
+    revalidatePath('/admin');
+    return { ok: 'k.cancelled_letter' };
+  }
+
+  return { error: 'e.bad_step' };
 }
 
 /**
@@ -343,6 +371,40 @@ export async function adminSetPrice(_p: OtvetA, fd: FormData): Promise<OtvetA> {
   revalidatePath('/');
   revalidatePath('/checkout');
   return { ok: 'k.price_saved' };
+}
+
+/**
+ * НАЗВАНИЕ ТАРИФА.
+ *
+ * Постановка сорок второй итерации: «дать менять названия тарифов:
+ * название на сайте (русское) и название для сотрудников
+ * (английское)».
+ *
+ * ⚠️ ДВА ПОЛЯ ИЛИ НИ ОДНОГО. Половина имени означала бы, что
+ * в русской админке тариф называется по-новому, а в боте по-старому:
+ * с виду работает, а на деле это два разных тарифа в одной таблице.
+ *
+ * ⚠️ ЛЕНДИНГ ПЕРЕСОБИРАЕТСЯ СРАЗУ. Он статический с `revalidate`
+ * (закон 36), и без `revalidatePath` новое имя доезжало бы до главной
+ * через пять минут — то есть выглядело бы как «не сохранилось».
+ */
+export async function adminSetPlanName(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+  const s = await ktoSotrudnik();
+  if (!s || s.role !== 'admin') return { error: 'o.only_admin' };
+  const plan = String(fd.get('plan') ?? '');
+  if (!plan) return { error: 'e.pick_plan' };
+  const name = String(fd.get('name') ?? '').trim().slice(0, 60);
+  const nameEn = String(fd.get('nameEn') ?? '').trim().slice(0, 60);
+  if (Boolean(name) !== Boolean(nameEn)) return { error: 'e.name_empty' };
+  await zadatImyaTarifa(plan, name, nameEn);
+  /* ⚠️ ПЕРЕСОБИРАЕМ ТОЛЬКО ЛЕНДИНГ, И БОЛЬШЕ НИЧЕГО НЕ НАДО.
+     Оформление, сертификаты и кабинет динамические (`force-dynamic`)
+     и читают каталог на каждый запрос; лендинг — единственная
+     страница с `revalidate` (закон 36), и без этой строки новое имя
+     доезжало бы до главной через пять минут, то есть выглядело бы
+     как «не сохранилось». */
+  revalidatePath('/');
+  return { ok: name ? 'k.name_saved' : 'k.name_removed' };
 }
 
 export async function adminSetCertDays(_p: OtvetA, fd: FormData): Promise<OtvetA> {

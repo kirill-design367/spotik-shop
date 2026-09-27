@@ -15,6 +15,13 @@ import { BEZ_ZAPISI } from '@/lib/metrika';
  * ⚠️ ГЛАЗ ЕСТЬ У КАЖДОГО ПОЛЯ ПАРОЛЯ. Человек вводит пароль, который
  * потом сам же будет набирать в Spotify: не показать его — значит
  * почти гарантировать опечатку, а опечатка здесь стоит заказа.
+ *
+ * ⚠️ ПОДСКАЗКА ЕСТЬ ТОЛЬКО У ПОЧТЫ, И ЭТО НЕ НЕДОДЕЛКА. Пароли
+ * не подсказываются ни при каких условиях: они лежат шифротекстом
+ * ровно затем, чтобы не оказываться на экране лишний раз (закон 35),
+ * и открытый пароль в выпадающем списке был бы третьим местом,
+ * где он виден. Почту человек и так знает — подсказка экономит ему
+ * набор, а не открывает тайну.
  */
 
 export function Pole({
@@ -26,6 +33,8 @@ export function Pole({
   beda,
   podskazka,
   avto,
+  pochty,
+  zagolovokPochty,
 }: {
   imya: string;
   podpis: string;
@@ -35,10 +44,29 @@ export function Pole({
   beda?: string | null;
   podskazka?: string;
   avto?: string;
+  /** Почты из прошлых заказов этого же кабинета. Пусто — списка нет. */
+  pochty?: string[];
+  zagolovokPochty?: string;
 }) {
   const id = useId();
+  const [fokus, setFokus] = useState(false);
+  const spisok = pochty ?? [];
+  const otkryt = fokus && spisok.length > 0;
   return (
-    <div className="field">
+    /* ⚠️ ФОКУС СТЕРЕЖЁТ ОБЁРТКА, А НЕ САМО ПОЛЕ. `blur` у поля
+       срабатывает РАНЬШЕ, чем нажатие по подсказке, и список успевал
+       закрыться до того, как выбор доходил. Здесь `onBlur` ловится
+       всплытием и смотрит, КУДА ушёл фокус: остался внутри обёртки —
+       список открыт. Плюс у самой подсказки снят `mousedown`: тогда
+       фокус не уходит вовсе, и в Safari, где кнопка по нажатию
+       фокуса не получает, это единственное, что работает. Таймеров
+       нет ни одного — они дали бы гонку. */
+    <div
+      className="field"
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFokus(false);
+      }}
+    >
       <label className="field__label" htmlFor={id}>{podpis}</label>
       <input
         id={id}
@@ -46,11 +74,37 @@ export function Pole({
         name={imya}
         value={znachenie}
         onChange={(e) => menyat(e.target.value)}
+        onFocus={() => setFokus(true)}
         autoComplete={avto ?? 'off'}
         className={BEZ_ZAPISI}
         aria-invalid={beda ? true : undefined}
         aria-describedby={podskazka || beda ? `${id}-p` : undefined}
       />
+      {/* Список ВСЕГДА в разметке и схлопывается переходом
+          `grid-template-rows: 0fr → 1fr` — тот же приём, что
+          у «Изменить» выше: высоту списка иначе пришлось бы мерить
+          из JS. Закрытый выведен из обхода клавиатурой `inert`. */}
+      {spisok.length ? (
+        <div className="pochty" data-on={otkryt ? '' : undefined}>
+          <div className="pochty__nutro" {...(otkryt ? {} : { inert: '' as unknown as boolean })}>
+            <p className="pochty__z">{zagolovokPochty ?? 'Ваши почты из прошлых заказов'}</p>
+            {spisok.map((p) => (
+              <button
+                key={p}
+                type="button"
+                className="pochty__p"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  menyat(p);
+                  setFokus(false);
+                }}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {beda ? (
         <p className="field__beda" id={`${id}-p`}>{beda}</p>
       ) : podskazka ? (

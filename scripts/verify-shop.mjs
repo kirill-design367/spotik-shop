@@ -123,6 +123,23 @@ const browser = await launch();
  * и следующая строка читает СТАРЫЙ адрес. Проверка при этом падает
  * на исправном коде — то есть врёт.
  */
+/**
+ * ГЛАВНАЯ КНОПКА ШАГА: нажать и подтвердить «Да».
+ *
+ * ⚠️ С СОРОК ВТОРОЙ ИТЕРАЦИИ КАЖДЫЙ ШАГ СПРАШИВАЕТ «Вы уверены, что
+ * всё заполнено верно?» (постановка), и одно нажатие больше ничего
+ * не проводит. Подтверждение — НЕ системное `confirm()`, а свой блок
+ * на месте кнопки, поэтому ловится обычным селектором.
+ */
+async function shagVpered(page, selektor) {
+  await page.locator(selektor).first().click();
+  const da = page.locator('.ad__sure button[type="submit"]').first();
+  await da.waitFor({ state: 'visible', timeout: 5000 });
+  await da.click();
+  await page.waitForLoadState('networkidle');
+  await page.waitForTimeout(700);
+}
+
 async function nazhat(page, selektor) {
   const bylo = page.url();
   await page.click(selektor);
@@ -311,8 +328,17 @@ chk(
 
 await nazhat(admin, 'button:has-text("Взять")');
 chk('заказ взят и открылся', /\/admin\/orders\//.test(admin.url()), admin.url().replace(`http://localhost:${PORT}`, ''));
+/* Номер берём ИЗ АДРЕСА, а не из базы: по нему дальше спрашиваются
+   отметки слотов, и он обязан быть тем самым заказом, который открыт
+   на экране. */
+const nomerZakaza = Number(admin.url().match(/\/orders\/(\d+)/)?.[1] ?? 0);
 const karta = await admin.textContent('body');
-chk('оператору виден пароль клиента', /ochen-tayny-parol/.test(karta ?? ''));
+/* ⚠️ НА ЭКРАНЕ ТОЛЬКО ТЕКУЩИЙ ШАГ (сорок вторая итерация), поэтому
+   виден пароль ТОГО аккаунта, который сейчас проходят, а не сразу
+   оба. Первый участник — новый аккаунт, второй — продление; пароль
+   продления проверяется ниже, когда до него доходит шаг. */
+chk('оператору виден пароль клиента на текущем шаге', /Novyy-Parol-9/.test(karta ?? ''));
+chk('пароль второго аккаунта на первом шаге ещё не показан', !/ochen-tayny-parol/.test(karta ?? ''));
 
 /* ⚠️ ОПЕРАТОР БОЛЬШЕ НЕ ВВОДИТ НИ ОДНОГО ЛОГИНА. Аккаунт он заводит
    на данные клиента — они у него перед глазами, — и закрывает слот
@@ -326,17 +352,85 @@ chk(
   'формы ввода логинов у оператора нет вовсе',
   (await admin.$$('input[name="login"]')).length === 0,
 );
-/* ⚠️ КНОПОК СТОЛЬКО ЖЕ, СКОЛЬКО УЧАСТНИКОВ, поэтому берётся ПЕРВАЯ
-   явно: `page.click` со строгим селектором на двух совпадениях ждёт
-   тридцать секунд и падает — и падает не там, где сломано. */
-for (let i = 0; i < 4; i += 1) {
-  const knopka = admin.locator('button:has-text("отметить выполненным")').first();
-  if (!(await knopka.count())) break;
-  await knopka.click();
-  await admin.waitForLoadState('networkidle');
-  await admin.waitForTimeout(600);
+/* ── ЗАКАЗ ПРОВОДИТСЯ ПО ШАГАМ ─────────────────────────────────────
+   ⚠️ НА ЭКРАНЕ РОВНО ОДИН ТЕКУЩИЙ ШАГ (постановка сорок второй
+   итерации), поэтому кнопка «отметить выполненным» на нём одна,
+   а не столько же, сколько участников. Остальные шаги свёрнуты
+   или приглушены и своих кнопок не несут. */
+{
+  const seychas = await admin.$$('.ad__shag[data-sost="seychas"]');
+  chk('на экране ровно один текущий шаг', seychas.length === 1, `${seychas.length}`);
+  const knopki = await admin.$$('.ad__shag[data-sost="seychas"] button:has-text("отметить выполненным")');
+  chk('у текущего шага одна главная кнопка', knopki.length === 1, `${knopki.length}`);
+  const zhdut = await admin.$$('.ad__shag[data-sost="zhdyot"] button[type="submit"]');
+  chk('у следующих шагов кнопок нет вовсе', zhdut.length === 0, `${zhdut.length}`);
+  const doPodtv = await admin.$$('.ad__sure');
+  chk('вопрос «вы уверены» до нажатия не показан', doPodtv.length === 0, `${doPodtv.length}`);
 }
-await nazhat(admin, 'button:has-text("Отметить весь заказ")');
+
+/* ⚠️ ШАГ НАЗАД И ОБРАТНО — ПРОВЕРЯЕТСЯ ПО БАЗЕ, А НЕ ПО ЭКРАНУ.
+   «Назад снимает отметку» — это состояние слота, и судить о нём
+   по надписи значило бы проверять нашу же разметку (Р-47). */
+await shagVpered(admin, '.ad__shag[data-sost="seychas"] button:has-text("отметить выполненным")');
+{
+  const gotovo = await p2.query(
+    `select count(*)::int as n from order_slot where order_id = $1 and done_at is not null`,
+    [nomerZakaza],
+  );
+  chk('первый аккаунт отмечен пройденным', gotovo.rows[0].n === 1, `${gotovo.rows[0].n}`);
+  await nazhat(admin, 'button:has-text("Назад")');
+  const posleNazad = await p2.query(
+    `select count(*)::int as n from order_slot where order_id = $1 and done_at is not null`,
+    [nomerZakaza],
+  );
+  chk('«Назад» снял отметку с предыдущего шага', posleNazad.rows[0].n === 0, `${posleNazad.rows[0].n}`);
+}
+
+/* Проходим первый аккаунт и смотрим второй: на его шаге обязаны
+   появиться ЕГО почта и ЕГО пароль — то есть расшифровка идёт
+   по слоту, а не «всё сразу». */
+await shagVpered(admin, '.ad__shag[data-sost="seychas"] button:has-text("отметить выполненным")');
+{
+  const vtoroy = await admin.innerText('.ad__shag[data-sost="seychas"]');
+  chk('на втором шаге видны почта и пароль второго аккаунта',
+    /moy@akkaunt\.test/.test(vtoroy) && /ochen-tayny-parol9/.test(vtoroy),
+    vtoroy.replace(/\s+/g, ' ').slice(0, 120));
+  chk('первый шаг свёрнут с галочкой',
+    (await admin.$$('.ad__shag[data-sost="proyden"]')).length === 1,
+    `${(await admin.$$('.ad__shag[data-sost="proyden"]')).length}`);
+}
+
+for (let i = 0; i < 4; i += 1) {
+  const knopka = admin.locator('.ad__shag[data-sost="seychas"] button:has-text("отметить выполненным")').first();
+  if (!(await knopka.count())) break;
+  await shagVpered(admin, '.ad__shag[data-sost="seychas"] button:has-text("отметить выполненным")');
+}
+
+/* ── ЗАВЕРШЕНИЕ: ДАТА ОКОНЧАНИЯ У ПРОДЛЕНИЯ ОБЯЗАТЕЛЬНА ────────────
+   ⚠️ ПОЛЕ ЗАРАНЕЕ ЗАПОЛНЕНО РАСЧЁТНОЙ ДАТОЙ (постановка), и считает
+   её СЕРВЕР: спроси мы часы браузера, оператор из другого пояса
+   получил бы другую подстановку (закон 49). Проверяем, что оно
+   заполнено и заполнено разумно, а потом ставим свою дату — от неё
+   обязан считаться срок доступа. */
+let svoyaData = '';
+{
+  const pole = admin.locator('.ad__shag[data-sost="seychas"] input[type="date"]').first();
+  chk('на завершении спрошена дата окончания у продления', (await pole.count()) === 1, `${await pole.count()}`);
+  const podstavleno = await pole.inputValue();
+  chk('поле даты заранее заполнено', /^\d{4}-\d{2}-\d{2}$/.test(podstavleno), podstavleno || 'пусто');
+  /* ⚠️ СВОЯ ДАТА — НА ДЕСЯТЬ СУТОК РАНЬШЕ РАСЧЁТНОЙ, И ЭТО НЕ ВКУС.
+     `expires_at` берётся как САМАЯ РАННЯЯ из дат (введённая
+     оператором и «выдача плюс срок» у нового аккаунта), потому что
+     напоминание обязано уйти до конца ПЕРВОГО аккаунта. В заказе
+     на двоих один аккаунт новый, а другой на продление: поставь мы
+     дату позже расчётной — победила бы расчётная, и проверить, что
+     введённая доехала, было бы нечем. */
+  const d = new Date(`${podstavleno}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 10);
+  svoyaData = d.toISOString().slice(0, 10);
+  await pole.fill(svoyaData);
+}
+await shagVpered(admin, '.ad__shag[data-sost="seychas"] button:has-text("Завершить заказ")');
 const posle = await admin.textContent('body');
 /* ⚠️ `\s*`, А НЕ ПРОБЕЛ: подпись и значение стоят соседними `dt`
    и `dd`, и между ними в `textContent` нет ни одного знака. */
@@ -384,7 +478,7 @@ chk('заказ в кабинете «Готов»', /Готов/.test(telo2 ?? 
  * значит и проверять их надо ЗАПРОСОМ К БАЗЕ, а не пересчётом
  * по той же арифметике, какой считает сам раздел (Р-47).
  */
-console.log('── СТАТИСТИКА: ТОЛЬКО АДМИНИСТРАТОРУ И ТОЛЬКО ИЗ БАЗЫ ──');
+console.log('── СТАТИСТИКА: ПЕРИОД, ДОСТУП ИСПОЛНИТЕЛЮ И ТОЛЬКО ИЗ БАЗЫ ──');
 {
   await admin.goto(`http://localhost:${PORT}/admin/stats/`, { waitUntil: 'networkidle' });
   const svod = (await admin.textContent('body')) ?? '';
@@ -400,16 +494,64 @@ console.log('── СТАТИСТИКА: ТОЛЬКО АДМИНИСТРАТО�
   chk('источник заказа виден по UTM', /yandex/.test(svod));
   chk('разбивка по тарифам не пуста', /На двоих/.test(svod));
 
-  /* ⚠️ ЗАПРЕТ ДЛЯ ИСПОЛНИТЕЛЯ ПРОВЕРЯЕТСЯ СМЕНОЙ РОЛИ, А НЕ ВТОРЫМ
-     ВХОДОМ: код входа выдаётся не чаще одного в минуту (Р-86),
-     и завести второго сотрудника прогон просто не успел бы. Роль
-     возвращается сразу же — иначе следующие проверки шли бы
-     от чужого лица. */
+  /* ── ПЕРИОД: ОТДЕЛЬНАЯ ДАТА И ДИАПАЗОН ──────────────────────────
+     Сорок вторая итерация: «Добавить выбор периода: отдельная дата
+     или диапазон дат, плюс быстрые „сутки, неделя, месяц"».
+
+     ⚠️ СВЕРЯЕМСЯ С ОТДЕЛЬНЫМ ЗАПРОСОМ К БАЗЕ, А НЕ С ПЕРЕСЧЁТОМ ТОЙ
+     ЖЕ АРИФМЕТИКОЙ (Р-47): числа на экране обязаны сойтись с базой
+     по ТЕМ ЖЕ границам, но посчитанным отдельно. */
+  const segodnya = (await p2.query('select current_date::text as d')).rows[0].d;
+  const zaDen = await p2.query(
+    `select count(*)::text as n, coalesce(sum(money_kop), 0)::text as kop
+       from shop_order
+      where paid_at is not null and paid_at >= $1::date and paid_at < ($1::date + 1)`,
+    [segodnya],
+  );
+  await admin.goto(`http://localhost:${PORT}/admin/stats/?ot=${segodnya}`, { waitUntil: 'networkidle' });
+  const zaDatu = (await admin.innerText('main.ad')).replace(/\u00a0/g, ' ');
+  const rubDen = (Number(zaDen.rows[0].kop) / 100).toLocaleString('ru-RU').replace(/\u00a0/g, ' ');
+  chk('выручка за отдельную дату сходится с базой', zaDatu.includes(rubDen), `${rubDen} ₽ за ${segodnya}`);
+  chk('дата осталась в поле', (await admin.locator('input[name="ot"]').inputValue()) === segodnya);
+
+  /* ⚠️ ПУСТОЙ ПЕРИОД ПРОВЕРЯЕТСЯ ОТДЕЛЬНО, и без него предыдущая
+     строка ничего не значит: она прошла бы и у страницы, которая
+     период не учитывает вовсе. */
+  await admin.goto(`http://localhost:${PORT}/admin/stats/?ot=2020-01-01&do=2020-01-02`, {
+    waitUntil: 'networkidle',
+  });
+  const pusto = await admin.innerText('main.ad');
+  chk('в периоде без заказов разбивки по тарифам нет',
+    /Пока пусто/.test(pusto) && !/На двоих/.test(pusto),
+    pusto.replace(/\s+/g, ' ').match(/По тарифам.{0,40}/)?.[0] ?? '—');
+
+  /* ── СТАТИСТИКА ОТКРЫТА ИСПОЛНИТЕЛЮ ────────────────────────────
+     ⚠️ РОЛЬ МЕНЯЕТСЯ В БАЗЕ, А НЕ ВТОРЫМ ВХОДОМ: код входа выдаётся
+     не чаще одного в минуту (Р-86), и завести второго сотрудника
+     прогон просто не успел бы. Роль возвращается сразу же — иначе
+     следующие проверки шли бы от чужого лица. */
   await p2.query(`update staff set role = 'operator' where email = $1`, [ADMIN]);
   await admin.goto(`http://localhost:${PORT}/admin/stats/`, { waitUntil: 'networkidle' });
-  const chuzhoy = (await admin.textContent('body')) ?? '';
-  chk('исполнителю статистика закрыта', !/Сейчас в очереди/.test(chuzhoy) && /Только для администраторов/.test(chuzhoy));
+  const ispolnitelyu = (await admin.innerText('main.ad')) ?? '';
+  chk('исполнителю статистика ОТКРЫТА',
+    /Сейчас в очереди/.test(ispolnitelyu) && !/Только для администраторов/.test(ispolnitelyu),
+    ispolnitelyu.replace(/\s+/g, ' ').slice(0, 80));
+  chk('исполнителю виден и выбор периода', (await admin.$$('input[name="ot"]')).length === 1);
+
+  /* ── ДЕНЬГИ ЗАКАЗА ИСПОЛНИТЕЛЮ НЕ ВИДНЫ ────────────────────────
+     ⚠️ ПРОВЕРЯЕТСЯ ВСЯ РАЗМЕТКА, А НЕ ВИДИМЫЙ ТЕКСТ. «Не показываем»
+     сделано тем, что сумма НЕ УХОДИТ НА СТРАНИЦУ: спрячь мы строку
+     стилем — число лежало бы в разметке и было бы видно всякому,
+     кто её откроет. */
+  await admin.goto(`http://localhost:${PORT}/admin/orders/${nomerZakaza}/`, { waitUntil: 'networkidle' });
+  const uIspolnitelya = (await admin.content()) ?? '';
+  chk('исполнителю строки «Деньги» в заказе нет',
+    !/Деньги/.test(uIspolnitelya) && !/с баланса/.test(uIspolnitelya));
+  chk('суммы нет и в разметке страницы', !/5290\.00/.test(uIspolnitelya) && !/52\.90/.test(uIspolnitelya));
   await p2.query(`update staff set role = 'admin' where email = $1`, [ADMIN]);
+  await admin.goto(`http://localhost:${PORT}/admin/orders/${nomerZakaza}/`, { waitUntil: 'networkidle' });
+  const uAdmina = (await admin.innerText('main.ad')) ?? '';
+  chk('администратору строка «Деньги» видна', /Деньги/.test(uAdmina) && /с баланса/.test(uAdmina));
 }
 
 console.log('── TELEGRAM НЕ ОТВЕТИЛ: ОПЛАТА ЦЕЛА, УВЕДОМЛЕНИЕ В ОЧЕРЕДИ ──');
@@ -578,10 +720,16 @@ chk('уведомление без подписи отвергнуто', otvet.s
 const baz = await p2.query(`select status, balance_kop, money_kop from shop_order order by id`);
 chk('суммы разложены по заказу', baz.rows[0].money_kop !== '0', `картой ${baz.rows[0].money_kop} коп.`);
 
-console.log('── ОТМЕНА: СНАЧАЛА ПИСЬМО, ПОТОМ ДЕНЬГИ НА БАЛАНС ──');
+console.log('── ОТМЕНА: ПРИЧИНА ИЗ СПИСКА, ПИСЬМО САМО, ДЕНЬГИ НА БАЛАНС ──');
 /* Берём заказ ПО СЕРТИФИКАТУ и отменяем его. Денег за ним нет,
-   зато проверяются две вещи разом: жёсткий порядок при неверном
-   пароле (закон 37) и то, что сертификат от отмены оживает. */
+   зато проверяются две вещи разом: причина отмены из закрытого списка
+   с письмом, которое уходит САМО (сорок вторая итерация), и то, что
+   сертификат от отмены оживает.
+
+   ⚠️ ЗАКОН 37 ЭТИМ НЕ ОСЛАБЛЕН, А ВЫПОЛНЕН ПО ПОСТРОЕНИЮ. Прежде
+   порядок «сначала письмо, потом отмена» держался проверкой
+   на сервере и отдельной кнопкой у оператора; теперь письмо и отмена —
+   ОДИН шаг, и нарушить порядок нечем. */
 await admin.goto(`http://localhost:${PORT}/admin/`, { waitUntil: 'networkidle' });
 const ocheredDara = await admin.textContent('body');
 chk('подарочный заказ помечен в очереди', /подарок/.test(ocheredDara ?? ''));
@@ -592,19 +740,89 @@ chk(
   /подарок/.test(kartaDara ?? '') && /денег нет/.test(kartaDara ?? ''),
 );
 
-await admin.fill('input[name="reason"]', 'Проверка отмены');
-await nazhat(admin, 'button:has-text("Отменить заказ")');
-const rano = await admin.textContent('body');
-chk('до письма отмена не проходит', /Сначала отправьте письмо/.test(rano ?? ''));
+const nomerDara = Number(admin.url().match(/\/orders\/(\d+)/)?.[1] ?? 0);
+chk('отдельной кнопки «Пароль не подошёл» больше нет',
+  (await admin.$$('button:has-text("Пароль не подошёл")')).length === 0);
+chk('галочки «это случай пароль не подошёл» больше нет',
+  (await admin.$$('input[name="badPassword"]')).length === 0);
 
-await nazhat(admin, 'button:has-text("Пароль не подошёл")');
-const posleP = await admin.textContent('body');
-chk('письмо о восстановлении отправлено', /Инструкция по восстановлению отправлена/.test(posleP ?? ''));
+/* Причина живёт на шаге аккаунта — там, где оператор работает
+   с почтами и паролями (постановка). */
+await admin.locator('.ad__shag[data-sost="seychas"] button:has-text("Отменить заказ")').first().click();
+await admin.waitForTimeout(400);
+{
+  const vybrano = await admin.locator('select[name="reason"]').inputValue();
+  chk('причина не выбрана заранее', vybrano === '', vybrano || 'пусто');
+  const spisok = await admin.$$eval('select[name="reason"] option', (e) => e.map((x) => x.textContent ?? ''));
+  chk('в списке есть причина про пароль 1-го аккаунта',
+    spisok.some((v) => /Неправильный логин или пароль 1-го аккаунта/.test(v)), spisok.join(' | '));
+  chk('в списке есть «уже зарегистрирован» и «уже подключен Premium» и «Другое»',
+    spisok.some((v) => /уже зарегистрирован/.test(v)) &&
+      spisok.some((v) => /уже подключен Spotify Premium/.test(v)) &&
+      spisok.some((v) => /Другое/.test(v)));
+}
 
-await admin.fill('input[name="reason"]', 'Проверка отмены');
-await nazhat(admin, 'button:has-text("Отменить заказ")');
+/* ⚠️ «БЕЗ ПРИЧИНЫ НЕЛЬЗЯ» ПРОВЕРЯЕТСЯ НА СЕРВЕРЕ, А НЕ ПО `required`.
+   Атрибут разметки человек снимает в браузере за секунду — ровно это
+   мы и делаем, и отказ обязан прийти от действия. */
+await admin.$eval('select[name="reason"]', (el) => el.removeAttribute('required'));
+await admin.locator('.ad__shag[data-sost="seychas"] button:has-text("Отменить заказ, деньги")').first().click();
+await admin.locator('.ad__sure button[type="submit"]').first().click();
+await admin.waitForLoadState('networkidle');
+await admin.waitForTimeout(700);
+const bezPrichiny = await admin.textContent('body');
+chk('без причины отмена не проходит', /Выберите причину отмены/.test(bezPrichiny ?? ''),
+  (bezPrichiny ?? '').replace(/\s+/g, ' ').match(/Выберите причину[^.]*\./)?.[0] ?? 'отказа нет');
+const posleBez = await p2.query('select status from shop_order where id = $1', [nomerDara]);
+chk('заказ от этого не отменился', posleBez.rows[0].status !== 'cancelled', posleBez.rows[0].status);
+
+/* Теперь причина про пароль: и отмена, и письмо — одним шагом. */
+await admin.selectOption('select[name="reason"]', 'parol1');
+await admin.locator('.ad__sure button[type="submit"]').first().click();
+await admin.waitForLoadState('networkidle');
+await admin.waitForTimeout(900);
 const otmena = await admin.textContent('body');
 chk('заказ отменён', /Заказ отменён/.test(otmena ?? ''));
+{
+  const pr = await p2.query('select cancel_reason from shop_order where id = $1', [nomerDara]);
+  chk('клиент видит причину ДОСЛОВНО из списка',
+    pr.rows[0].cancel_reason === 'Неправильный логин или пароль 1-го аккаунта',
+    pr.rows[0].cancel_reason ?? '—');
+  chk('письмо «не подошёл пароль» ушло само',
+    /Не подошёл пароль от аккаунта Spotify/.test(server.zhurnal()));
+  const ssylki = await p2.query('select count(*)::int as n from recovery_link where order_id = $1', [nomerDara]);
+  chk('ссылка восстановления заведена', ssylki.rows[0].n === 1, `${ssylki.rows[0].n}`);
+}
+
+/* ── СТРАНИЦА ИЗ ПИСЬМА ────────────────────────────────────────────
+   ⚠️ ТОКЕН БЕРЁТСЯ ИЗ ПИСЬМА, А НЕ ИЗ БАЗЫ, и иначе нельзя: в базе
+   лежит только ОТПЕЧАТОК (Р-87). Значит проверяется ровно то, что
+   получит человек. */
+{
+  const t = server.zhurnal().match(/\/vosstanovlenie\/\?t=([A-Za-z0-9_-]+)/)?.[1] ?? '';
+  chk('ссылка в письме есть и она наша', t.length > 20, `${t.length} знаков`);
+  const stranica = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await stranica.goto(`http://localhost:${PORT}/vosstanovlenie/?t=${t}`, { waitUntil: 'networkidle' });
+  const vidno = await stranica.innerText('main');
+  chk('на странице стоит почта того аккаунта, у которого не подошёл пароль',
+    /novyy@pochta\.test/.test(vidno), vidno.replace(/\s+/g, ' ').slice(0, 120));
+  chk('на странице одна кнопка перехода в Spotify',
+    (await stranica.$$('button:has-text("Скопировать почту и перейти в Spotify")')).length === 1);
+  chk('под кнопкой стоит подсказка про поле',
+    /Вставьте почту в поле и нажмите «Получить ссылку»/.test(vidno));
+  chk('пароля на странице нет ни разу', !/ochen-tayny-parol/.test(vidno));
+  /* ⚠️ ЧУЖОЙ ТОКЕН НЕ ОТКРЫВАЕТ НИЧЕГО, и ответ у него тот же,
+     что у выдуманного: рассказывать пришедшему, что заказ есть,
+     незачем. */
+  await stranica.goto(`http://localhost:${PORT}/vosstanovlenie/?t=vydumannyy-token-vydumannyy`, {
+    waitUntil: 'networkidle',
+  });
+  const chuzhaya = await stranica.innerText('main');
+  chk('выдуманный токен не открывает почту',
+    !/novyy@pochta\.test/.test(chuzhaya) && /Ссылка не работает/.test(chuzhaya),
+    chuzhaya.replace(/\s+/g, ' ').slice(0, 100));
+  await stranica.close();
+}
 const sert2 = await p2.query('select used_at, used_order_id from certificate');
 chk('сертификат снова годен', sert2.rows[0].used_at === null && sert2.rows[0].used_order_id === null);
 
@@ -1246,12 +1464,24 @@ console.log('── ПОЧТА ЗАНЯТА: ОТМЕНА, ДЕНЬГИ НА Б�
 
   await admin.goto(`http://localhost:${PORT}/admin/orders/${nomerZ}/`, { waitUntil: 'networkidle' });
   await nazhat(admin, 'button:has-text("Взять")');
-  await admin.locator('button:has-text("уже есть аккаунт Spotify")').first().click();
-  await admin.waitForTimeout(1200);
+  /* ⚠️ ОТДЕЛЬНОЙ КНОПКИ «НА ЭТУ ПОЧТУ УЖЕ ЕСТЬ АККАУНТ» БОЛЬШЕ НЕТ:
+     с сорок второй итерации это одна из причин в закрытом списке
+     («Этот адрес электронной почты уже зарегистрирован»). Письмо
+     при этом уходит то же — не отказ, а развилка. */
+  chk('отдельной кнопки «почта занята» больше нет',
+    (await admin.$$('button:has-text("уже есть аккаунт Spotify")')).length === 0);
+  await admin.locator('.ad__shag[data-sost="seychas"] button:has-text("Отменить заказ")').first().click();
+  await admin.waitForTimeout(400);
+  await admin.selectOption('select[name="reason"]', 'zanyata');
+  await admin.locator('.ad__shag[data-sost="seychas"] button:has-text("Отменить заказ, деньги")').first().click();
+  await admin.locator('.ad__sure button[type="submit"]').first().click();
+  await admin.waitForLoadState('networkidle');
+  await admin.waitForTimeout(900);
 
   const posleZ = await p2.query('select status, cancel_reason from shop_order where id = $1', [nomerZ]);
-  chk('заказ закрыт с причиной «почта занята»',
-    posleZ.rows[0].status === 'cancelled' && /уже есть аккаунт Spotify/.test(posleZ.rows[0].cancel_reason ?? ''),
+  chk('заказ закрыт с причиной «почта уже зарегистрирована»',
+    posleZ.rows[0].status === 'cancelled' &&
+      posleZ.rows[0].cancel_reason === 'Этот адрес электронной почты уже зарегистрирован',
     `${posleZ.rows[0].status} · ${posleZ.rows[0].cancel_reason}`);
   const balansStal = Number(
     (await p2.query('select balance_kop from app_user where id = $1', [zz.rows[0].user_id])).rows[0].balance_kop,
@@ -1274,9 +1504,22 @@ console.log('── ДАТА ОКОНЧАНИЯ И НАПОМИНАНИЕ ЗА �
             extract(epoch from (expires_at - closed_at)) / 86400 as dney
        from shop_order where status = 'done' and expires_at is not null order by id limit 1`,
   );
+  /* ⚠️ С СОРОК ВТОРОЙ ИТЕРАЦИИ СРОК БЕРЁТСЯ ИЗ ДАТЫ, КОТОРУЮ ВВЁЛ
+     ОПЕРАТОР, а не считается «выдача плюс срок тарифа»: у клиента
+     на аккаунте мог остаться неистёкший срок, и Spotify называет
+     другую дату. Проверяется РАВЕНСТВО с тем, что было введено выше,
+     а не диапазон дней: диапазон прошёл бы и на прежнем коде. */
+  const stalo = srok.rows[0]?.expires_at ? new Date(srok.rows[0].expires_at).toISOString().slice(0, 10) : '';
+  chk('дата окончания взята из той, что ввёл оператор',
+    stalo === svoyaData, `${stalo} против введённой ${svoyaData}`);
   chk('дата окончания поставлена при закрытии заказа',
-    srok.rows.length === 1 && Number(srok.rows[0].dney) > 360 && Number(srok.rows[0].dney) < 372,
+    srok.rows.length === 1 && Number(srok.rows[0].dney) > 340 && Number(srok.rows[0].dney) < 372,
     `${Math.round(Number(srok.rows[0]?.dney ?? 0))} дней на ${srok.rows[0]?.period} мес`);
+  const vSlote = await p2.query(
+    `select count(*)::int as n from order_slot where order_id = $1 and ends_at = $2::date`,
+    [srok.rows[0].id, svoyaData],
+  );
+  chk('дата легла и в строку аккаунта', vSlote.rows[0].n === 1, `${vSlote.rows[0].n}`);
 
   await klient.goto(`http://localhost:${PORT}/cabinet/`, { waitUntil: 'networkidle' });
   const kab = (await klient.textContent('body')) ?? '';
@@ -1640,17 +1883,28 @@ console.log('── ПЛАШКА ПРО РАБОЧЕЕ ВРЕМЯ ──');
   );
   const dolzhna = chasMsk < 10 || chasMsk >= 22;
   await klient.goto(`http://localhost:${PORT}/checkout/?plan=duo&period=12`, { waitUntil: 'networkidle' });
+  /* ⚠️ КЛАСС У ПЛАШКИ СВОЙ С СОРОК ВТОРОЙ ИТЕРАЦИИ: она больше
+     не тихая подсказка `panel__note--plate`, а яркая плашка
+     с зелёным акцентом и знаком часов (постановка «чтобы бросалась
+     в глаза»). Судим по ВЫЧИСЛЕННОМУ стилю, а не по объявлению:
+     класс доказал бы только, что правило написано. */
   const plashka = await klient.evaluate(() => {
-    const el = [...document.querySelectorAll('.panel__note--plate')]
+    const el = [...document.querySelectorAll('.plashka-chasy')]
       .find((e) => /рабочее время/.test(e.textContent ?? ''));
     if (!el) return null;
     const panely = [...document.querySelectorAll('form.ozhivayet > .panel')];
+    const st = getComputedStyle(el);
+    const chislo = (v) => (v.match(/[\d.]+/g) ?? []).map(Number);
     return {
       tekst: (el.textContent ?? '').replace(/\s+/g, ' ').trim(),
       /* Плашка стоит МЕЖДУ панелями, а не внутри панели тарифа. */
       snaruzhi: el.parentElement?.classList.contains('ozhivayet') === true,
       posleTarifa: Boolean(panely[0] && el.compareDocumentPosition(panely[0]) & Node.DOCUMENT_POSITION_PRECEDING),
       doAkkaunta: Boolean(panely[1] && el.compareDocumentPosition(panely[1]) & Node.DOCUMENT_POSITION_FOLLOWING),
+      fon: chislo(st.backgroundColor),
+      tsvet: chislo(st.color),
+      kayma: st.boxShadow,
+      znak: el.querySelectorAll('svg').length,
     };
   });
   chk('плашка стоит ровно тогда, когда в Москве не рабочее время',
@@ -1661,6 +1915,16 @@ console.log('── ПЛАШКА ПРО РАБОЧЕЕ ВРЕМЯ ──');
     chk('плашка стоит между тарифом и «Аккаунтом»',
       plashka.snaruzhi && plashka.posleTarifa && plashka.doAkkaunta,
       `вне панели ${plashka.snaruzhi}, после тарифа ${plashka.posleTarifa}, до аккаунта ${plashka.doAkkaunta}`);
+    /* ⚠️ «ЯРКАЯ» СУДИТСЯ ПО ЧИСЛАМ, А НЕ ПО ВПЕЧАТЛЕНИЮ: зелёного
+       в подложке больше, чем красного и синего (то есть подложка
+       зеленит), текст белый, кайма есть, знак нарисован. */
+    chk('плашка зеленит подложкой',
+      plashka.fon[1] > plashka.fon[0] + 4 && plashka.fon[1] > plashka.fon[2] + 4,
+      plashka.fon.slice(0, 3).join(','));
+    chk('текст плашки белый', plashka.tsvet.slice(0, 3).every((v) => v > 240), plashka.tsvet.slice(0, 3).join(','));
+    chk('у плашки есть кайма и знак часов',
+      /rgb/.test(plashka.kayma) && plashka.znak === 1,
+      `кайма ${plashka.kayma ? 'есть' : 'нет'}, знаков ${plashka.znak}`);
   }
 
   /* ⚠️ ЧАСЫ УСТРОЙСТВА НЕ РЕШАЮТ НИЧЕГО — прямое требование
@@ -1675,7 +1939,7 @@ console.log('── ПЛАШКА ПРО РАБОЧЕЕ ВРЕМЯ ──');
   await chuzhoyChas.context().addCookies(await klient.context().cookies());
   await chuzhoyChas.goto(`http://localhost:${PORT}/checkout/?plan=duo&period=12`, { waitUntil: 'networkidle' });
   const uNego = await chuzhoyChas.evaluate(() =>
-    [...document.querySelectorAll('.panel__note--plate')].some((e) => /рабочее время/.test(e.textContent ?? '')));
+    [...document.querySelectorAll('.plashka-chasy')].some((e) => /рабочее время/.test(e.textContent ?? '')));
   const ihChas = await chuzhoyChas.evaluate(() => new Date().getHours());
   chk('плашка считается по Москве, а не по часам устройства',
     uNego === dolzhna,
@@ -1728,6 +1992,198 @@ console.log('── ЧАСЫ РАБОТЫ В ХИРО ──');
       `зазор справа ${v?.zazor} px (поле найдено: ${v?.estPole}), внизу ${v?.vnizu}, в экране ${v?.vEkrane}`);
     await p.close();
   }
+}
+
+console.log('── ТЕКСТЫ ВХОДА И ОФОРМЛЕНИЯ, МЕНЮ, КНОПКИ ОПЛАТЫ ──');
+{
+  /* ⚠️ ЗАГОЛОВОК ВХОДА ВИДЕН ТОЛЬКО НЕ ВОШЕДШЕМУ, поэтому нужен
+     ЧИСТЫЙ контекст: у `klient` сессия есть с начала прогона. */
+  const gost = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await gost.goto(`http://localhost:${PORT}/checkout/?plan=solo&period=1`, { waitUntil: 'networkidle' });
+  const vhod = await gost.innerText('main');
+  chk('заголовок входа на оформлении новый',
+    /Сначала войдите в личный кабинет — на эту же почту будет приходить информация о заказе/.test(vhod),
+    vhod.replace(/\s+/g, ' ').match(/Сначала[^.]{0,90}/)?.[0] ?? 'заголовка нет');
+
+  /* ⚠️ ВОЗДУХ МЕЖДУ СТРОКОЙ ПРО ПОЛИТИКУ И КНОПКОЙ — ЗАМЕР, А НЕ
+     КЛАСС. Постановка: «кнопка слишком близко». Меряем ФАКТИЧЕСКИЙ
+     зазор между низом строки и верхом кнопки на телефоне. */
+  const zazor = await gost.evaluate(() => {
+    const p = [...document.querySelectorAll('.panel__note')].find((e) => /политикой конфиденциальности/.test(e.textContent ?? ''));
+    const b = [...document.querySelectorAll('button[type="submit"]')].find((e) => /Получить код/.test(e.textContent ?? ''));
+    if (!p || !b) return null;
+    return Math.round(b.getBoundingClientRect().top - p.getBoundingClientRect().bottom);
+  });
+  chk('между строкой про политику и кнопкой есть воздух', zazor !== null && zazor >= 14, `${zazor} px`);
+
+  /* ── МЕНЮ БЕЗ ПОЧТЫ И ТЕЛЕФОНА ──────────────────────────────── */
+  await gost.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' });
+  await gost.click('.nav__burger');
+  await gost.waitForTimeout(700);
+  const menyu = await gost.evaluate(() => {
+    const m = document.querySelector('.menu');
+    return {
+      otkryto: m?.getAttribute('data-open') === '1',
+      pocht: (m?.innerHTML ?? '').includes('mailto:'),
+      tel: (m?.innerHTML ?? '').includes('tel:'),
+      slovo: Boolean(m?.querySelector('.menu__mark')),
+    };
+  });
+  chk('меню открылось', menyu.otkryto);
+  chk('в меню нет ни почты, ни телефона', !menyu.pocht && !menyu.tel,
+    `почта ${menyu.pocht}, телефон ${menyu.tel}`);
+  chk('слово внизу меню осталось', menyu.slovo);
+
+  /* ── КНОПКА «ВЕРНУТЬСЯ НА САЙТ» НА ОБЕИХ СТРАНИЦАХ ОПЛАТЫ ────── */
+  for (const [adres, imya] of [['/pay/ok/', 'успешной'], ['/pay/fail/', 'неуспешной']]) {
+    await gost.goto(`http://localhost:${PORT}${adres}`, { waitUntil: 'networkidle' });
+    const est = await gost.evaluate(() =>
+      [...document.querySelectorAll('a')].some((a) => /Вернуться на сайт/.test(a.textContent ?? '') && a.getAttribute('href') === '/'));
+    chk(`на ${imya} странице оплаты есть «Вернуться на сайт» на главную`, est);
+  }
+  await gost.close();
+
+  /* ── СТРОКА ПОД ЗАГОЛОВКОМ ОФОРМЛЕНИЯ ───────────────────────── */
+  await klient.goto(`http://localhost:${PORT}/checkout/?plan=solo&period=1`, { waitUntil: 'networkidle' });
+  const vidno = await klient.innerText('main');
+  chk('строка под заголовком говорит про информацию о заказе',
+    /Информация о заказе придёт на /.test(vidno) && !/Заказ оформляется на/.test(vidno),
+    vidno.replace(/\s+/g, ' ').match(/Информация о заказе[^.]{0,40}/)?.[0] ?? 'строки нет');
+  chk('ссылка на личный кабинет рядом осталась',
+    await klient.evaluate(() => [...document.querySelectorAll('a')].some((a) => a.getAttribute('href') === '/cabinet/' && /Личный кабинет/.test(a.textContent ?? ''))));
+}
+
+console.log('── ПОДСКАЗКА ПОЧТ ПРИ ПРОДЛЕНИИ ──');
+{
+  /* Постановка: «когда клиент выбирает „Продлить существующий" и встаёт
+     в поле почты, под полем плавно выезжает список почт, которые он уже
+     указывал в заказах из этого личного кабинета… При „На двоих"
+     у каждого участника свой список. Почта, уже выбранная у другого
+     участника, в списке не предлагается».
+
+     ⚠️ СПРАШИВАЕТСЯ ЖИВАЯ СТРАНИЦА, А НЕ НАШ ЖЕ ЗАПРОС К БАЗЕ:
+     подсказка обязана появиться у поля, а не «данные доехали». */
+  await klient.goto(`http://localhost:${PORT}/checkout/?plan=duo&period=1`, { waitUntil: 'networkidle' });
+  /* Оба участника — на продление: подсказка только там. */
+  for (const i of [0, 1]) {
+    await klient.locator(`.uchastnik >> nth=${i}`).locator('button:has-text("Продлить существующий")').click();
+  }
+  await klient.waitForTimeout(300);
+
+  const zakryt = await klient.evaluate(() => {
+    const el = document.querySelector('.pochty');
+    return el ? getComputedStyle(el).gridTemplateRows : 'нет списка';
+  });
+  chk('до фокуса список схлопнут', /^0px$/.test(zakryt), zakryt);
+
+  await klient.locator('input[name="login0"]').focus();
+  await klient.waitForTimeout(500);
+  /* ⚠️ СПИСОК БЕРЁТСЯ В ПРЕДЕЛАХ СВОЕГО УЧАСТНИКА. Списки обоих лежат
+     в разметке всегда (схлопнутый — это `grid-template-rows: 0fr`),
+     и общий селектор собрал бы оба сразу: проверка «второму
+     не предлагается» тогда не значила бы ничего. */
+  const spisok = await klient.locator('.uchastnik').nth(0).locator('.pochty__p').allTextContents();
+  chk('под полем есть подсказки почт', spisok.length > 0, spisok.join(' · ') || 'пусто');
+  chk('в подсказке есть почта из прошлых заказов',
+    spisok.some((v) => /moy@akkaunt\.test/.test(v)), spisok.join(' · '));
+  chk('паролей в подсказке нет ни одного',
+    !spisok.some((v) => /parol/i.test(v)), spisok.join(' · '));
+
+  /* Нажатие подставляет почту. */
+  const vybrannaya = spisok.find((v) => /@/.test(v)) ?? '';
+  await klient.locator('.uchastnik').nth(0).locator('.pochty__p').first().click();
+  await klient.waitForTimeout(300);
+  chk('нажатие подставило почту в поле',
+    (await klient.locator('input[name="login0"]').inputValue()) === vybrannaya,
+    `${await klient.locator('input[name="login0"]').inputValue()} против ${vybrannaya}`);
+
+  /* ⚠️ УЖЕ ВЫБРАННАЯ ПОЧТА ВТОРОМУ УЧАСТНИКУ НЕ ПРЕДЛАГАЕТСЯ. Один
+     и тот же аккаунт нельзя продлить дважды в одном заказе. */
+  await klient.locator('input[name="login1"]').focus();
+  await klient.waitForTimeout(500);
+  const uVtorogo = await klient.locator('.uchastnik').nth(1).locator('.pochty__p').allTextContents();
+  chk('почта, взятая первым участником, второму не предлагается',
+    !uVtorogo.includes(vybrannaya), `${uVtorogo.join(' · ') || 'список пуст'}`);
+
+  /* ⚠️ ПРИ «НОВОМ АККАУНТЕ» ПОДСКАЗКИ НЕТ ВОВСЕ: там человек называет
+     почту, на которой аккаунта ещё НЕТ, и предлагать ему адреса
+     с готовым Premium значило бы вести его прямо в отказ. */
+  await klient.locator('.uchastnik >> nth=0').locator('button:has-text("Новый аккаунт")').click();
+  await klient.locator('input[name="login0"]').focus();
+  await klient.waitForTimeout(400);
+  const uNovogo = await klient.evaluate(() => {
+    const p = document.querySelector('.uchastnik input[name="login0"]')?.closest('.field');
+    return p?.querySelector('.pochty') ? 'есть' : 'нет';
+  });
+  chk('у нового аккаунта подсказки почт нет вовсе', uNovogo === 'нет', uNovogo);
+}
+
+console.log('── НАЗВАНИЕ ТАРИФА МЕНЯЕТСЯ В АДМИНКЕ ──');
+{
+  /* Постановка: «дать менять названия тарифов: название на сайте
+     (русское) и название для сотрудников (английское). Новое русское
+     название должно появляться везде, где тариф назван».
+
+     ⚠️ ПРАВИМ ЧЕРЕЗ АДМИНКУ, А НЕ ВСТАВКОЙ В БАЗУ: лендинг
+     статический с `revalidate`, и правка в обход админки до него
+     не доехала бы — `revalidatePath` зовёт действие, а не запрос. */
+  await admin.goto(`http://localhost:${PORT}/admin/settings/`, { waitUntil: 'networkidle' });
+  const stroka = admin.locator('form:has(input[name="nameEn"])').filter({ has: admin.locator('input[value="Duo"]') });
+  await stroka.locator('input[name="name"]').fill('Для двоих');
+  await stroka.locator('input[name="nameEn"]').fill('Pair');
+  await stroka.locator('button[type="submit"]').click();
+  await admin.waitForLoadState('networkidle');
+  await admin.waitForTimeout(900);
+  chk('название сохранено', /Название сохранено/.test((await admin.innerText('main.ad')) ?? ''));
+
+  /* ⚠️ ЛЕНДИНГ СТАТИЧЕСКИЙ (закон 36), и после `revalidatePath('/')`
+     Next вправе отдать ПРОШЛУЮ страницу, а новую собрать в фоне.
+     Поэтому ждём СОБЫТИЯ — появления нового имени, — а не одного
+     захода: фиксированная выдержка тут была бы гонкой (Р-94). */
+  await klient.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' });
+  let glavnaya = await klient.innerText('main');
+  let zahodov = 1;
+  while (zahodov < 20 && !/Для двоих/.test(glavnaya)) {
+    await klient.waitForTimeout(500);
+    await klient.reload({ waitUntil: 'networkidle' });
+    glavnaya = await klient.innerText('main');
+    zahodov += 1;
+  }
+  chk('новое русское название стоит на главной',
+    /Для двоих/.test(glavnaya) && !/На двоих/.test(glavnaya),
+    `заходов ${zahodov}, нашлось «${glavnaya.replace(/\s+/g, ' ').match(/Для двоих|На двоих/)?.[0] ?? 'ни одного'}»`);
+
+  await klient.goto(`http://localhost:${PORT}/checkout/?plan=duo&period=1`, { waitUntil: 'networkidle' });
+  chk('новое название стоит и в оформлении', /Для двоих/.test(await klient.innerText('main')));
+
+  await klient.goto(`http://localhost:${PORT}/cabinet/`, { waitUntil: 'networkidle' });
+  chk('новое название стоит и в кабинете', /Для двоих/.test(await klient.innerText('main')));
+
+  /* ⚠️ АНГЛИЙСКОЕ ИМЯ ВИДЯТ ТОЛЬКО СОТРУДНИКИ (закон 40). Проверяем
+     ОБЕ стороны: английское появилось И русского не осталось. */
+  await admin.goto(`http://localhost:${PORT}/admin/`, { waitUntil: 'networkidle' });
+  await nazhat(admin, '.ad__lang-btn[value="en"]');
+  const poAngliyski = await admin.innerText('main.ad');
+  chk('в английской админке стоит английское имя',
+    /Pair/.test(poAngliyski) && !/Для двоих/.test(poAngliyski),
+    poAngliyski.replace(/\s+/g, ' ').match(/Pair|Для двоих/)?.[0] ?? 'ни одного');
+  await nazhat(admin, '.ad__lang-btn[value="ru"]');
+  const poRusski = await admin.innerText('main.ad');
+  chk('в русской админке стоит русское имя',
+    /Для двоих/.test(poRusski) && !/Pair/.test(poRusski));
+
+  /* Вернули как было: оба поля пустые. */
+  await admin.goto(`http://localhost:${PORT}/admin/settings/`, { waitUntil: 'networkidle' });
+  const stroka2 = admin.locator('form:has(input[name="nameEn"])').filter({ has: admin.locator('input[value="Pair"]') });
+  await stroka2.locator('input[name="name"]').fill('');
+  await stroka2.locator('input[name="nameEn"]').fill('');
+  await stroka2.locator('button[type="submit"]').click();
+  await admin.waitForLoadState('networkidle');
+  await admin.waitForTimeout(900);
+  chk('очистка обоих полей вернула имя из кода',
+    /вернулось к тому, что в коде/.test((await admin.innerText('main.ad')) ?? ''));
+  const vBaze2 = await p2.query(`select count(*)::int as n from plan_name where plan_id = 'duo'`);
+  chk('строки своего имени в базе не осталось', vBaze2.rows[0].n === 0, `${vBaze2.rows[0].n}`);
 }
 
 chk('ни одной ошибки JavaScript', oshibkiJS.length === 0, oshibkiJS.slice(0, 3).join(' | '));

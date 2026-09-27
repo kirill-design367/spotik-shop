@@ -213,6 +213,35 @@ const S = {
   ],
   'u.login': ['Логин', 'Login'],
 
+  /* ── ШАГИ ВЫПОЛНЕНИЯ ЗАКАЗА ──────────────────────────────────────
+     Сорок вторая итерация: экран показывает ОДИН текущий шаг,
+     пройденные свёрнуты с галочкой, следующие серые и недоступны.
+     Префикс `w.` (work) — под `z.` лежит карточка заказа целиком. */
+  'w.step': ['Шаг {n} из {vsego}', 'Step {n} of {vsego}'],
+  'w.passed': ['пройден', 'done'],
+  'w.locked': ['Откроется, когда будет пройден текущий шаг.', 'Opens once the current step is done.'],
+  'w.sure': ['Вы уверены, что всё заполнено верно?', 'Are you sure everything is filled in correctly?'],
+  'w.yes': ['Да', 'Yes'],
+  'w.no': ['Нет', 'No'],
+  'w.back': ['Назад', 'Back'],
+  'w.finish_h': ['Завершение', 'Finishing up'],
+  'w.finish_btn': ['Завершить заказ', 'Finish the order'],
+  'w.all_done': [
+    'Все аккаунты пройдены. Осталось закрыть заказ — клиенту уйдёт письмо.',
+    'Every account is done. All that is left is to close the order — the client will be emailed.',
+  ],
+  'w.ends': ['Дата окончания подписки в Spotify', 'Subscription end date in Spotify'],
+  'w.ends_hint': [
+    'Перепишите дату с экрана Spotify. От неё считается письмо о продлении за три дня — не от срока заказа.',
+    'Copy the date from the Spotify screen. The renewal reminder three days ahead is counted from it, not from the order term.',
+  ],
+  'w.cancel_open': ['Отменить заказ', 'Cancel the order'],
+  'w.reason_pick': ['— выберите причину —', '— pick a reason —'],
+  'w.reason_hint': [
+    'Причина уходит клиенту дословно. При любой причине про неправильный логин или пароль ему сразу уйдёт письмо со ссылкой на восстановление.',
+    'The reason reaches the client word for word. For any wrong-login-or-password reason they immediately get an email with a recovery link.',
+  ],
+
   /* ── Скидки, доступность, частота очереди, генератор ссылок ──── */
   'c.discount': ['Скидка', 'Discount'],
   'c.discount_h': ['Скидки', 'Discounts'],
@@ -264,6 +293,14 @@ const S = {
   ],
   'c.from_db': ['база', 'database'],
   'c.from_default': ['умолчание', 'default'],
+  'c.names_h': ['Названия тарифов', 'Plan names'],
+  'c.names_hint': [
+    'Русское название видит КЛИЕНТ: главная, сертификаты, оформление, кабинет, письма. Оно же стоит на карточке тарифа, поэтому держите его коротким. Английское видят только сотрудники — бот и английская админка. Оба поля пустые — работает название из кода.',
+    'The Russian name is what the CLIENT sees: landing, certificates, checkout, cabinet, emails. It is also the plan card caption, so keep it short. The English one is for staff only — the bot and the English admin. Leave both empty to fall back to the name from the code.',
+  ],
+  'c.name_ru': ['Название на сайте', 'Name on the site'],
+  'c.name_en': ['Название для сотрудников', 'Name for staff'],
+
   'c.cert_h': ['Срок действия сертификата', 'Certificate validity'],
   'c.cert_hint': [
     'Сколько подарочный код остаётся годным после покупки.',
@@ -321,6 +358,15 @@ const S = {
     'Send the password-recovery email first — cancelling is blocked until then.',
   ],
   'e.cancel_fail': ['Отменить не вышло.', 'Could not cancel.'],
+  'e.no_back': ['Назад идти некуда: ни один аккаунт ещё не пройден.', 'Nowhere to go back: no account is done yet.'],
+  'e.need_date': [
+    'Аккаунт {n}: укажите дату окончания подписки из Spotify.',
+    'Account {n}: enter the subscription end date from Spotify.',
+  ],
+  'e.pick_reason': ['Выберите причину отмены — без неё отменить нельзя.', 'Pick a cancellation reason — cancelling without one is not possible.'],
+  'e.no_slot': ['Такого аккаунта в заказе нет.', 'No such account in this order.'],
+  'e.bad_step': ['Непонятный шаг.', 'Unknown step.'],
+  'e.name_empty': ['Заполните оба названия или оставьте оба пустыми.', 'Fill in both names or leave both empty.'],
   'e.bad_rate': ['Такой частоты нет.', 'No such refresh rate.'],
   'e.bad_date': ['Укажите дату окончания скидки.', 'Set the discount end date.'],
   'e.no_price_first': [
@@ -355,6 +401,13 @@ const S = {
   'k.cell_off': ['Срок выключен: на сайте его больше нет.', 'Term disabled: it is gone from the site.'],
   'k.rate_saved': ['Частота обновления сохранена.', 'Refresh rate saved.'],
   'k.staff_saved': ['{email} теперь {role}.', '{email} is now {role}.'],
+  'k.back': ['Шаг снят, вернулись к предыдущему аккаунту.', 'Step cleared, back to the previous account.'],
+  'k.cancelled_letter': [
+    'Заказ отменён, деньги на балансе клиента. Ему ушло письмо со ссылкой на восстановление пароля Spotify.',
+    'Order cancelled, the money is on the client balance. They were emailed a link to reset their Spotify password.',
+  ],
+  'k.name_saved': ['Название сохранено.', 'Name saved.'],
+  'k.name_removed': ['Название вернулось к тому, что в коде.', 'Name is back to the one from the code.'],
 
   /* ── Статистика ──────────────────────────────────────────────────
      ⚠️ ПРЕФИКС `ss.`, А НЕ `st.`: под `st.` уже лежат состояния
@@ -364,6 +417,15 @@ const S = {
   'ss.day': ['За сутки', 'Last 24 hours'],
   'ss.week': ['За неделю', 'Last 7 days'],
   'ss.month': ['За месяц', 'Last 30 days'],
+  'ss.period': ['Период', 'Period'],
+  'ss.ot': ['С', 'From'],
+  'ss.do': ['По', 'To'],
+  'ss.show': ['Показать', 'Show'],
+  'ss.period_note': [
+    'Все числа ниже, кроме очереди и сертификатов, посчитаны за выбранный период. Одна дата в поле «С» и пустое «По» — это сутки этой даты.',
+    'Every number below except the queue and the certificates is counted over the selected period. A single date in “From” with “To” empty means that one day.',
+  ],
+  'ss.certs_all': ['за всё время', 'all time'],
   'ss.orders': ['Заказов', 'Orders'],
   'ss.revenue': ['Выручка', 'Revenue'],
   'ss.revenue_note': [

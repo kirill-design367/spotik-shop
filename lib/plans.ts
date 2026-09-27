@@ -122,6 +122,26 @@ export function imyaTarifa(planId: string, en: boolean): string {
   return en ? p.nameEn : p.name;
 }
 
+/**
+ * НАЗВАНИЯ ТАРИФОВ, ЗАДАННЫЕ В АДМИНКЕ.
+ *
+ * ⚠️ ЧИТАЕТ ИХ БАЗА (`lib/server/imena.ts`), А ПРИМЕНЯЕТ ЭТА ФУНКЦИЯ,
+ * и живёт она здесь по той же причине, что и `imyaTarifa`: звать её
+ * надо и из КЛИЕНТСКИХ кусков админки, где очередь обновляется сама,
+ * а туда серверный модуль не протащить. Карта имён приезжает пропом.
+ *
+ * ⚠️ КАРТЫ НЕТ ИЛИ ТАРИФА В НЕЙ НЕТ — РАБОТАЕТ ИМЯ ИЗ КОДА. База
+ * недоступна, тариф сняли из каталога, страницу собрали без имён:
+ * во всех трёх случаях надпись обязана остаться читаемой.
+ */
+export type ImenaTarifov = Record<string, { name: string; nameEn: string }>;
+
+export function imyaTarifaIz(imena: ImenaTarifov | null | undefined, planId: string, en: boolean): string {
+  const o = imena?.[planId];
+  if (!o) return imyaTarifa(planId, en);
+  return en ? o.nameEn : o.name;
+}
+
 /** Срок на языке сотрудника: «Полгода» / «6 months». */
 export function srokDlyaSotrudnika(period: number, en: boolean): string {
   const p = PERIODS.find((x) => x.key === period);
