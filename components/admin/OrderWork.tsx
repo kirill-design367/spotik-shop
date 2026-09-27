@@ -144,7 +144,15 @@ export default function OrderWork({
       {moy && otvet.error ? <p className="err">{t(otvet.error, otvet.polya)}</p> : null}
       {moy && otvet.ok ? <p className="ok">{t(otvet.ok, otvet.polya)}</p> : null}
 
-      {moy
+      {/* ⚠️ У ОТМЕНЁННОГО ЗАКАЗА ШАГОВ НЕТ ВОВСЕ, и это не экономия
+          места. Шаг «Завершение» помечался пройденным по признаку
+          «заказ закрыт», а отменённый закрыт тоже, — и на экране
+          стояла зелёная галочка напротив завершения, которого
+          не было, а непройденный аккаунт обещал «откроется, когда
+          будет пройден текущий шаг». У отменённого заказа текущего
+          шага нет и не будет: карточка выше уже говорит, что заказ
+          отменён, почему и куда ушли деньги. */}
+      {moy && z.status !== 'cancelled'
         ? z.slots.map((s) => (
             <ShagAkkaunta
               key={s.id}
@@ -160,7 +168,7 @@ export default function OrderWork({
           ))
         : null}
 
-      {moy ? (
+      {moy && z.status !== 'cancelled' ? (
         <ShagZaversheniya
           z={z}
           t={t}
