@@ -31,12 +31,19 @@ import {
 import { soobshchitKomande } from './notify';
 import { pismoParolNePodoshyol } from './letters';
 import { zavestiSsylku } from './vosstanovlenie';
-import { ponyatPrichinu, prichinaKlientu, slotPrichiny } from '@/lib/admin/prichiny';
+import {
+  ponyatPrichinu,
+  prichinaKlientu,
+  prichinaSPochtoy,
+  slotAkkaunta,
+  vidPismaOtmeny,
+} from '@/lib/admin/prichiny';
 import { zadatImyaTarifa } from './imena';
 import { odna } from './db';
 import { zadatNastroyku, SROK_SERTIFIKATA } from './settings';
 import { shifrGotov } from './crypto';
 import { katalogPolny } from './catalog';
+import { zakazDlyaAdminki } from './views';
 import { CHASTOTY_OCHEREDI } from '@/lib/admin/chastoty';
 import { zapomnitYazyk } from './yazyk';
 import { ponyatYazyk, type Klyuch, type Podstanovki } from '@/lib/admin/slova';
@@ -218,11 +225,53 @@ export async function adminShag(_p: OtvetA, fd: FormData): Promise<OtvetA> {
        не для сотрудника (закон 40, `lib/admin/prichiny.ts`). */
     const kod = ponyatPrichinu(String(fd.get('reason') ?? ''));
     if (!kod) return { error: 'e.pick_reason' };
-    const tekst = prichinaKlientu(kod);
-    const nomer = slotPrichiny(kod);
+    const nomer = slotAkkaunta(kod);
 
-    if (nomer === null) {
-      const r = await otmenitZakaz(zakaz, tekst, s.id, kod === 'zanyata' ? 'pochta_zanyata' : 'obychno');
+    /* ⚠️ ПОЧТУ АККАУНТА БЕРЁМ ЧЕРЕЗ ВИД, А НЕ РАСШИФРОВЫВАЕМ
+       ЗДЕСЬ. Читателей шифротекста ровно столько, сколько названо
+       законом 35, и расшифровка живёт в `lib/server/views.ts`:
+       завести её второй раз в действии значило бы завести второе
+       место, где можно ошибиться в том, кому её показывать (Р-102).
+       Вид отдаёт открытый текст только оператору, который ЭТОТ заказ
+       взял, — а `tolkoSvoy` выше это уже проверил. */
+    let slotId: number | null = null;
+    let pochtaAkkaunta: string | null = null;
+    if (nomer !== null) {
+      const vid = await zakazDlyaAdminki(zakaz, s.id, s.role === 'admin');
+      const sl = vid?.slots.find((x) => x.idx === nomer) ?? null;
+      if (!sl) return { error: 'e.no_slot' };
+      slotId = sl.id;
+      pochtaAkkaunta = sl.clientLogin;
+    }
+    /* ⚠️ В БАЗУ ЛОЖИТСЯ ПРИЧИНА БЕЗ АДРЕСА, А АДРЕС ПОДСТАВЛЯЕТСЯ
+       ПРИ ЧТЕНИИ. Открытый адрес в `cancel_reason` пережил бы
+       семидневное стирание шифротекстов и уехал бы в ночную копию
+       базы, а в карточке админки его увидел бы любой сотрудник,
+       а не только взявший заказ (закон 35, Р-151). Клиенту его
+       подставляет кабинет — законный читатель СВОИХ шифротекстов, —
+       и один раз письмо, здесь же, из уже прочитанной величины.
+
+       ⚠️ НОМЕР КЛАДЁТСЯ ТОЛЬКО У ПРИЧИН, КОТОРЫМ АДРЕС НУЖЕН.
+       Тогда «номер задан» и значит «подставить адрес», и второго
+       признака заводить не надо. У причин про пароль аккаунт назван
+       прямо в тексте словами — им номер в заказе не нужен вовсе. */
+    const tekst = prichinaKlientu(kod);
+    const akkaunt =
+      nomer !== null && prichinaSPochtoy(kod) ? { idx: nomer, pochta: pochtaAkkaunta } : null;
+
+    /* ⚠️ КАКОЕ ПИСЬМО УЙДЁТ, ГОВОРИТ САМ СПИСОК ПРИЧИН, а не наш
+       вывод из соседнего признака: письмо и «дописывается ли адрес» —
+       разные величины, и однажды они разойдутся. */
+    const pismo = vidPismaOtmeny(kod);
+    if (pismo !== 'vosstanovlenie') {
+      const r = await otmenitZakaz(
+        zakaz,
+        tekst,
+        s.id,
+        pismo === 'pochta_zanyata' ? 'pochta_zanyata' : 'obychno',
+        'operator',
+        akkaunt,
+      );
       if (!r.ok) return { error: 'e.cancel_fail' };
       revalidatePath('/admin');
       return { ok: 'k.order_cancelled' };
@@ -232,8 +281,7 @@ export async function adminShag(_p: OtvetA, fd: FormData): Promise<OtvetA> {
        для него больше нет. Прежде порядок «сначала письмо, потом
        отмена» держался проверкой на сервере (закон 37); теперь
        нарушить его нельзя по построению — это один шаг. */
-    const sl = await odna<{ id: string }>('select id from order_slot where order_id = $1 and idx = $2', [zakaz, nomer]);
-    if (!sl) return { error: 'e.no_slot' };
+    if (slotId === null) return { error: 'e.no_slot' };
     const u = await odna<{ email: string }>(
       'select u.email from shop_order o join app_user u on u.id = o.user_id where o.id = $1',
       [zakaz],
@@ -246,12 +294,9 @@ export async function adminShag(_p: OtvetA, fd: FormData): Promise<OtvetA> {
        и про деньги на балансе сказано в самом письме о пароле. */
     const r = await otmenitZakaz(zakaz, tekst, s.id, 'parol');
     if (!r.ok) return { error: 'e.cancel_fail' };
-    const ssylka = await zavestiSsylku(zakaz, Number(sl.id));
+    const ssylka = await zavestiSsylku(zakaz, slotId);
     await pismoParolNePodoshyol(u.email, ssylka);
-    await zapros('update order_slot set recovery_sent_at = now() where id = $1 and order_id = $2', [
-      Number(sl.id),
-      zakaz,
-    ]);
+    await zapros('update order_slot set recovery_sent_at = now() where id = $1 and order_id = $2', [slotId, zakaz]);
     revalidatePath('/admin');
     return { ok: 'k.cancelled_letter' };
   }
@@ -378,11 +423,20 @@ export async function adminSetPrice(_p: OtvetA, fd: FormData): Promise<OtvetA> {
  *
  * Постановка сорок второй итерации: «дать менять названия тарифов:
  * название на сайте (русское) и название для сотрудников
- * (английское)».
+ * (английское)». Сорок третья добавила ТРЕТЬЕ поле — короткое имя
+ * для карточки: «полное (сейчас „Индивидуальный") и короткое
+ * для карточки на главной (сейчас „На одного")».
  *
- * ⚠️ ДВА ПОЛЯ ИЛИ НИ ОДНОГО. Половина имени означала бы, что
- * в русской админке тариф называется по-новому, а в боте по-старому:
- * с виду работает, а на деле это два разных тарифа в одной таблице.
+ * ⚠️ РУССКОЕ И АНГЛИЙСКОЕ — ОБА ИЛИ НИ ОДНОГО. Половина имени
+ * означала бы, что в русской админке тариф называется по-новому,
+ * а в боте по-старому: с виду работает, а на деле это два разных
+ * тарифа в одной таблице.
+ *
+ * ⚠️ КОРОТКОЕ НЕОБЯЗАТЕЛЬНО, и пустым оно остаётся законно: у тарифа
+ * с коротким названием второму полю взяться неоткуда. Пустое значит
+ * «на карточке стоит полное имя» — то же поведение, что было до этой
+ * итерации. Но БЕЗ ПОЛНОГО его не бывает: оно полное уточняет,
+ * а не заменяет.
  *
  * ⚠️ ЛЕНДИНГ ПЕРЕСОБИРАЕТСЯ СРАЗУ. Он статический с `revalidate`
  * (закон 36), и без `revalidatePath` новое имя доезжало бы до главной
@@ -395,8 +449,16 @@ export async function adminSetPlanName(_p: OtvetA, fd: FormData): Promise<OtvetA
   if (!plan) return { error: 'e.pick_plan' };
   const name = String(fd.get('name') ?? '').trim().slice(0, 60);
   const nameEn = String(fd.get('nameEn') ?? '').trim().slice(0, 60);
+  /* ⚠️ КОРОТКОЕ ИМЯ КОРОЧЕ И ПО ПРАВИЛУ: 40 знаков против 60.
+     Оно стоит на карточке тарифа, а её ширина на 320 px — около
+     134 px; предел здесь не украшение, а честная граница поля. */
+  const short = String(fd.get('short') ?? '').trim().slice(0, 40);
   if (Boolean(name) !== Boolean(nameEn)) return { error: 'e.name_empty' };
-  await zadatImyaTarifa(plan, name, nameEn);
+  /* ⚠️ КОРОТКОЕ БЕЗ ПОЛНОГО НЕ БЫВАЕТ: оно уточняет полное имя,
+     а не заменяет его. Одно короткое означало бы тариф, который
+     на карточке называется по-новому, а в письме по-старому. */
+  if (short && !name) return { error: 'e.name_empty' };
+  await zadatImyaTarifa(plan, name, nameEn, short);
   /* ⚠️ ПЕРЕСОБИРАЕМ ТОЛЬКО ЛЕНДИНГ, И БОЛЬШЕ НИЧЕГО НЕ НАДО.
      Оформление, сертификаты и кабинет динамические (`force-dynamic`)
      и читают каталог на каждый запрос; лендинг — единственная

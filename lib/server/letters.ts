@@ -92,12 +92,24 @@ export async function pismoZakazOtmenyon(komu: string, chto: string, naBalans: n
  * а деньги к этому моменту уже лежат на балансе: оформление
  * получается в один клик.
  */
-export async function pismoPochtaZanyata(komu: string, chto: string, naBalans: number): Promise<void> {
+export async function pismoPochtaZanyata(
+  komu: string,
+  chto: string,
+  naBalans: number,
+  /* ⚠️ АДРЕС НАЗЫВАЕТСЯ ПРЯМО, И ЭТО ПОСТАНОВКА СОРОК ТРЕТЬЕЙ
+     ИТЕРАЦИИ. В заказе на двоих «указанная почта» не отвечала
+     на вопрос «какая из двух»: человек вводил два адреса и не мог
+     понять, к какому из них относится отказ. Адреса нет — остаётся
+     прежняя фраза, письмо обязано уйти в любом случае. */
+  pochtaAkkaunta: string | null = null,
+): Promise<void> {
   await otpravit({
     komu,
     tema: 'На эту почту уже есть аккаунт Spotify',
     telo:
-      `Мы попробовали завести новый аккаунт Spotify на указанную почту — она уже занята: ` +
+      (pochtaAkkaunta
+        ? `Мы попробовали завести новый аккаунт Spotify на почту ${pochtaAkkaunta} — она уже занята: `
+        : `Мы попробовали завести новый аккаунт Spotify на указанную почту — она уже занята: `) +
       `аккаунт на ней существует.\n\n` +
       `Что сделать: оформите заказ заново и выберите «Продлить существующий» — ` +
       `мы включим Premium на том аккаунте, который у вас уже есть.\n` +

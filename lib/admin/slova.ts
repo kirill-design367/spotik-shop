@@ -232,14 +232,14 @@ const S = {
   ],
   'w.ends': ['Дата окончания подписки в Spotify', 'Subscription end date in Spotify'],
   'w.ends_hint': [
-    'Перепишите дату с экрана Spotify. От неё считается письмо о продлении за три дня — не от срока заказа.',
-    'Copy the date from the Spotify screen. The renewal reminder three days ahead is counted from it, not from the order term.',
+    'Перепишите дату с экрана Spotify.',
+    'Copy the date from the Spotify screen.',
   ],
   'w.cancel_open': ['Отменить заказ', 'Cancel the order'],
   'w.reason_pick': ['— выберите причину —', '— pick a reason —'],
   'w.reason_hint': [
-    'Причина уходит клиенту дословно. При любой причине про неправильный логин или пароль ему сразу уйдёт письмо со ссылкой на восстановление.',
-    'The reason reaches the client word for word. For any wrong-login-or-password reason they immediately get an email with a recovery link.',
+    'Причина уходит клиенту дословно. При любой причине про неправильный логин или пароль ему сразу уйдёт письмо со ссылкой на восстановление. В причине про занятую почту клиент увидит сам адрес, а не номер аккаунта.',
+    'The reason reaches the client word for word. For any wrong-login-or-password reason they immediately get an email with a recovery link. For the address-already-registered reason the client sees the address itself, not the account number.',
   ],
 
   /* ── Скидки, доступность, частота очереди, генератор ссылок ──── */
@@ -295,10 +295,11 @@ const S = {
   'c.from_default': ['умолчание', 'default'],
   'c.names_h': ['Названия тарифов', 'Plan names'],
   'c.names_hint': [
-    'Русское название видит КЛИЕНТ: главная, сертификаты, оформление, кабинет, письма. Оно же стоит на карточке тарифа, поэтому держите его коротким. Английское видят только сотрудники — бот и английская админка. Оба поля пустые — работает название из кода.',
-    'The Russian name is what the CLIENT sees: landing, certificates, checkout, cabinet, emails. It is also the plan card caption, so keep it short. The English one is for staff only — the bot and the English admin. Leave both empty to fall back to the name from the code.',
+    'Название на сайте видит КЛИЕНТ везде: оформление, кабинет, письма, сертификаты. Название на карточке стоит только на карточке тарифа — на главной и на странице сертификатов; места там мало, держите его коротким. Оставьте его пустым — на карточке встанет название на сайте. Английское видят только сотрудники — бот и английская админка. Все поля пустые — работает название из кода.',
+    'The name on the site is what the CLIENT sees everywhere: checkout, cabinet, emails, certificates. The card caption is used only on the plan card — on the landing and on the certificates page; space there is tight, so keep it short. Leave it empty and the card falls back to the name on the site. The English one is for staff only — the bot and the English admin. Leave every field empty to fall back to the name from the code.',
   ],
   'c.name_ru': ['Название на сайте', 'Name on the site'],
+  'c.name_short': ['Название на карточке', 'Card caption'],
   'c.name_en': ['Название для сотрудников', 'Name for staff'],
 
   'c.cert_h': ['Срок действия сертификата', 'Certificate validity'],
@@ -366,7 +367,10 @@ const S = {
   'e.pick_reason': ['Выберите причину отмены — без неё отменить нельзя.', 'Pick a cancellation reason — cancelling without one is not possible.'],
   'e.no_slot': ['Такого аккаунта в заказе нет.', 'No such account in this order.'],
   'e.bad_step': ['Непонятный шаг.', 'Unknown step.'],
-  'e.name_empty': ['Заполните оба названия или оставьте оба пустыми.', 'Fill in both names or leave both empty.'],
+  'e.name_empty': [
+    'Заполните название на сайте и название для сотрудников — или оставьте все поля пустыми, чтобы вернуть название из кода.',
+    'Fill in both the name on the site and the name for staff — or leave every field empty to fall back to the name from the code.',
+  ],
   'e.bad_rate': ['Такой частоты нет.', 'No such refresh rate.'],
   'e.bad_date': ['Укажите дату окончания скидки.', 'Set the discount end date.'],
   'e.no_price_first': [

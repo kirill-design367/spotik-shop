@@ -11,26 +11,136 @@
  * Английская половина — надпись для сотрудника. Разведи их
  * по двум файлам, и одна и та же фраза получит два источника:
  * поправят её в словаре, а клиенту уйдёт прежняя. Поэтому пара
- * стоит рядом, а клиенту всегда уходит `[0]`.
+ * стоит рядом, а клиенту всегда уходит `klientu`.
+ *
+ * ⚠️ С СОРОК ТРЕТЬЕЙ ИТЕРАЦИИ У ПРИЧИНЫ ЧЕТЫРЕ ПРИЗНАКА, А НЕ ОДИН,
+ * И РАЗВЕСТИ ИХ ПРИШЛОСЬ. Раньше номер аккаунта и «уходит ли письмо
+ * восстановления» были ОДНОЙ величиной: `slotPrichiny` возвращала
+ * номер только у причин про пароль, и вызывающий по `null` понимал
+ * сразу и то, и другое. Причина «почта занята» стала тоже
+ * по-аккаунтной — и на прежнем устройстве она немедленно начала бы
+ * слать письмо о восстановлении пароля. Теперь признаки названы
+ * порознь: `slot` — у какого аккаунта, `pismo` — КАКОЕ письмо
+ * уйдёт клиенту, `spochtoy` — дописать клиенту сам адрес.
  *
  * Файл ОБЩИЙ для сервера и браузера: список выбирает оператор
  * в клиентском компоненте, а текст клиенту подставляет сервер.
  */
 
-export type KodPrichiny = 'parol' | 'parol1' | 'parol2' | 'parol3' | 'zanyata' | 'est_premium' | 'drugoe';
+export type KodPrichiny =
+  | "parol"
+  | "parol1"
+  | "parol2"
+  | "parol3"
+  | "zanyata"
+  | "zanyata1"
+  | "zanyata2"
+  | "zanyata3"
+  | "est_premium"
+  | "drugoe";
 
-/** [что увидит КЛИЕНТ (по-русски, дословно), надпись для сотрудника по-английски] */
-const P: Record<KodPrichiny, readonly [string, string]> = {
-  parol: ['Неправильный логин или пароль', 'Wrong login or password'],
-  parol1: ['Неправильный логин или пароль 1-го аккаунта', 'Wrong login or password, account 1'],
-  parol2: ['Неправильный логин или пароль 2-го аккаунта', 'Wrong login or password, account 2'],
-  parol3: ['Неправильный логин или пароль 3-го аккаунта', 'Wrong login or password, account 3'],
-  zanyata: ['Этот адрес электронной почты уже зарегистрирован', 'This email address is already registered'],
-  est_premium: [
-    'У Вас уже подключен Spotify Premium. Ждём Вас, когда Ваша подписка перестанет действовать! Деньги останутся лежать у Вас на балансе.',
-    'The client already has Spotify Premium. The money stays on their balance.',
-  ],
-  drugoe: ['Другое: свяжитесь с поддержкой', 'Other: contact support'],
+type Zapis = {
+  /** Что увидит КЛИЕНТ — дословно и всегда по-русски. */
+  klientu: string;
+  /**
+   * Надпись оператору по-русски, если она ОТЛИЧАЕТСЯ от текста
+   * клиенту. Отличается она ровно там, где номер аккаунта нужен
+   * СОТРУДНИКУ, а клиенту вместо номера уходит сам адрес.
+   */
+  ru?: string;
+  /** Надпись оператору по-английски. */
+  en: string;
+  /** Номер аккаунта с нуля, если причина про конкретный аккаунт. */
+  slot?: number;
+  /**
+   * КАКОЕ ПИСЬМО УЙДЁТ КЛИЕНТУ. Не задано — обычное «Заказ отменён».
+   *
+   * ⚠️ ЭТО ОБЪЯВЛЕНИЕ, А НЕ ВЫВОД ИЗ СОСЕДНИХ ПРИЗНАКОВ. Выводить
+   * письмо из «дописывается ли адрес» было бы ровно той же миной,
+   * которую эта итерация и разминировала: сегодня адрес дописывают
+   * только причины про занятую почту, а завтра его попросят ещё
+   * куда-нибудь — и туда молча уедет чужое письмо.
+   */
+  pismo?: "vosstanovlenie" | "pochta_zanyata";
+  /** К тексту клиента дописывается почта этого аккаунта. */
+  spochtoy?: true;
+};
+
+const ZANYATA = "Этот адрес электронной почты уже зарегистрирован";
+const ZANYATA_EN = "This email address is already registered";
+
+const P: Record<KodPrichiny, Zapis> = {
+  parol: {
+    klientu: "Неправильный логин или пароль",
+    en: "Wrong login or password",
+    slot: 0,
+    pismo: "vosstanovlenie",
+  },
+  parol1: {
+    klientu: "Неправильный логин или пароль 1-го аккаунта",
+    en: "Wrong login or password, account 1",
+    slot: 0,
+    pismo: "vosstanovlenie",
+  },
+  parol2: {
+    klientu: "Неправильный логин или пароль 2-го аккаунта",
+    en: "Wrong login or password, account 2",
+    slot: 1,
+    pismo: "vosstanovlenie",
+  },
+  parol3: {
+    klientu: "Неправильный логин или пароль 3-го аккаунта",
+    en: "Wrong login or password, account 3",
+    slot: 2,
+    pismo: "vosstanovlenie",
+  },
+
+  /* ⚠️ КЛИЕНТУ ЗДЕСЬ УХОДИТ АДРЕС, А НЕ НОМЕР АККАУНТА, и поэтому
+     надпись оператору отличается от текста клиенту. Номер «2-го
+     аккаунта» человеку не говорит ничего: аккаунты он называл
+     почтой, а не порядком в форме, — а вот сам адрес отвечает
+     на вопрос «какой из двух» сразу и без догадок. */
+  zanyata: {
+    klientu: ZANYATA,
+    en: ZANYATA_EN,
+    slot: 0,
+    pismo: "pochta_zanyata",
+    spochtoy: true,
+  },
+  zanyata1: {
+    klientu: ZANYATA,
+    ru: `${ZANYATA}, 1-й аккаунт`,
+    en: `${ZANYATA_EN}, account 1`,
+    slot: 0,
+    pismo: "pochta_zanyata",
+    spochtoy: true,
+  },
+  zanyata2: {
+    klientu: ZANYATA,
+    ru: `${ZANYATA}, 2-й аккаунт`,
+    en: `${ZANYATA_EN}, account 2`,
+    slot: 1,
+    pismo: "pochta_zanyata",
+    spochtoy: true,
+  },
+  zanyata3: {
+    klientu: ZANYATA,
+    ru: `${ZANYATA}, 3-й аккаунт`,
+    en: `${ZANYATA_EN}, account 3`,
+    slot: 2,
+    pismo: "pochta_zanyata",
+    spochtoy: true,
+  },
+
+  est_premium: {
+    klientu:
+      "У Вас уже подключен Spotify Premium. Ждём Вас, когда Ваша подписка перестанет действовать! Деньги останутся лежать у Вас на балансе.",
+    en: "The client already has Spotify Premium. The money stays on their balance.",
+  },
+  drugoe: {
+    klientu: "Другое: свяжитесь с поддержкой",
+    en: "Other: contact support",
+  },
 };
 
 export const KODY_PRICHIN = Object.keys(P) as KodPrichiny[];
@@ -41,12 +151,27 @@ export function ponyatPrichinu(v: string): KodPrichiny | null {
 
 /** Текст КЛИЕНТУ. Всегда русский, каким бы ни был язык админки. */
 export function prichinaKlientu(k: KodPrichiny): string {
-  return P[k][0];
+  return P[k].klientu;
+}
+
+/**
+ * Дописать к причине адрес аккаунта.
+ *
+ * ⚠️ ФОРМАТ ЖИВЁТ ЗДЕСЬ, А НЕ У ВЫЗЫВАЮЩЕГО. Строку собирает кабинет
+ * при чтении (`moiZakazy`), а в базе её нет вовсе — там лежит только
+ * НОМЕР аккаунта (Р-151). Собери кабинет строку сам — формат получил
+ * бы второй источник и разошёлся бы с этим файлом на первой же
+ * правке текста. Почты нет (ключа нет, шифротекст стёрт) — остаётся
+ * причина без адреса: она обязана дойти в любом случае.
+ */
+export function dopisatAdres(prichina: string, pochta: string | null): string {
+  return pochta ? `${prichina}: ${pochta}` : prichina;
 }
 
 /** Надпись в списке у оператора. */
 export function prichinaSotrudniku(k: KodPrichiny, en: boolean): string {
-  return en ? P[k][1] : P[k][0];
+  const z = P[k];
+  return en ? z.en : (z.ru ?? z.klientu);
 }
 
 /**
@@ -58,26 +183,68 @@ export function prichinaSotrudniku(k: KodPrichiny, en: boolean): string {
  * двоих». Номер там, где аккаунтов больше одного, и только там:
  * клиенту, у которого аккаунт один, «1-го аккаунта» сказало бы,
  * что где-то есть второй.
+ *
+ * ⚠️ «ПОЧТА ЗАНЯТА» ТЕПЕРЬ ТОЖЕ ПО АККАУНТАМ (постановка сорок
+ * третьей итерации). Номер в этом списке видит только СОТРУДНИК:
+ * клиенту уходит адрес.
  */
 export function prichinyDlya(mest: number): KodPrichiny[] {
   const parol: KodPrichiny[] =
-    mest <= 1 ? ['parol'] : mest === 2 ? ['parol1', 'parol2'] : ['parol1', 'parol2', 'parol3'];
-  return [...parol, 'zanyata', 'est_premium', 'drugoe'];
+    mest <= 1
+      ? ["parol"]
+      : mest === 2
+        ? ["parol1", "parol2"]
+        : ["parol1", "parol2", "parol3"];
+  const zanyata: KodPrichiny[] =
+    mest <= 1
+      ? ["zanyata"]
+      : mest === 2
+        ? ["zanyata1", "zanyata2"]
+        : ["zanyata1", "zanyata2", "zanyata3"];
+  return [...parol, ...zanyata, "est_premium", "drugoe"];
 }
 
 /**
- * Номер аккаунта (с нуля), у которого не подошёл пароль, — или `null`,
- * если причина не про пароль.
+ * Номер аккаунта (с нуля), к которому относится причина, — или `null`,
+ * если причина не про конкретный аккаунт.
  *
- * ⚠️ ОТСЮДА И РЕШАЕТСЯ, УХОДИТ ЛИ ПИСЬМО «НЕ ПОДОШЁЛ ПАРОЛЬ»
- * (постановка: «при любой причине про неправильный логин или пароль
- * клиенту автоматически уходит письмо»). Отдельной галочки «это
- * случай пароля» больше нет: она была вторым источником одного
- * и того же признака.
+ * ⚠️ ЭТО НЕ ПРИЗНАК «УХОДИТ ПИСЬМО», И ПУТАТЬ ИХ НЕЛЬЗЯ. До сорок
+ * третьей итерации эта функция отвечала на оба вопроса разом
+ * и называлась `slotPrichiny`; теперь по-аккаунтных причин два вида,
+ * и «есть номер» больше не значит «про пароль». Письмо решает
+ * `vidPismaOtmeny`.
  */
-export function slotPrichiny(k: KodPrichiny): number | null {
-  if (k === 'parol' || k === 'parol1') return 0;
-  if (k === 'parol2') return 1;
-  if (k === 'parol3') return 2;
-  return null;
+export function slotAkkaunta(k: KodPrichiny): number | null {
+  return P[k].slot ?? null;
+}
+
+/**
+ * Какое письмо уйдёт клиенту при этой причине.
+ *
+ * `vosstanovlenie` — «Не подошёл пароль» со ссылкой на страницу
+ * восстановления (постановка сорок второй итерации: «при любой
+ * причине про неправильный логин или пароль клиенту автоматически
+ * уходит письмо»; закон 37). Отдельной галочки «это случай пароля»
+ * нет вовсе: она была вторым источником одного признака.
+ * `pochta_zanyata` — «оформите заново, выбрав продление»: это
+ * не отказ, а развилка. `obychnoe` — «Заказ отменён».
+ */
+export function vidPismaOtmeny(
+  k: KodPrichiny,
+): "vosstanovlenie" | "pochta_zanyata" | "obychnoe" {
+  return P[k].pismo ?? "obychnoe";
+}
+
+/**
+ * Причине нужен АДРЕС аккаунта: клиент увидит его в тексте.
+ *
+ * ⚠️ ОТСЮДА И РЕШАЕТСЯ, КЛАДЁТСЯ ЛИ В ЗАКАЗ НОМЕР АККАУНТА
+ * (`shop_order.cancel_slot_idx`). Номер стоит там ровно у тех
+ * причин, которым адрес нужен, и поэтому «номер задан» и значит
+ * «подставить адрес при чтении» — без второго признака и без
+ * разбора сохранённой строки. Причины про пароль номер не кладут:
+ * у них аккаунт назван прямо в тексте словами.
+ */
+export function prichinaSPochtoy(k: KodPrichiny): boolean {
+  return P[k].spochtoy === true;
 }

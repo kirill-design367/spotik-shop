@@ -5,7 +5,7 @@ import { bazaEst, zapros } from '@/lib/server/db';
 import { katalogPoUmolchaniyu, skidkiIVyklyuchennye, SROKI } from '@/lib/server/catalog';
 import { srokSertifikataDney } from '@/lib/server/settings';
 import { DARIMYE, imyaTarifaIz, srokDlyaSotrudnika } from '@/lib/plans';
-import { imenaTarifov } from '@/lib/server/imena';
+import { imenaSyrye, imenaTarifov } from '@/lib/server/imena';
 import { yazykSotrudnika } from '@/lib/server/yazyk';
 import { slovar } from '@/lib/admin/slova';
 
@@ -37,10 +37,20 @@ export default async function AdminSettings() {
      читалось бы как «имени нет», а имя есть всегда — либо своё,
      либо из кода. Очистить оба и сохранить — это и есть «вернуть
      как было», и так сказано в подсказке. */
+  /* ⚠️ КОРОТКОЕ ИМЯ БЕРЁТСЯ СЫРЫМ ИЗ БАЗЫ, А НЕ ДЕЙСТВУЮЩИМ.
+     Не задано — поле пустое, и правка одного полного имени
+     не тащит за собой старое короткое (Р-152). Строки в базе нет
+     вовсе — показываем короткое имя ИЗ КОДА, и только если оно там
+     есть: у «На двоих» и «На троих» его нет вовсе, и подставлять
+     туда полное имя значило бы сохранить его явным коротким —
+     после чего первое же переименование до карточки не доехало бы.
+     Пустое поле там и значит «на карточке полное имя». */
+  const syrye = await imenaSyrye();
   const plany = DARIMYE.map((p) => ({
     id: p.id,
     name: imena[p.id]?.name ?? p.name,
     nameEn: imena[p.id]?.nameEn ?? p.nameEn,
+    short: syrye[p.id] ? syrye[p.id].short : (p.short ?? ''),
   }));
   const rows: Stroka[] = [];
   for (const p of DARIMYE) {

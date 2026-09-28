@@ -10,6 +10,7 @@
 
 import { odna, zapros } from './db';
 import { poprobovatRasshifrovat } from './crypto';
+import { dopisatAdres } from '@/lib/admin/prichiny';
 import { STATUS_SLOVAMI, type Rezhim, type Status } from './orders';
 import { katalog, naytiTarif, srokKratko } from './catalog';
 import { METKI } from './utm';
@@ -72,6 +73,7 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
     source: string;
     created_at: Date;
     cancel_reason: string | null;
+    cancel_slot_idx: number | null;
     secrets_wiped_at: Date | null;
     expires_at: Date | null;
   }>(
@@ -81,7 +83,7 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
        Отменённые ОПЕРАТОРОМ остаются: там есть что сказать —
        причина и деньги на балансе. */
     `select id, kind, plan_id, period, status, total_kop, balance_kop, money_kop, source,
-            created_at, cancel_reason, secrets_wiped_at, expires_at
+            created_at, cancel_reason, cancel_slot_idx, secrets_wiped_at, expires_at
        from shop_order
       where user_id = $1 and not cancelled_by_client
       order by created_at desc limit 100`,
@@ -131,7 +133,25 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
       poSertifikatu: r.source === 'certificate',
       sozdan: new Date(r.created_at),
       konchaetsya: r.expires_at ? new Date(r.expires_at) : null,
-      prichinaOtmeny: r.cancel_reason,
+      /* ⚠️ АДРЕС ПОДСТАВЛЯЕТСЯ ЗДЕСЬ, А В БАЗЕ ЕГО НЕТ (Р-151).
+         В `cancel_reason` лежит причина без адреса, а рядом — НОМЕР
+         аккаунта, и стоит он только у тех причин, которым адрес
+         нужен. Открытая почта в самой колонке пережила бы
+         семидневное стирание шифротекстов и уехала бы в ночную
+         копию, а в карточке админки её увидел бы любой сотрудник:
+         `cancelReason` там не закрыт признаком `moy` (закон 35).
+         Здесь читатель законный — владелец заказа, и почта уже
+         расшифрована строкой ниже, для его же карточки участника.
+         Шифротекст стёрт — остаётся причина без адреса: мы к этому
+         времени его и правда забыли. */
+      prichinaOtmeny: (() => {
+        if (!r.cancel_reason) return r.cancel_reason;
+        if (r.cancel_slot_idx === null) return r.cancel_reason;
+        const pochta = poprobovatRasshifrovat(
+          svoi.find((x) => x.idx === Number(r.cancel_slot_idx))?.in_login_enc ?? null,
+        );
+        return dopisatAdres(r.cancel_reason, pochta);
+      })(),
       sekretyStyorty: Boolean(r.secrets_wiped_at),
       slots: svoi.map((s) => ({
         idx: s.idx,

@@ -38,7 +38,7 @@ export type Stroka = {
  * строка означала бы два числа на одну цену, и они разошлись бы
  * на первой же правке.
  */
-export type StrokaTarifa = { id: string; name: string; nameEn: string };
+export type StrokaTarifa = { id: string; name: string; nameEn: string; short: string };
 
 export default function Prices({
   rows,
@@ -201,6 +201,7 @@ export default function Prices({
             <tr>
               <th>{t('t.plan')}</th>
               <th>{t('c.name_ru')}</th>
+              <th>{t('c.name_short')}</th>
               <th>{t('c.name_en')}</th>
               <th />
             </tr>
@@ -209,10 +210,15 @@ export default function Prices({
             {plany.map((pl) => (
               <tr key={`im-${pl.id}`}>
                 <td>{pl.id}</td>
-                <td colSpan={3}>
+                <td colSpan={4}>
                   <form action={setImya} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <input type="hidden" name="plan" value={pl.id} />
                     <input type="text" name="name" defaultValue={pl.name} style={{ minWidth: 180 }} />
+                    {/* ⚠️ КОРОТКОЕ ИМЯ — ТО, ЧТО СТОИТ НА КАРТОЧКЕ.
+                        Поле уже остальных намеренно: на 320 px карточке
+                        достаётся около 134 px, и длинное слово туда
+                        не встаёт ни одним читаемым кеглем. */}
+                    <input type="text" name="short" defaultValue={pl.short} style={{ minWidth: 140 }} />
                     <input type="text" name="nameEn" defaultValue={pl.nameEn} style={{ minWidth: 180 }} />
                     <button type="submit" className="btn btn--sm" disabled={busy5}>
                       {t('o.save')}

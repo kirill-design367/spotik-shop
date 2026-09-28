@@ -597,8 +597,6 @@ export async function zavershitZakaz(
  * а не обратно на карту: так велит постановка, и так человек может
  * оформить заново в один клик.
  */
-export const PRICHINA_POCHTA_ZANYATA = 'На эту почту уже есть аккаунт Spotify — новый завести нельзя.';
-
 export async function otmenitZakaz(
   zakaz: number,
   pochemu: string,
@@ -624,6 +622,19 @@ export async function otmenitZakaz(
      достаточно однажды закрыть взятый заказ действием клиента —
      и карточка перестанет исчезать, а понять почему будет нечем. */
   kem: 'klient' | 'operator' = 'operator',
+  /* ⚠️ АККАУНТ, К КОТОРОМУ ОТНОСИТСЯ ПРИЧИНА. В базу ложится
+     ТОЛЬКО НОМЕР: открытый адрес в `cancel_reason` пережил бы
+     семидневное стирание шифротекстов и уехал бы в ночную копию,
+     а в карточке админки его увидел бы любой сотрудник — поле
+     `cancelReason` не закрыто признаком `moy`, в отличие
+     от `clientLogin` (закон 35, миграция 011).
+
+     Почта приходит СВЕРХУ и живёт ровно до отправки письма: она
+     не расшифровывается здесь, потому что читателей шифротекста
+     столько, сколько названо законом. Её нет (ключа нет,
+     шифротекст стёрт) — письмо говорит «на указанную почту»,
+     как говорило раньше. */
+  akkaunt: { idx: number; pochta: string | null } | null = null,
 ): Promise<{ ok: boolean; pochemuNet?: string }> {
   const itog = await vTranzakcii(async (c) => {
     const r = await c.query<{
@@ -660,9 +671,10 @@ export async function otmenitZakaz(
     await c.query(
       `update shop_order
           set status = 'cancelled', closed_at = now(), cancel_reason = $2,
-              operator_id = coalesce(operator_id, $3), cancelled_by_client = $4
+              operator_id = coalesce(operator_id, $3), cancelled_by_client = $4,
+              cancel_slot_idx = $5
         where id = $1`,
-      [zakaz, pochemu.slice(0, 500), staffId, kem === 'klient'],
+      [zakaz, pochemu.slice(0, 500), staffId, kem === 'klient', akkaunt?.idx ?? null],
     );
     return {
       ok: true as const,
@@ -680,7 +692,7 @@ export async function otmenitZakaz(
     const spisok = await katalog();
     const t = naytiTarif(spisok, itog.planId);
     const chto = nazvanieZakaza(t?.name ?? itog.planId, itog.period, itog.kind);
-    if (vid === 'pochta_zanyata') await pismoPochtaZanyata(u.email, chto, itog.vernut);
+    if (vid === 'pochta_zanyata') await pismoPochtaZanyata(u.email, chto, itog.vernut, akkaunt?.pochta ?? null);
     else if (vid !== 'parol') await pismoZakazOtmenyon(u.email, chto, itog.vernut, pochemu);
   }
   await soobshchitKomande({ vid: 'zakaz_otmenyon', zakaz });

@@ -1478,11 +1478,17 @@ console.log('── ПОЧТА ЗАНЯТА: ОТМЕНА, ДЕНЬГИ НА Б�
   await admin.waitForLoadState('networkidle');
   await admin.waitForTimeout(900);
 
-  const posleZ = await p2.query('select status, cancel_reason from shop_order where id = $1', [nomerZ]);
+  const posleZ = await p2.query('select status, cancel_reason, cancel_slot_idx from shop_order where id = $1', [nomerZ]);
   chk('заказ закрыт с причиной «почта уже зарегистрирована»',
     posleZ.rows[0].status === 'cancelled' &&
       posleZ.rows[0].cancel_reason === 'Этот адрес электронной почты уже зарегистрирован',
     `${posleZ.rows[0].status} · ${posleZ.rows[0].cancel_reason}`);
+  /* ⚠️ В БАЗЕ ЛЕЖИТ НОМЕР АККАУНТА, А НЕ АДРЕС (Р-151):
+     открытая почта в `cancel_reason` пережила бы семидневное
+     стирание шифротекстов и уехала бы в ночную копию. */
+  chk('в заказе стоит номер аккаунта, а адреса в причине нет',
+    Number(posleZ.rows[0].cancel_slot_idx) === 0 && !/@/.test(posleZ.rows[0].cancel_reason ?? ''),
+    `слот ${posleZ.rows[0].cancel_slot_idx} · ${posleZ.rows[0].cancel_reason}`);
   const balansStal = Number(
     (await p2.query('select balance_kop from app_user where id = $1', [zz.rows[0].user_id])).rows[0].balance_kop,
   );
@@ -1495,6 +1501,105 @@ console.log('── ПОЧТА ЗАНЯТА: ОТМЕНА, ДЕНЬГИ НА Б�
   chk('клиенту ушло письмо «оформите заново, выбрав продление»',
     /на эту почту уже есть аккаунт Spotify/i.test(server.zhurnal()) &&
       server.zhurnal().includes('Продлить существующий'));
+  chk('письмо называет сам адрес, а не «указанную почту»',
+    server.zhurnal().includes('на почту zanyataya@pochta.test — она уже занята'));
+}
+
+console.log('── ПОЧТА ЗАНЯТА У ВТОРОГО АККАУНТА: КЛИЕНТ ВИДИТ АДРЕС ──');
+{
+  /* Постановка сорок третьей итерации: «Сейчас клиент видит „Этот
+     адрес электронной почты уже зарегистрирован" и не понимает,
+     какой из адресов». Причина стала по-аккаунтной, но клиенту
+     уходит НЕ НОМЕР, а сам адрес — номер аккаунта человеку
+     не говорит ничего, он называл их почтами.
+
+     ⚠️ АДРЕСА У ДВУХ УЧАСТНИКОВ РАЗНЫЕ И ОБА НОВЫЕ: только
+     так видно, что взят ВТОРОЙ, а не первый попавшийся. */
+  const A = 'pervyy-duo@pochta.test';
+  const B = 'vtoroy-duo@pochta.test';
+  await klient.goto(`http://localhost:${PORT}/checkout/?plan=duo&period=1`, { waitUntil: 'networkidle' });
+  const galkaD = klient.locator('input[name="balance"]');
+  if (await galkaD.count()) await galkaD.uncheck();
+  await klient.fill('input[name="login0"]', A);
+  await klient.fill('input[name="password0"]', 'Pervyy-duo-8');
+  await klient.fill('input[name="login1"]', B);
+  await klient.fill('input[name="password1"]', 'Vtoroy-duo-8');
+  await klient.check('input[name="consent"]');
+  await nazhat(klient, 'button[type="submit"]');
+  await nazhat(klient, 'button[type="submit"]');
+  const zd = await p2.query(`select id from shop_order where status = 'paid' order by id desc limit 1`);
+  const nomerD = Number(zd.rows[0].id);
+
+  await admin.goto(`http://localhost:${PORT}/admin/orders/${nomerD}/`, { waitUntil: 'networkidle' });
+  await nazhat(admin, 'button:has-text("Взять")');
+  await admin.locator('.ad__shag[data-sost="seychas"] button:has-text("Отменить заказ")').first().click();
+  await admin.waitForTimeout(400);
+  const spisokD = await admin.$$eval('select[name="reason"] option', (e) => e.map((x) => x.textContent ?? ''));
+  /* ⚠️ НОМЕР АККАУНТА ВИДИТ ТОЛЬКО СОТРУДНИК. Причина без
+     номера («просто уже зарегистрирован») в списке на двоих
+     не предлагается вовсе: она означала бы «у какого-то из двух». */
+  chk('у заказа на двоих причина «уже зарегистрирован» по аккаунтам',
+    spisokD.some((v) => /уже зарегистрирован, 1-й аккаунт/.test(v)) &&
+      spisokD.some((v) => /уже зарегистрирован, 2-й аккаунт/.test(v)) &&
+      !spisokD.some((v) => /^Этот адрес электронной почты уже зарегистрирован$/.test(v.trim())),
+    spisokD.join(' | '));
+  /* ⚠️ «НИ ОДНОГО» ОБЯЗАНО ИДТИ ВМЕСТЕ С «СПИСОК НЕ ПУСТ»:
+     отрицание на пустом списке истинно по построению, и проверка
+     зеленела бы там, где список не отрисовался вовсе. */
+  chk('причин про третий аккаунт у заказа на двоих нет',
+    spisokD.length > 1 && !spisokD.some((v) => /3-й аккаунт/.test(v)), spisokD.join(' | '));
+
+  await admin.selectOption('select[name="reason"]', 'zanyata2');
+  await admin.locator('.ad__shag[data-sost="seychas"] button:has-text("Отменить заказ, деньги")').first().click();
+  await admin.locator('.ad__sure button[type="submit"]').first().click();
+  await admin.waitForLoadState('networkidle');
+  await admin.waitForTimeout(900);
+
+  const posleD = await p2.query(
+    'select status, cancel_reason, cancel_slot_idx from shop_order where id = $1',
+    [nomerD],
+  );
+  /* ⚠️ В БАЗЕ — НОМЕР ВТОРОГО СЛОТА, А НЕ ЕГО АДРЕС. Адрес
+     подставляет кабинет при чтении и один раз письмо при отправке:
+     открытая почта в колонке пережила бы семидневное стирание
+     шифротекстов и уехала бы в ночную копию, а в карточке админки
+     её увидел бы любой сотрудник — `cancelReason` там не закрыт
+     признаком `moy`, в отличие от `clientLogin` (закон 35, Р-151). */
+  chk('в заказе стоит номер ВТОРОГО аккаунта, а адреса в базе нет',
+    posleD.rows[0].status === 'cancelled' &&
+      posleD.rows[0].cancel_reason === 'Этот адрес электронной почты уже зарегистрирован' &&
+      Number(posleD.rows[0].cancel_slot_idx) === 1,
+    `${posleD.rows[0].status} · слот ${posleD.rows[0].cancel_slot_idx} · ${posleD.rows[0].cancel_reason}`);
+  chk('адреса аккаунта в колонке причины нет ни одного',
+    !/@/.test(posleD.rows[0].cancel_reason ?? ''), posleD.rows[0].cancel_reason ?? '');
+
+  /* ⚠️ ПИСЬМО НАЗЫВАЕТ ТОТ ЖЕ АДРЕС, И ТОЛЬКО ЕГО. Спрашиваем
+     журнал за последние строки: адрес первого участника в тело
+     этого письма попасть не имеет права. */
+  const pismo = server.zhurnal().slice(server.zhurnal().lastIndexOf('На эту почту уже есть аккаунт Spotify'));
+  chk('письмо про занятую почту называет второй адрес и не называет первый',
+    pismo.includes(B) && !pismo.includes(A), pismo.replace(/\s+/g, ' ').slice(0, 140));
+
+  /* ⚠️ КАБИНЕТ СПРАШИВАЕМ ЖИВОЙ, А НЕ БАЗУ: показать причину
+     обязан он, и он же разводит её с фразой про баланс на две
+     строки (постановка: «сейчас они слиплись без точки»). */
+  await klient.goto(`http://localhost:${PORT}/cabinet/`, { waitUntil: 'networkidle' });
+  chk('кабинет показывает причину с адресом второго аккаунта',
+    (await klient.innerText('main')).includes(`Этот адрес электронной почты уже зарегистрирован: ${B}`));
+  const dveStroki = await klient.evaluate(() => {
+    const p = [...document.querySelectorAll('main .panel__note')];
+    const i = p.findIndex((e) => /уже зарегистрирован/.test(e.textContent ?? ''));
+    if (i < 0) return null;
+    const sled = p[i + 1];
+    return {
+      prichinaOdna: !/лежат на балансе/.test(p[i].textContent ?? ''),
+      balansRyadom: /Деньги за заказ лежат на балансе/.test(sled?.textContent ?? ''),
+      raznyeKorobki: Boolean(sled) && p[i].getBoundingClientRect().bottom <= sled.getBoundingClientRect().top + 0.5,
+    };
+  });
+  chk('причина и строка про баланс — два разных абзаца, а не одна строка',
+    Boolean(dveStroki) && dveStroki.prichinaOdna && dveStroki.balansRyadom && dveStroki.raznyeKorobki,
+    JSON.stringify(dveStroki));
 }
 
 console.log('── ДАТА ОКОНЧАНИЯ И НАПОМИНАНИЕ ЗА ТРИ ДНЯ ──');
@@ -2129,9 +2234,45 @@ console.log('── НАЗВАНИЕ ТАРИФА МЕНЯЕТСЯ В АДМИН
      не доехала бы — `revalidatePath` зовёт действие, а не запрос. */
   await admin.goto(`http://localhost:${PORT}/admin/settings/`, { waitUntil: 'networkidle' });
   const stroka = admin.locator('form:has(input[name="nameEn"])').filter({ has: admin.locator('input[value="Duo"]') });
+  /* ⚠️ СНАЧАЛА ПРАВИМ ТОЛЬКО ПОЛНОЕ ИМЯ, ОСТАВИВ КОРОТКОЕ
+     ПУСТЫМ. Так проверяется главное про третье поле: пустое короткое
+     значит «на карточке стоит полное», и переименование одного поля
+     доезжает до карточки само. Подставь форма в короткое поле
+     ДЕЙСТВУЮЩЕЕ значение — админ сохранил бы вместе с новым именем
+     старое короткое, и карточка осталась бы с прежним словом: ровно
+     дефект Р-142, вернувшийся через форму. */
   await stroka.locator('input[name="name"]').fill('Для двоих');
+  await stroka.locator('input[name="short"]').fill('');
   await stroka.locator('input[name="nameEn"]').fill('Pair');
   await stroka.locator('button[type="submit"]').click();
+  await admin.waitForLoadState('networkidle');
+  await admin.waitForTimeout(900);
+  {
+    await klient.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' });
+    let k = await klient.$$eval('.card__name', (e) => e.map((x) => x.textContent ?? ''));
+    let n = 1;
+    while (n < 20 && !k.includes('Для двоих')) {
+      await klient.waitForTimeout(500);
+      await klient.reload({ waitUntil: 'networkidle' });
+      k = await klient.$$eval('.card__name', (e) => e.map((x) => x.textContent ?? ''));
+      n += 1;
+    }
+    chk('пустое короткое — на карточке стоит ПОЛНОЕ имя',
+      k.includes('Для двоих') && !k.includes('На двоих'), `заходов ${n}, карточки: ${k.join(' | ')}`);
+    const pusto = await admin.locator('form:has(input[value="Pair"]) input[name="short"]').inputValue();
+    chk('форма показывает незаданное короткое имя ПУСТЫМ', pusto === '', pusto || 'пусто');
+  }
+
+  await admin.goto(`http://localhost:${PORT}/admin/settings/`, { waitUntil: 'networkidle' });
+  const stroka1 = admin.locator('form:has(input[name="nameEn"])').filter({ has: admin.locator('input[value="Pair"]') });
+  await stroka1.locator('input[name="name"]').fill('Для двоих');
+  /* ⚠️ ПОЛЕЙ ТРИ С СОРОК ТРЕТЬЕЙ ИТЕРАЦИИ: полное имя
+     и КОРОТКОЕ для карточки (постановка, открытый вопрос 99).
+     Ставим их РАЗНЫМИ нарочно — иначе не видно, какое из двух
+     куда поехало. */
+  await stroka1.locator('input[name="short"]').fill('Двое');
+  await stroka1.locator('input[name="nameEn"]').fill('Pair');
+  await stroka1.locator('button[type="submit"]').click();
   await admin.waitForLoadState('networkidle');
   await admin.waitForTimeout(900);
   chk('название сохранено', /Название сохранено/.test((await admin.innerText('main.ad')) ?? ''));
@@ -2143,18 +2284,61 @@ console.log('── НАЗВАНИЕ ТАРИФА МЕНЯЕТСЯ В АДМИН
   await klient.goto(`http://localhost:${PORT}/`, { waitUntil: 'networkidle' });
   let glavnaya = await klient.innerText('main');
   let zahodov = 1;
-  while (zahodov < 20 && !/Для двоих/.test(glavnaya)) {
+  /* ⚠️ ЖДЁМ КОРОТКОЕ ИМЯ, А НЕ ПОЛНОЕ, И ЭТО НЕ ПРИДИРКА:
+     с сорок третьей итерации на карточке стоит КОРОТКОЕ, а полное
+     показывается под сеткой — у ВЫБРАННОГО тарифа. По умолчанию
+     выбран первый, то есть «на одного», и «Для двоих» на свежей
+     главной не встречается вовсе. */
+  while (zahodov < 20 && !/Двое/.test(glavnaya)) {
     await klient.waitForTimeout(500);
     await klient.reload({ waitUntil: 'networkidle' });
     glavnaya = await klient.innerText('main');
     zahodov += 1;
   }
-  chk('новое русское название стоит на главной',
-    /Для двоих/.test(glavnaya) && !/На двоих/.test(glavnaya),
-    `заходов ${zahodov}, нашлось «${glavnaya.replace(/\s+/g, ' ').match(/Для двоих|На двоих/)?.[0] ?? 'ни одного'}»`);
+  /* ⚠️ НА КАРТОЧКЕ СТОИТ КОРОТКОЕ, А ПОД СЕТКОЙ ПОЛНОЕ —
+     ровно так и просили. Спрашиваем САМУ карточку, а не текст
+     страницы: под сеткой стоят оба имени разом, и по тексту
+     целиком их не развести. */
+  const kartochki = await klient.$$eval('.card__name', (e) => e.map((x) => x.textContent ?? ''));
+  chk('на карточке главной стоит КОРОТКОЕ имя',
+    kartochki.includes('Двое') && !kartochki.includes('Для двоих') && !kartochki.includes('На двоих'),
+    `заходов ${zahodov}, карточки: ${kartochki.join(' | ')}`);
+
+  /* Выбрали эту карточку — под сеткой обязано встать ПОЛНОЕ имя. */
+  await klient.locator('.card').filter({ has: klient.locator('.card__name', { hasText: 'Двое' }) }).first().click();
+  await klient.waitForTimeout(300);
+  const podSetkoy = await klient.innerText('main');
+  chk('новое русское название стоит на главной под сеткой',
+    /Для двоих/.test(podSetkoy) && !/На двоих/.test(podSetkoy),
+    podSetkoy.replace(/\s+/g, ' ').match(/Для двоих|На двоих/)?.[0] ?? 'ни одного');
+
+  await klient.goto(`http://localhost:${PORT}/sertifikaty/`, { waitUntil: 'networkidle' });
+  const kartySert = await klient.$$eval('.card__name', (e) => e.map((x) => x.textContent ?? ''));
+  chk('на карточке сертификатов стоит КОРОТКОЕ имя',
+    kartySert.includes('Двое') && !kartySert.includes('Для двоих'), kartySert.join(' | '));
+  /* ⚠️ А СВОДКА «К ОПЛАТЕ» НА ТОЙ ЖЕ СТРАНИЦЕ — ПОЛНОЕ ИМЯ:
+     короткое живёт только на карточке, а сводка — это «везде, где
+     сейчас стоит полное» (постановка, Р-152). */
+  await klient.locator('.card').filter({ has: klient.locator('.card__name', { hasText: 'Двое' }) }).first().click();
+  await klient.waitForTimeout(300);
+  const svodka = (await klient.innerText('.sum')) ?? '';
+  chk('в сводке «К оплате» на сертификатах стоит ПОЛНОЕ имя',
+    /Для двоих/.test(svodka) && !/Двое/.test(svodka.replace(/Для двоих/g, '')),
+    svodka.replace(/\s+/g, ' ').slice(0, 80));
 
   await klient.goto(`http://localhost:${PORT}/checkout/?plan=duo&period=1`, { waitUntil: 'networkidle' });
-  chk('новое название стоит и в оформлении', /Для двоих/.test(await klient.innerText('main')));
+  /* ⚠️ В ОФОРМЛЕНИИ ПОЛНОЕ, И КОРОТКОГО ТАМ НЕТ ВОВСЕ:
+     «полное — везде, где сейчас стоит полное» (постановка). */
+  const oform = await klient.innerText('main');
+  chk('новое название стоит и в оформлении', /Для двоих/.test(oform));
+  /* ⚠️ БЕЗ `\b`, И ЭТО НЕ НЕБРЕЖНОСТЬ: в JS граница слова
+     считается по `[A-Za-z0-9_]`, кириллица в неё не входит вовсе,
+     и `/\bДвое\b/` не совпадает НИ С ЧЕМ — проверка была бы
+     вакуумной и зеленела бы на любом коде. Границы тут и не нужно:
+     «Двое» с прописной Д в законных текстах оформления
+     не встречается («Для двоих», «На двоих» — со строчной). */
+  chk('короткого имени в оформлении нет', !/Двое/.test(oform),
+    oform.replace(/\s+/g, ' ').slice(0, 90));
 
   await klient.goto(`http://localhost:${PORT}/cabinet/`, { waitUntil: 'networkidle' });
   chk('новое название стоит и в кабинете', /Для двоих/.test(await klient.innerText('main')));
@@ -2176,11 +2360,12 @@ console.log('── НАЗВАНИЕ ТАРИФА МЕНЯЕТСЯ В АДМИН
   await admin.goto(`http://localhost:${PORT}/admin/settings/`, { waitUntil: 'networkidle' });
   const stroka2 = admin.locator('form:has(input[name="nameEn"])').filter({ has: admin.locator('input[value="Pair"]') });
   await stroka2.locator('input[name="name"]').fill('');
+  await stroka2.locator('input[name="short"]').fill('');
   await stroka2.locator('input[name="nameEn"]').fill('');
   await stroka2.locator('button[type="submit"]').click();
   await admin.waitForLoadState('networkidle');
   await admin.waitForTimeout(900);
-  chk('очистка обоих полей вернула имя из кода',
+  chk('очистка всех полей вернула имя из кода',
     /вернулось к тому, что в коде/.test((await admin.innerText('main.ad')) ?? ''));
   const vBaze2 = await p2.query(`select count(*)::int as n from plan_name where plan_id = 'duo'`);
   chk('строки своего имени в базе не осталось', vBaze2.rows[0].n === 0, `${vBaze2.rows[0].n}`);

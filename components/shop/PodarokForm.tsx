@@ -86,8 +86,13 @@ export default function PodarokForm({ tarify }: { tarify: TarifSCenami[] }) {
       <div className="panel">
         <h2 className="panel__h">К оплате</h2>
         <p className="sum">
+          {/* ⚠️ ЗДЕСЬ ПОЛНОЕ ИМЯ, А НЕ КОРОТКОЕ: короткое живёт только
+              на КАРТОЧКЕ, а это сводка «К оплате» — то самое «везде,
+              где сейчас стоит полное» из постановки сорок третьей
+              итерации. До неё разницы не было вовсе: своё имя
+              из админки вставало и туда, и сюда (Р-152). */}
           <span>
-            Сертификат · {karta.short}, {srokSlovami(period)}
+            Сертификат · {karta.name}, {srokSlovami(period)}
           </span>
           <span className="tnum summa" key={cena?.kop ?? 0}>{cena ? rubli(cena.kop) : '—'}</span>
         </p>

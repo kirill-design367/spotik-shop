@@ -133,8 +133,14 @@ export function imyaTarifa(planId: string, en: boolean): string {
  * ⚠️ КАРТЫ НЕТ ИЛИ ТАРИФА В НЕЙ НЕТ — РАБОТАЕТ ИМЯ ИЗ КОДА. База
  * недоступна, тариф сняли из каталога, страницу собрали без имён:
  * во всех трёх случаях надпись обязана остаться читаемой.
+ *
+ * ⚠️ КОРОТКОЕ ИМЯ СЮДА НЕ ХОДИТ ВОВСЕ. Оно стоит только на карточке
+ * тарифа — на главной и на сертификатах, — а это места КЛИЕНТА,
+ * и приезжает оно туда каталогом. В админке, в боте и в письмах
+ * тариф называется полным именем (постановка сорок третьей
+ * итерации: «полное — везде, где сейчас стоит полное»).
  */
-export type ImenaTarifov = Record<string, { name: string; nameEn: string }>;
+export type ImenaTarifov = Record<string, { name: string; nameEn: string; short: string }>;
 
 export function imyaTarifaIz(imena: ImenaTarifov | null | undefined, planId: string, en: boolean): string {
   const o = imena?.[planId];
