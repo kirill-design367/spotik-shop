@@ -2371,6 +2371,257 @@ console.log('── НАЗВАНИЕ ТАРИФА МЕНЯЕТСЯ В АДМИН
   chk('строки своего имени в базе не осталось', vBaze2.rows[0].n === 0, `${vBaze2.rows[0].n}`);
 }
 
+console.log('── ИСТОРИЯ РАБОТЫ: ДВА СОТРУДНИКА, ПЕРЕДАЧА ИЗ РУК В РУКИ ──');
+{
+  /* Постановка сорок четвёртой итерации: «Сотрудников будет
+     несколько, и администратору нужно видеть, кто какой заказ взял,
+     выполнил или отменил, и сколько сделал каждый… Если заказ
+     передавали из рук в руки, видны все записи по порядку».
+
+     Проверка ровно та, которую просили: два сотрудника, один берёт
+     заказ и возвращает в очередь, второй берёт и выполняет; ещё один
+     заказ отменяется с причиной; администратор видит всё это
+     в карточке, в списке и в статистике за сегодня.
+
+     ⚠️ ВТОРОЙ СОТРУДНИК ЗАВОДИТСЯ СТРОКОЙ В БАЗЕ, А НЕ ВХОДОМ
+     ОКРУЖЕНИЯ: `SPOTIK_ADMINS` уже прочитан при старте службы, и
+     второй адрес оттуда не доехал бы до этого прогона. Роль ему —
+     `operator`: на нём же проверяется, что чужих почт он не видит. */
+  const OPER = 'oper@spotik.test';
+  await p2.query(`insert into staff (email, role) values ($1, 'operator') on conflict (email) do nothing`, [OPER]);
+
+  /** Оформить и оплатить простой заказ; вернуть его номер. */
+  const novyyZakaz = async (pochta, parol) => {
+    await klient.goto(`http://localhost:${PORT}/checkout/?plan=solo&period=1`, { waitUntil: 'networkidle' });
+    const galka = klient.locator('input[name="balance"]');
+    if (await galka.count()) await galka.uncheck();
+    await klient.fill('input[name="login0"]', pochta);
+    await klient.fill('input[name="password0"]', parol);
+    await klient.check('input[name="consent"]');
+    await nazhat(klient, 'button[type="submit"]');
+    await nazhat(klient, 'button[type="submit"]');
+    const r = await p2.query(`select id from shop_order where status = 'paid' order by id desc limit 1`);
+    return Number(r.rows[0].id);
+  };
+
+  const oper = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await voyti(oper, OPER, '/admin/login/');
+
+  /* ── Заказ, который передают из рук в руки ─────────────────────── */
+  const peredannyy = await novyyZakaz('peredacha@pochta.test', 'Peredacha-88');
+
+  await admin.goto(`http://localhost:${PORT}/admin/orders/${peredannyy}/`, { waitUntil: 'networkidle' });
+  await nazhat(admin, 'button:has-text("Взять")');
+  await nazhat(admin, 'button:has-text("Вернуть в очередь")');
+
+  await oper.goto(`http://localhost:${PORT}/admin/orders/${peredannyy}/`, { waitUntil: 'networkidle' });
+  await nazhat(oper, 'button:has-text("Взять")');
+  await shagVpered(oper, '.ad__shag[data-sost="seychas"] button:has-text("отметить выполненным")');
+  await shagVpered(oper, '.ad__shag[data-sost="seychas"] button:has-text("Завершить заказ")');
+
+  const sost = await p2.query('select status from shop_order where id = $1', [peredannyy]);
+  chk('переданный заказ выполнен вторым сотрудником', sost.rows[0].status === 'done', sost.rows[0].status);
+
+  /* ── Заказ, который отменяют с причиной ────────────────────────── */
+  const otmenyonnyy = await novyyZakaz('otmena-44@pochta.test', 'Otmena44-88');
+  await admin.goto(`http://localhost:${PORT}/admin/orders/${otmenyonnyy}/`, { waitUntil: 'networkidle' });
+  await nazhat(admin, 'button:has-text("Взять")');
+  await admin.locator('.ad__shag[data-sost="seychas"] button:has-text("Отменить заказ")').first().click();
+  await admin.waitForTimeout(400);
+  await admin.selectOption('select[name="reason"]', 'drugoe');
+  await admin.locator('.ad__shag[data-sost="seychas"] button:has-text("Отменить заказ, деньги")').first().click();
+  await admin.locator('.ad__sure button[type="submit"]').first().click();
+  await admin.waitForLoadState('networkidle');
+  await admin.waitForTimeout(900);
+
+  /* ── Заказ, оставленный В РАБОТЕ: на нём проверяется колонка
+        очереди «кто взял». ──────────────────────────────────────── */
+  const vRabote = await novyyZakaz('vrabote-44@pochta.test', 'Vrabote44-88');
+  await oper.goto(`http://localhost:${PORT}/admin/orders/${vRabote}/`, { waitUntil: 'networkidle' });
+  await nazhat(oper, 'button:has-text("Взять")');
+
+  /* ── 1. КАРТОЧКА: короткая история по порядку ──────────────────── */
+  await admin.goto(`http://localhost:${PORT}/admin/orders/${peredannyy}/`, { waitUntil: 'networkidle' });
+  const istoriya = await admin.evaluate(() => {
+    const kartochki = [...document.querySelectorAll('.ad__card')];
+    const k = kartochki.find((c) => /История работы/.test(c.querySelector('h3')?.textContent ?? ''));
+    if (!k) return null;
+    return [...k.querySelectorAll('tbody tr')].map((tr) =>
+      [...tr.querySelectorAll('td')].map((td) => (td.textContent ?? '').trim()),
+    );
+  });
+  chk('в карточке есть блок истории', Array.isArray(istoriya) && istoriya.length > 0,
+    istoriya ? `${istoriya.length} записей` : 'блока нет');
+  /* ⚠️ ПРОВЕРЯЕТСЯ ПОРЯДОК И ПАРЫ «СОБЫТИЕ — КТО», а не просто
+     наличие четырёх строк: передача из рук в руки видна только тем,
+     что «Взял» стоит ДВАЖДЫ и во второй раз за другим человеком. */
+  const shagi = (istoriya ?? []).map((r) => `${r[0]}:${r[1]}`);
+  chk('история показывает всю передачу по порядку',
+    shagi.join(' → ') ===
+      `Взял в работу:${ADMIN} → Вернул в очередь:${ADMIN} → Взял в работу:${OPER} → Выполнил:${OPER}`,
+    shagi.join(' → '));
+
+  /* ⚠️ ВРЕМЯ СУДИТСЯ ПО НЕЗАВИСИМО ПОСЧИТАННОМУ МОСКОВСКОМУ ЧАСУ,
+     а не по тому, что показала страница сама себе (Р-47, Р-136).
+     И отдельно — что часовой пояс браузера не решает ничего: та же
+     карточка открывается браузером, живущим в Окленде, и время
+     в ней обязано остаться тем же. */
+  const chasMsk = Number(
+    new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Moscow', hour: '2-digit', hour12: false }).format(new Date()),
+  );
+  const chasUtc = new Date().getUTCHours();
+  const posledn = (istoriya ?? []).at(-1) ?? [];
+  const chasNaEkrane = Number((posledn[2] ?? '').match(/(\d{2}):\d{2}$/)?.[1] ?? -1);
+  chk('время последней записи — московский час',
+    chasNaEkrane === chasMsk, `на экране ${chasNaEkrane}, по Москве ${chasMsk}, UTC ${chasUtc}`);
+
+  const oklend = await browser.newPage({ viewport: { width: 1280, height: 900 }, timezoneId: 'Pacific/Auckland' });
+  await oklend.context().addCookies(await admin.context().cookies());
+  await oklend.goto(`http://localhost:${PORT}/admin/orders/${peredannyy}/`, { waitUntil: 'networkidle' });
+  const uOklenda = await oklend.evaluate(() => {
+    const k = [...document.querySelectorAll('.ad__card')].find((c) =>
+      /История работы/.test(c.querySelector('h3')?.textContent ?? ''),
+    );
+    const tr = k ? [...k.querySelectorAll('tbody tr')].at(-1) : null;
+    return tr ? ([...tr.querySelectorAll('td')].at(-1)?.textContent ?? '').trim() : '';
+  });
+  chk('часовой пояс браузера время истории не двигает',
+    uOklenda === (posledn[2] ?? '—'), `Окленд «${uOklenda}» против «${posledn[2] ?? ''}»`);
+  await oklend.close();
+
+  /* ── 2. СПИСКИ: колонка с почтой сотрудника ────────────────────── */
+  await admin.goto(`http://localhost:${PORT}/admin/`, { waitUntil: 'networkidle' });
+  const vSpiskah = await admin.evaluate((nomera) => {
+    const kletka = (id) => {
+      const a = [...document.querySelectorAll('td a')].find((x) => x.textContent?.trim() === String(id));
+      if (!a) return null;
+      const tr = a.closest('tr');
+      const tabl = a.closest('table');
+      const shapka = [...(tabl?.querySelectorAll('thead th') ?? [])].map((th) => (th.textContent ?? '').trim());
+      const i = shapka.indexOf('Сотрудник');
+      if (i < 0) return null;
+      return ([...tr.querySelectorAll('td')][i]?.textContent ?? '').trim();
+    };
+    return { done: kletka(nomera.done), cancelled: kletka(nomera.cancelled), work: kletka(nomera.work) };
+  }, { done: peredannyy, cancelled: otmenyonnyy, work: vRabote });
+  chk('у выполненного заказа в списке стоит тот, кто ВЫПОЛНИЛ',
+    vSpiskah.done === OPER, `${vSpiskah.done}`);
+  chk('у отменённого заказа в списке стоит тот, кто ОТМЕНИЛ',
+    vSpiskah.cancelled === ADMIN, `${vSpiskah.cancelled}`);
+  chk('у заказа в работе в очереди стоит тот, кто ВЗЯЛ',
+    vSpiskah.work === OPER, `${vSpiskah.work}`);
+
+  /* ── 3. СТАТИСТИКА ЗА СЕГОДНЯ: по сотрудникам ──────────────────── */
+  await admin.goto(`http://localhost:${PORT}/admin/stats/?p=day`, { waitUntil: 'networkidle' });
+  const poLyudyam = await admin.evaluate(() => {
+    const k = [...document.querySelectorAll('.ad__card')].find((c) =>
+      /По сотрудникам/.test(c.querySelector('h3')?.textContent ?? ''),
+    );
+    if (!k) return null;
+    return [...k.querySelectorAll('tbody tr')].map((tr) =>
+      [...tr.querySelectorAll('td')].map((td) => (td.textContent ?? '').trim()),
+    );
+  });
+  chk('в статистике есть блок по сотрудникам', Array.isArray(poLyudyam) && poLyudyam.length > 0,
+    poLyudyam ? `${poLyudyam.length} строк` : 'блока нет');
+  const strokaOper = (poLyudyam ?? []).find((r) => r[0] === OPER);
+  chk('второй сотрудник показан с числом выполненных и разбивкой по тарифам',
+    Boolean(strokaOper) && strokaOper[1] === '1' && /Индивидуальный — 1/.test(strokaOper[2] ?? ''),
+    strokaOper ? strokaOper.join(' | ') : 'строки нет');
+  /* ⚠️ ОТМЕНА В «ВЫПОЛНЕНО» НЕ ИДЁТ. Считаются события `vypolnil`,
+     и заказ, отменённый администратором, его счётчика не трогает. */
+  const vypolnilPoBaze = await p2.query(
+    `select count(*)::int as n from order_event e join staff f on f.id = e.staff_id
+      where e.vid = 'vypolnil' and f.email = $1 and e.created_at > now() - interval '1 day'`,
+    [OPER],
+  );
+  chk('число на экране сходится с журналом в базе',
+    Number(strokaOper?.[1] ?? -1) === vypolnilPoBaze.rows[0].n, `${strokaOper?.[1]} против ${vypolnilPoBaze.rows[0].n}`);
+
+  /* ── 4. АНГЛИЙСКАЯ АДМИНКА ─────────────────────────────────────── */
+  await admin.goto(`http://localhost:${PORT}/admin/orders/${peredannyy}/`, { waitUntil: 'networkidle' });
+  await nazhat(admin, '.ad__lang-btn[value="en"]');
+  const poEn = await admin.innerText('main.ad');
+  chk('в английской админке подписи истории английские',
+    /Work history/.test(poEn) && /Took the order/.test(poEn) && /Put back in the queue/.test(poEn) &&
+      /Completed/.test(poEn) && !/История работы/.test(poEn) && !/Взял в работу/.test(poEn),
+    poEn.replace(/\s+/g, ' ').match(/Work history|История работы/)?.[0] ?? 'ни одного');
+  await admin.goto(`http://localhost:${PORT}/admin/stats/?p=day`, { waitUntil: 'networkidle' });
+  /* ⚠️ ПЕРЕЗАГРУЗКА ПОСЛЕ СМЕНЫ ЯЗЫКА: этот адрес уже открывали
+     этой же вкладкой несколько строк назад, и проверять надо
+     отрисовку, а не то, что осталось у браузера в кэше. */
+  await admin.reload({ waitUntil: 'networkidle' });
+  const statEn = await admin.innerText('main.ad');
+  /* ⚠️ ЗАГОЛОВКИ ТАБЛИЦ СНИМАЮТСЯ `textContent`, А НЕ `innerText`:
+     у `.ad th` стоит `text-transform: uppercase`, и `innerText`
+     отдаёт ОТРИСОВАННЫЙ текст — «ORDERS COMPLETED». Проверка
+     на «Orders completed» честно падала на исправном коде, и это
+     тот же класс, что `innerText` против `textContent` в Р-139:
+     спрашивать надо ту величину, о которой судишь. */
+  const shapkiEn = await admin.evaluate(() => {
+    const k = [...document.querySelectorAll('.ad__card')].find((c) =>
+      /By staff/.test(c.querySelector('h3')?.textContent ?? ''),
+    );
+    return k ? [...k.querySelectorAll('thead th')].map((th) => (th.textContent ?? '').trim()) : null;
+  });
+  chk('в английской статистике блок по сотрудникам английский',
+    Array.isArray(shapkiEn) && shapkiEn.includes('Orders completed') && shapkiEn.includes('Staff') &&
+      /By staff/.test(statEn) && !/По сотрудникам/.test(statEn),
+    `${shapkiEn ? shapkiEn.join(' | ') : 'блока нет'} · русского нет ${!/По сотрудникам/.test(statEn)}`);
+  await admin.goto(`http://localhost:${PORT}/admin/`, { waitUntil: 'networkidle' });
+  await nazhat(admin, '.ad__lang-btn[value="ru"]');
+
+  /* ── 5. ИСПОЛНИТЕЛЬ ЧУЖИХ ПОЧТ НЕ ВИДИТ ────────────────────────── */
+  /* ⚠️ СПРАШИВАЕТСЯ ЖИВАЯ СТРАНИЦА, А НЕ НАША ЖЕ ФУНКЦИЯ ОТБОРА
+     (Р-47). И заказ взят ДЛЯ ЭТОГО: у выполненного им заказа его
+     собственный адрес в карточке стоит законно — «взял …», — поэтому
+     присутствие ЧУЖОГО адреса и есть признак утечки. */
+  await oper.goto(`http://localhost:${PORT}/admin/orders/${peredannyy}/`, { waitUntil: 'networkidle' });
+  const uOperaKarta = await oper.innerText('main.ad');
+  chk('исполнителю блока истории не видно',
+    !/История работы/.test(uOperaKarta) && !uOperaKarta.includes(ADMIN),
+    uOperaKarta.includes(ADMIN) ? 'чужой адрес на экране' : 'чисто');
+  /* ⚠️ И САМИХ ДАННЫХ В РАЗМЕТКЕ НЕТ: спрятать блок стилем значило бы
+     оставить чужие адреса в исходнике страницы (Р-148). */
+  const vRazmetke = await oper.content();
+  chk('чужого адреса нет и в разметке страницы', !vRazmetke.includes(ADMIN));
+
+  await oper.goto(`http://localhost:${PORT}/admin/stats/?p=day`, { waitUntil: 'networkidle' });
+  const uOperaStat = await oper.innerText('main.ad');
+  /* ⚠️ СВОЯ ПОЧТА В ШАПКЕ РАЗДЕЛА — ЗАКОННА И БЫЛА ТАМ ВСЕГДА
+     («у него всё как сейчас»): раздел подписывает, кем ты вошёл.
+     Признак утечки — ЧУЖОЙ адрес, и ищем мы именно его. */
+  chk('исполнителю блока по сотрудникам не видно',
+    !/По сотрудникам/.test(uOperaStat) && !uOperaStat.includes(ADMIN),
+    uOperaStat.includes(ADMIN) ? 'чужой адрес на экране'
+      : (uOperaStat.replace(/\s+/g, ' ').match(/По сотрудникам/)?.[0] ?? 'чисто'));
+  /* Статистика при этом ему по-прежнему открыта целиком (Р-147). */
+  chk('сама статистика исполнителю открыта', /Выручка/.test(uOperaStat) && /По тарифам и срокам/.test(uOperaStat));
+
+  await oper.goto(`http://localhost:${PORT}/admin/`, { waitUntil: 'networkidle' });
+  const shapkiUOpera = await oper.$$eval('table thead th', (e) => e.map((x) => (x.textContent ?? '').trim()));
+  chk('исполнителю колонки с почтой сотрудника не видно',
+    shapkiUOpera.length > 0 && !shapkiUOpera.includes('Сотрудник'), shapkiUOpera.join(' | '));
+
+  /* ── 6. ЧЕГО НЕТ В БАЗЕ, ТО ПУСТО ─────────────────────────────── */
+  /* Постановка, пункт 6: «Если данных нет, поле пустое, без ошибок».
+     Заказ, у которого событий нет вовсе, — это оплаченный
+     и не взятый: у него в колонке прочерк, а карточка открывается
+     с пустой историей. */
+  const nikem = await novyyZakaz('bez-istorii@pochta.test', 'Bezistorii-88');
+  await admin.goto(`http://localhost:${PORT}/admin/orders/${nikem}/`, { waitUntil: 'networkidle' });
+  const pustaya = await admin.evaluate(() => {
+    const k = [...document.querySelectorAll('.ad__card')].find((c) =>
+      /История работы/.test(c.querySelector('h3')?.textContent ?? ''),
+    );
+    return k ? (k.textContent ?? '') : null;
+  });
+  chk('у заказа без событий история пуста и без ошибок',
+    typeof pustaya === 'string' && /Записей нет/.test(pustaya), pustaya === null ? 'блока нет вовсе' : 'есть');
+
+  await oper.close();
+}
+
 chk('ни одной ошибки JavaScript', oshibkiJS.length === 0, oshibkiJS.slice(0, 3).join(' | '));
 
 await p2.end();

@@ -287,6 +287,45 @@ export async function ochered(): Promise<StrokaOcheredi[]> {
   }));
 }
 
+/**
+ * ИСТОРИЯ РАБОТЫ НАД ЗАКАЗОМ: кто взял, кто вернул, кто выполнил,
+ * кто отменил — по порядку.
+ *
+ * ⚠️ ЧИТАЕТСЯ ИЗ ЖУРНАЛА, А НЕ ВЫВОДИТСЯ ИЗ `operator_id`. Колонка
+ * заказа хранит ТЕКУЩЕГО держателя и обнуляется при возврате
+ * в очередь: у заказа, побывавшего у двоих, она помнит только
+ * последнего. Журнал помнит обоих (миграция 012).
+ *
+ * ⚠️ ПОЧТА ПОДСТАВЛЯЕТСЯ ЗДЕСЬ, JOIN'ОМ, А В ЖУРНАЛЕ ЛЕЖИТ НОМЕР.
+ * Один источник у почты — строка `staff`; копия в журнале разошлась
+ * бы с ней на первой же правке (то же, что с номером аккаунта
+ * в причине отмены, Р-151).
+ */
+export type Sobytie = {
+  vid: 'vzyal' | 'vernul' | 'vypolnil' | 'otmenil';
+  /**
+   * Почта сотрудника. `null` значит «сотрудника не было»: так
+   * выглядит отмена САМИМ ПОКУПАТЕЛЕМ, и надпись к ней своя.
+   * «Данных нет» это НЕ значит — у заказа без истории событий нет
+   * вовсе, и список приходит пустым.
+   */
+  email: string | null;
+  /** Момент в ISO; по Москве его раскладывает страница. */
+  kogda: string;
+};
+
+async function istoriyaZakaza(zakaz: number): Promise<Sobytie[]> {
+  const rows = await zapros<{ vid: Sobytie['vid']; email: string | null; created_at: Date }>(
+    `select e.vid, f.email, e.created_at
+       from order_event e
+       left join staff f on f.id = e.staff_id
+      where e.order_id = $1
+      order by e.created_at, e.id`,
+    [zakaz],
+  );
+  return rows.map((r) => ({ vid: r.vid, email: r.email, kogda: new Date(r.created_at).toISOString() }));
+}
+
 export type SlotOperatoru = {
   id: number;
   idx: number;
@@ -325,6 +364,15 @@ export type ZakazOperatoru = {
   balanceKop: number | null;
   moneyKop: number | null;
   cancelReason: string | null;
+  /**
+   * История работы. `null` — СПРАШИВАЛ НЕ АДМИНИСТРАТОР.
+   *
+   * ⚠️ ИСПОЛНИТЕЛЮ ЧУЖИХ ПОЧТ НЕ ВИДНО (постановка, пункт 5), и,
+   * как с деньгами заказа (Р-148), «не показываем» сделано НЕ
+   * РАЗМЕТКОЙ: наружу не уходит сам список. Спрячь мы блок стилем —
+   * адреса всё равно лежали бы в разметке страницы.
+   */
+  istoriya: Sobytie[] | null;
   secretsWiped: boolean;
   /**
    * Дата, которой заранее заполняется поле окончания: сегодня плюс
@@ -421,6 +469,7 @@ export async function zakazDlyaAdminki(id: number, staffId: number, admin: boole
     balanceKop: admin ? Number(r.balance_kop) : null,
     moneyKop: admin ? Number(r.money_kop) : null,
     cancelReason: r.cancel_reason,
+    istoriya: admin ? await istoriyaZakaza(id) : null,
     secretsWiped: Boolean(r.secrets_wiped_at),
     raschyotnayaData: new Date(r.raschyot).toISOString().slice(0, 10),
     slots: slots.map((s) => ({
@@ -504,12 +553,58 @@ export async function vypushchennyeSertifikaty(limit = 200): Promise<Vypushchenn
   });
 }
 
-export type ZakrytyyZakaz = { id: number; status: Status; closedAt: string; planId: string; client: string };
+export type ZakrytyyZakaz = {
+  id: number;
+  status: Status;
+  closedAt: string;
+  planId: string;
+  client: string;
+  /**
+   * Почта сотрудника, который заказ ЗАКРЫЛ: выполнил или отменил.
+   *
+   * `null` — спрашивал не администратор (постановка, пункт 5),
+   * либо закрывал не сотрудник: отменённый покупателем заказ
+   * закрыт без единого сотрудника, и в колонке честно пусто
+   * (пункт 6).
+   */
+  staff: string | null;
+};
 
-export async function zakrytye(limit = 50): Promise<ZakrytyyZakaz[]> {
-  const rows = await zapros<{ id: string; status: Status; closed_at: Date; plan_id: string; email: string }>(
-    `select o.id, o.status, o.closed_at, o.plan_id, u.email
-       from shop_order o join app_user u on u.id = o.user_id
+/**
+ * Недавно закрытые заказы.
+ *
+ * ⚠️ «КТО ЗАКРЫЛ» БЕРЁТСЯ ИЗ ЖУРНАЛА, А НЕ ИЗ `operator_id`, и это
+ * не придирка. Колонка заказа отвечает на вопрос «у кого он сейчас»;
+ * у закрытого заказа это остаток, и читать остаток как «кто это
+ * сделал» — ровно та молчаливая связь, на которой мы уже обжигались
+ * (Р-126). Сегодня оба числа совпадают, потому что закрытие идёт
+ * `where operator_id = $2`; журнал отвечает на тот вопрос, который
+ * задан, и отвечать на него будет и дальше.
+ *
+ * ⚠️ СОБЫТИЕ ВЫБИРАЕТСЯ ПО СОСТОЯНИЮ ЗАКАЗА, а не «последнее
+ * какое попало»: у выполненного это `vypolnil`, у отменённого
+ * `otmenil`. Возьми мы просто последнее — заказ, брошенный обратно
+ * в очередь, показывал бы того, кто его ВЕРНУЛ.
+ */
+export async function zakrytye(limit = 50, admin = false): Promise<ZakrytyyZakaz[]> {
+  const rows = await zapros<{
+    id: string;
+    status: Status;
+    closed_at: Date;
+    plan_id: string;
+    email: string;
+    staff: string | null;
+  }>(
+    `select o.id, o.status, o.closed_at, o.plan_id, u.email, fs.email as staff
+       from shop_order o
+       join app_user u on u.id = o.user_id
+       left join lateral (
+         select e.staff_id from order_event e
+          where e.order_id = o.id
+            and e.vid = case o.status when 'done' then 'vypolnil' when 'cancelled' then 'otmenil' end
+          order by e.created_at desc, e.id desc limit 1
+       ) ev on true
+       left join staff fs on fs.id = ev.staff_id
       where o.status in ('done', 'cancelled')
       order by o.closed_at desc limit $1`,
     [limit],
@@ -520,5 +615,6 @@ export async function zakrytye(limit = 50): Promise<ZakrytyyZakaz[]> {
     closedAt: new Date(r.closed_at).toISOString(),
     planId: r.plan_id,
     client: r.email,
+    staff: admin ? r.staff : null,
   }));
 }

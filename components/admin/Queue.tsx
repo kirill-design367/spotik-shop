@@ -6,6 +6,7 @@ import { adminSetQueueRate, adminTake, type OtvetA } from '@/lib/server/actions-
 import { CHASTOTY_OCHEREDI } from '@/lib/admin/chastoty';
 import { slovar, type Yazyk } from '@/lib/admin/slova';
 import { imyaTarifaIz, srokKratkoDlyaSotrudnika, type ImenaTarifov } from '@/lib/plans';
+import { poMoskve } from '@/lib/admin/vremya';
 
 /**
  * Очередь заказов, которая обновляется сама.
@@ -31,6 +32,7 @@ export default function Queue({
   y,
   sek,
   imena,
+  admin,
 }: {
   rows: StrokaOcheredi[];
   me: string;
@@ -47,6 +49,18 @@ export default function Queue({
    * и его правка доезжает перезагрузкой раздела.
    */
   imena: ImenaTarifov;
+  /**
+   * Показывать ли колонку с почтой сотрудника.
+   *
+   * ⚠️ ЭТО ЕДИНСТВЕННОЕ МЕСТО ИТЕРАЦИИ, ГДЕ РЕШАЕТ РАЗМЕТКА, А НЕ
+   * СЕРВЕР, и причина названа: почта держателя (`operator`) ездит
+   * в очередь ВСЕМ сотрудникам с двадцать седьмой итерации и видна
+   * в колонке состояния — «взят: …». Постановка сорок четвёртой
+   * прямо говорит «у него всё как сейчас», значит убирать это
+   * из выдачи нельзя: очередь перестала бы показывать, кто держит
+   * заказ. Колонка же — новая, и она администраторская.
+   */
+  admin: boolean;
 }) {
   const t = slovar(y);
   const [spisok, setSpisok] = useState(rows);
@@ -123,6 +137,7 @@ export default function Queue({
               <th>{t('t.term')}</th>
               <th>{t('t.paid')}</th>
               <th>{t('t.state')}</th>
+              {admin ? <th>{t('t.staff')}</th> : null}
               <th />
             </tr>
           </thead>
@@ -146,7 +161,7 @@ export default function Queue({
                 </td>
                 <td>{r.people}</td>
                 <td>{srokKratkoDlyaSotrudnika(r.period, y === 'en')}</td>
-                <td>{r.paidAt ? new Date(r.paidAt).toLocaleString(y === 'en' ? 'en-GB' : 'ru-RU') : '—'}</td>
+                <td className="tnum">{r.paidAt ? poMoskve(r.paidAt, y === 'en') : '—'}</td>
                 <td>
                   {r.status === 'paid' ? (
                     <span className="ad__tag ad__tag--paid">{t('q.new')}</span>
@@ -156,6 +171,11 @@ export default function Queue({
                     </span>
                   )}
                 </td>
+                {/* ⚠️ «КТО ВЗЯЛ» — ЭТО ТЕКУЩИЙ ДЕРЖАТЕЛЬ, и берётся он
+                    из строки заказа: у заказа В РАБОТЕ это один и тот же
+                    человек. У непринятого держателя нет вовсе, и клетка
+                    честно пустая (постановка, пункт 6). */}
+                {admin ? <td>{r.operator ?? '—'}</td> : null}
                 <td>
                   {r.status === 'paid' ? (
                     <form action={adminTake}>

@@ -52,7 +52,13 @@ export default async function AdminStats({
   const odin = (k: string) => (Array.isArray(sp[k]) ? (sp[k]?.[0] ?? '') : (sp[k] ?? ''));
   const period = ponyatPeriod(odin('p'), odin('ot'), odin('do'));
 
-  const [d, imena] = await Promise.all([svodka(period), imenaTarifov()]);
+  /* ⚠️ БЛОК ПО СОТРУДНИКАМ — ТОЛЬКО АДМИНИСТРАТОРУ (постановка,
+     пункт 5), и признак едет в ВЫБОРКУ: чужие почты исполнителю
+     не отдаются вовсе, а не прячутся разметкой (Р-148). Сам раздел
+     статистики при этом открыт обеим ролям с сорок второй итерации
+     (Р-147) — это разные вещи. */
+  const admin = s.role === 'admin';
+  const [d, imena] = await Promise.all([svodka(period, admin), imenaTarifov()]);
   const imyaPerioda: Record<string, Klyuch> = { day: 'ss.day', week: 'ss.week', month: 'ss.month' };
   const vremya = (min: number) => t('ss.hm', { h: Math.floor(min / 60), m: min % 60 });
   const vybran = period.vid === 'daty' ? '' : period.vid;
@@ -165,6 +171,47 @@ export default async function AdminStats({
           </div>
         )}
       </div>
+
+      {/* ── ПО СОТРУДНИКАМ ────────────────────────────────────────
+          Постановка: «почта сотрудника, сколько заказов он выполнил,
+          с разбивкой по тарифам». Период — тот же, что выбран выше
+          на экране: он один на всю страницу (Р-147). */}
+      {d.poSotrudnikam ? (
+        <div className="ad__card">
+          <h3>{t('ss.by_staff')}</h3>
+          {!d.poSotrudnikam.length ? (
+            <p className="hint">{t('ss.none')}</p>
+          ) : (
+            <div className="ad__scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t('t.staff')}</th>
+                    <th>{t('ss.done_n')}</th>
+                    <th>{t('ss.by_plan')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.poSotrudnikam.map((r) => (
+                    <tr key={r.email}>
+                      <td>{r.email}</td>
+                      <td className="tnum">{r.zakazov}</td>
+                      {/* Названия тарифов — надписи, и в английской
+                          админке они английские (закон 40). */}
+                      <td>
+                        {r.tarify
+                          .map((x) => `${imyaTarifaIz(imena, x.planId, y === 'en')} — ${x.zakazov}`)
+                          .join(' · ')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="hint">{t('ss.by_staff_note')}</p>
+        </div>
+      ) : null}
 
       <div className="ad__card">
         <h3>{t('ss.sources')}</h3>

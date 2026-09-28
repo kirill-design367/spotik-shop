@@ -12,6 +12,7 @@ import { yazykSotrudnika } from '@/lib/server/yazyk';
 import { slovar, sostoyanie } from '@/lib/admin/slova';
 import { imyaTarifaIz } from '@/lib/plans';
 import { imenaTarifov } from '@/lib/server/imena';
+import { poMoskve } from '@/lib/admin/vremya';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,8 +30,12 @@ export default async function AdminHome() {
   if (!bazaEst()) return <p className="err">{t('o.no_db')}</p>;
   if (!s) redirect('/admin/login/');
 
-  const [rows, closed, imena] = await Promise.all([ochered(), zakrytye(20), imenaTarifov()]);
-  const kogda = y === 'en' ? 'en-GB' : 'ru-RU';
+  /* ⚠️ ПРИЗНАК РОЛИ ЕДЕТ В ВЫБОРКУ, А НЕ ТОЛЬКО В РАЗМЕТКУ: почты
+     сотрудников исполнителю сервер не отдаёт вовсе (постановка сорок
+     четвёртой итерации, пункт 5; то же, что с деньгами заказа, Р-148). */
+  const admin = s.role === 'admin';
+  const [rows, closed, imena] = await Promise.all([ochered(), zakrytye(20, admin), imenaTarifov()]);
+  const en = y === 'en';
 
   return (
     <>
@@ -56,7 +61,7 @@ export default async function AdminHome() {
         </ul>
       </div>
 
-      <Queue rows={rows} me={s.email} y={y} sek={s.queueSec} imena={imena} />
+      <Queue rows={rows} me={s.email} y={y} sek={s.queueSec} imena={imena} admin={admin} />
 
       <h2>{t('q.closed')}</h2>
       <div className="ad__scroll">
@@ -67,6 +72,7 @@ export default async function AdminHome() {
               <th>{t('t.plan')}</th>
               <th>{t('t.client')}</th>
               <th>{t('t.state')}</th>
+              {admin ? <th>{t('t.staff')}</th> : null}
               <th>{t('t.closed')}</th>
             </tr>
           </thead>
@@ -79,7 +85,12 @@ export default async function AdminHome() {
                 <td>{imyaTarifaIz(imena, r.planId, y === 'en')}</td>
                 <td>{r.client}</td>
                 <td>{sostoyanie(t, r.status)}</td>
-                <td>{new Date(r.closedAt).toLocaleString(kogda)}</td>
+                {/* ⚠️ «КТО ЗАКРЫЛ» ПРИХОДИТ ИЗ ЖУРНАЛА (см. `zakrytye`).
+                    Пусто — значит сотрудника в этом событии не было:
+                    так выглядит заказ, отменённый самим покупателем,
+                    и старый заказ, о котором в базе ничего нет. */}
+                {admin ? <td>{r.staff ?? '—'}</td> : null}
+                <td className="tnum">{poMoskve(r.closedAt, en)}</td>
               </tr>
             ))}
           </tbody>

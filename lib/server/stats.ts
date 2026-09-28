@@ -37,6 +37,28 @@ import { odna, zapros } from './db';
 export type StrokaTarifa = { planId: string; period: number; zakazov: number; vyruchkaKop: number };
 export type StrokaIstochnika = { istochnik: string | null; zakazov: number; dolya: number };
 
+/**
+ * СКОЛЬКО СДЕЛАЛ КАЖДЫЙ СОТРУДНИК за выбранный период.
+ *
+ * ⚠️ СЧИТАЮТСЯ СОБЫТИЯ ЖУРНАЛА, А НЕ ЗАКАЗЫ ПО `operator_id`.
+ * Вопрос здесь исторический — «сколько он ВЫПОЛНИЛ», — а
+ * `operator_id` хранит текущего держателя: у закрытого заказа это
+ * остаток, и читать остаток как «кто это сделал» нельзя (то же
+ * рассуждение, что в `zakrytye`). Журнал заведён миграцией 012
+ * и засыпан историей старых заказов, поэтому «до этой итерации»
+ * в таблице тоже видно.
+ *
+ * ⚠️ ПЕРИОД БЕРЁТСЯ ПО ВРЕМЕНИ СОБЫТИЯ, а не по оплате заказа:
+ * спрашивают, сколько человек сделал ЗА ЭТИ ДНИ, а оплатить заказ
+ * могли месяцем раньше.
+ */
+export type StrokaSotrudnika = {
+  email: string;
+  zakazov: number;
+  /** Разбивка по тарифам; `planId` сырой — переводит страница. */
+  tarify: { planId: string; zakazov: number }[];
+};
+
 export type BystryPeriod = 'day' | 'week' | 'month';
 
 /** Быстрый период или пара календарных дат. */
@@ -55,6 +77,14 @@ export type Svodka = {
   /** Минуты. `null` — выполненных заказов за период не было. */
   srednyayaMinut: number | null;
   tarify: StrokaTarifa[];
+  /**
+   * По сотрудникам. `null` — СПРАШИВАЛ НЕ АДМИНИСТРАТОР.
+   *
+   * ⚠️ ИСПОЛНИТЕЛЮ ЧУЖИХ ПОЧТ НЕ ВИДНО (постановка, пункт 5),
+   * и, как с деньгами заказа (Р-148), наружу не уходит сам список:
+   * спрятать блок стилем значило бы оставить адреса в разметке.
+   */
+  poSotrudnikam: StrokaSotrudnika[] | null;
   sertifikatovKupleno: number;
   sertifikatovAktivirovano: number;
   istochniki: StrokaIstochnika[];
@@ -83,7 +113,10 @@ export function ponyatPeriod(vid: string, ot: string, doDaty: string): Period {
  * встретит чужую строку. Имя колонки — единственное, что попадает
  * в текст запроса, и оно приходит из этого же файла, а не снаружи.
  */
-function granicy(p: Period, kolonka: 'paid_at' | 'closed_at' = 'paid_at'): { uslovie: string; params: string[] } {
+function granicy(
+  p: Period,
+  kolonka: 'paid_at' | 'closed_at' | 'e.created_at' = 'paid_at',
+): { uslovie: string; params: string[] } {
   if (p.vid === 'daty') {
     return {
       uslovie: `${kolonka} >= $1::date and ${kolonka} < ($2::date + 1)`,
@@ -94,7 +127,7 @@ function granicy(p: Period, kolonka: 'paid_at' | 'closed_at' = 'paid_at'): { usl
   return { uslovie: `${kolonka} > now() - ($1)::interval`, params: [sql] };
 }
 
-export async function svodka(p: Period): Promise<Svodka> {
+export async function svodka(p: Period, admin = false): Promise<Svodka> {
   const g = granicy(p);
 
   const itog = await odna<{ n: string; kop: string }>(
@@ -168,12 +201,46 @@ export async function svodka(p: Period): Promise<Svodka> {
     dolya: vsego ? Math.round((Number(r.n) / vsego) * 100) : 0,
   }));
 
+  /* ⚠️ ОДИН ЗАПРОС НА ИТОГ И НА РАЗБИВКУ. Две выборки — «сколько
+     всего» и «по тарифам» — считали бы одно и то же дважды и разошлись
+     бы на границе периода: между ними прошло бы время, и событие,
+     случившееся в этот зазор, попало бы только во вторую. Итог
+     складывается из разбивки здесь же.
+
+     ⚠️ ЗАПРОС ИДЁТ, ТОЛЬКО ЕСЛИ СПРАШИВАЕТ АДМИНИСТРАТОР: адресам
+     сотрудников незачем даже подниматься из базы, когда показывать
+     их некому. */
+  let poSotrudnikam: StrokaSotrudnika[] | null = null;
+  if (admin) {
+    const gs = granicy(p, 'e.created_at');
+    const rows = await zapros<{ email: string; plan_id: string; n: string }>(
+      `select f.email, o.plan_id, count(*)::text as n
+         from order_event e
+         join staff f on f.id = e.staff_id
+         join shop_order o on o.id = e.order_id
+        where e.vid = 'vypolnil' and ${gs.uslovie}
+        group by f.email, o.plan_id
+        order by f.email, count(*) desc, o.plan_id`,
+      gs.params,
+    );
+    const po = new Map<string, StrokaSotrudnika>();
+    for (const r of rows) {
+      const n = Number(r.n);
+      const est = po.get(r.email) ?? { email: r.email, zakazov: 0, tarify: [] };
+      est.zakazov += n;
+      est.tarify.push({ planId: r.plan_id, zakazov: n });
+      po.set(r.email, est);
+    }
+    poSotrudnikam = [...po.values()].sort((a, b) => b.zakazov - a.zakazov || a.email.localeCompare(b.email));
+  }
+
   return {
     zakazov: Number(itog?.n ?? 0),
     vyruchkaKop: Number(itog?.kop ?? 0),
     vOcheredi: Number(och?.n ?? 0),
     srednyayaMinut: sr?.min == null ? null : Number(sr.min),
     tarify,
+    poSotrudnikam,
     sertifikatovKupleno: Number(sert?.kupleno ?? 0),
     sertifikatovAktivirovano: Number(sert?.aktivirovano ?? 0),
     istochniki,

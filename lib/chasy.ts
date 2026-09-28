@@ -30,6 +30,14 @@
  * оформление — она подсказка.
  */
 
+/**
+ * ЗОНА СЕРВИСА. Одна строка на весь проект, и берут её отсюда все,
+ * кому нужна Москва: и `chasPoMoskve` ниже, и время в админке
+ * (`lib/admin/vremya.ts`). Вторая копия имени зоны разошлась бы
+ * с первой ровно тогда, когда её однажды решат поменять.
+ */
+export const ZONA_MSK = 'Europe/Moscow';
+
 /** Рабочий день начинается в 10:00 по Москве. */
 export const CHAS_OT = 10;
 /** И кончается в 22:00: в 21:59 заказ ещё берут в работу. */
@@ -44,7 +52,7 @@ export const CHASY_SLOVAMI = `${CHASY_OT_DO} по Москве`;
 export function chasPoMoskve(kogda: Date = new Date()): number {
   try {
     const v = new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'Europe/Moscow',
+      timeZone: ZONA_MSK,
       hour: '2-digit',
       hour12: false,
     }).format(kogda);

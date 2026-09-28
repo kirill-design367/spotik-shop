@@ -121,6 +121,25 @@ const S = {
   't.until': ['Годен до', 'Valid until'],
   't.activated_by': ['Активировал', 'Activated by'],
   't.order': ['Заказ', 'Order'],
+  't.staff': ['Сотрудник', 'Staff'],
+  't.when': ['Когда', 'When'],
+  't.event': ['Событие', 'Event'],
+
+  /* ── История работы над заказом ──────────────────────────────── */
+  'h.h': ['История работы', 'Work history'],
+  'h.note': [
+    'Время московское. Записи идут по порядку, включая передачи между сотрудниками.',
+    'Times are Moscow time. Records are in order, including handovers between staff.',
+  ],
+  'h.none': ['Записей нет.', 'No records.'],
+  'h.vzyal': ['Взял в работу', 'Took the order'],
+  'h.vernul': ['Вернул в очередь', 'Put back in the queue'],
+  'h.vypolnil': ['Выполнил', 'Completed'],
+  'h.otmenil': ['Отменил', 'Cancelled'],
+  /* ⚠️ НЕ «нет данных», А ИМЕННО ПОКУПАТЕЛЬ: сотрудника в этом
+     событии не было вовсе, и сказать это прямо честнее, чем оставить
+     пустое место. */
+  'h.klient': ['покупатель', 'the client'],
 
   /* ── Состояния заказа ────────────────────────────────────────── */
   'st.new': ['новый', 'new'],
@@ -445,6 +464,12 @@ const S = {
   ],
   'ss.avg_none': ['Выполненных заказов ещё не было.', 'No finished orders yet.'],
   'ss.by_plan': ['По тарифам и срокам', 'By plan and term'],
+  'ss.by_staff': ['По сотрудникам', 'By staff'],
+  'ss.done_n': ['Выполнено заказов', 'Orders completed'],
+  'ss.by_staff_note': [
+    'Считаются заказы, ВЫПОЛНЕННЫЕ за выбранный период: время берётся по самому выполнению, а не по оплате заказа.',
+    'Counts orders COMPLETED within the selected period: the time taken is that of the completion itself, not of the payment.',
+  ],
   'ss.certs': ['Сертификаты', 'Certificates'],
   'ss.certs_bought': ['Куплено', 'Bought'],
   'ss.certs_used': ['Активировано', 'Activated'],

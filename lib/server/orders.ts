@@ -412,6 +412,35 @@ export async function zakazPoSertifikatu(opts: {
 
 /* ── Работа оператора ──────────────────────────────────────────── */
 
+/**
+ * ЗАПИСЬ В ЖУРНАЛ РАБОТЫ: кто и что сделал с заказом.
+ *
+ * Постановка сорок четвёртой итерации: администратор должен видеть,
+ * «кто взял заказ, кто вернул его в очередь, кто выполнил, кто
+ * отменил», и все записи по порядку, если заказ передавали из рук
+ * в руки.
+ *
+ * ⚠️ ПИШЕТСЯ В ТОЙ ЖЕ ТРАНЗАКЦИИ, ЧТО И САМА ПЕРЕМЕНА СОСТОЯНИЯ.
+ * Состояния «заказ выполнен, а записи об этом нет» быть не должно:
+ * история потеряла бы ровно то событие, ради которого её и завели.
+ * Поэтому все четыре двери принимают клиент транзакции, а не ходят
+ * в базу сами.
+ *
+ * ⚠️ КЛАДЁТСЯ НОМЕР СОТРУДНИКА, А НЕ ПОЧТА. Почта живёт в `staff`
+ * одной строкой, и копия в журнале разошлась бы с ней на первой же
+ * правке; подставляется она при чтении (Р-151, миграция 012).
+ */
+type VidSobytiya = 'vzyal' | 'vernul' | 'vypolnil' | 'otmenil';
+
+async function zapisatSobytie(
+  c: PoolClient,
+  zakaz: number,
+  staffId: number | null,
+  vid: VidSobytiya,
+): Promise<void> {
+  await c.query('insert into order_event (order_id, staff_id, vid) values ($1, $2, $3)', [zakaz, staffId, vid]);
+}
+
 export async function vzyatZakaz(zakaz: number, staffId: number): Promise<boolean> {
   return vTranzakcii(async (c) => {
     const r = await c.query<{ status: Status; operator_id: string | null }>(
@@ -425,17 +454,31 @@ export async function vzyatZakaz(zakaz: number, staffId: number): Promise<boolea
       zakaz,
       staffId,
     ]);
+    await zapisatSobytie(c, zakaz, staffId, 'vzyal');
     return true;
   });
 }
 
+/**
+ * Вернуть заказ в очередь.
+ *
+ * ⚠️ ОБНУЛЯЕТ `operator_id` И `taken_at`, И ИМЕННО ПОЭТОМУ НУЖЕН
+ * ЖУРНАЛ. После этой строки в заказе не остаётся ни следа того,
+ * что он у кого-то был: «кто его брал до передачи» — вопрос,
+ * на который сама строка заказа ответить не может ни сейчас,
+ * ни потом. Запись идёт В ТОЙ ЖЕ транзакции, что и обнуление.
+ */
 export async function vernutVOchered(zakaz: number, staffId: number): Promise<boolean> {
-  const r = await zapros(
-    `update shop_order set status = 'paid', operator_id = null, taken_at = null
-      where id = $1 and status = 'in_work' and operator_id = $2 returning id`,
-    [zakaz, staffId],
-  );
-  return r.length > 0;
+  return vTranzakcii(async (c) => {
+    const r = await c.query(
+      `update shop_order set status = 'paid', operator_id = null, taken_at = null
+        where id = $1 and status = 'in_work' and operator_id = $2 returning id`,
+      [zakaz, staffId],
+    );
+    if (!r.rows.length) return false;
+    await zapisatSobytie(c, zakaz, staffId, 'vernul');
+    return true;
+  });
 }
 
 /** Выданные оператором доступы к НОВОМУ аккаунту. Шифруются те же. */
@@ -558,16 +601,24 @@ export async function zavershitZakaz(
      оплатой и выдачей стоит очередь оператора: посчитай мы от оплаты —
      человек потерял бы эти часы, и потерял бы их по нашей вине.
      Срок тарифа приходит числом месяцев из той же строки заказа. */
-  const r = await zapros(
-    `update shop_order set status = 'done', closed_at = now(),
-            expires_at = least(
-              $3::date::timestamptz,
-              case when $4 then now() + (period || ' months')::interval else null end
-            )
-      where id = $1 and status = 'in_work' and operator_id = $2 returning user_id`,
-    [zakaz, staffId, rannyaya, estBezDaty],
-  );
-  if (!r.length) return { ok: false, pochemu: 'Заказ не в работе у вас.' };
+  /* ⚠️ ЗАКРЫТИЕ И ЗАПИСЬ В ЖУРНАЛ — ОДНА ТРАНЗАКЦИЯ. «Выполнил»
+     спрашивают потом у журнала, и заказ, закрытый без записи, выпал
+     бы из истории и из статистики по сотрудникам разом. */
+  const zakryt = await vTranzakcii(async (c) => {
+    const r = await c.query<{ user_id: string }>(
+      `update shop_order set status = 'done', closed_at = now(),
+              expires_at = least(
+                $3::date::timestamptz,
+                case when $4 then now() + (period || ' months')::interval else null end
+              )
+        where id = $1 and status = 'in_work' and operator_id = $2 returning user_id`,
+      [zakaz, staffId, rannyaya, estBezDaty],
+    );
+    if (!r.rows.length) return false;
+    await zapisatSobytie(c, zakaz, staffId, 'vypolnil');
+    return true;
+  });
+  if (!zakryt) return { ok: false, pochemu: 'Заказ не в работе у вас.' };
   const u = await odna<{ email: string; plan_id: string; period: number; kind: 'plan' | 'certificate' }>(
     `select u.email, o.plan_id, o.period, o.kind
        from shop_order o join app_user u on u.id = o.user_id where o.id = $1`,
@@ -676,6 +727,12 @@ export async function otmenitZakaz(
         where id = $1`,
       [zakaz, pochemu.slice(0, 500), staffId, kem === 'klient', akkaunt?.idx ?? null],
     );
+    /* ⚠️ У ОТМЕНЫ ПОКУПАТЕЛЕМ СОТРУДНИКА НЕТ ВОВСЕ, и запись всё
+       равно идёт: история скажет «покупатель», а не промолчит.
+       Пустой номер здесь значит именно это и ничего другого —
+       единственный путь сюда без сотрудника лежит из кабинета
+       (`deystvieOtmenitSvoy`, kem = 'klient'). */
+    await zapisatSobytie(c, zakaz, staffId, 'otmenil');
     return {
       ok: true as const,
       vernut,

@@ -1,11 +1,12 @@
 'use client';
 
 import { useActionState, useState } from 'react';
-import type { ZakazOperatoru, SlotOperatoru } from '@/lib/server/views';
+import type { ZakazOperatoru, SlotOperatoru, Sobytie } from '@/lib/server/views';
 import { adminRelease, adminShag, adminTake, type OtvetA } from '@/lib/server/actions-admin';
-import { slovar, sostoyanie, type Perevod, type Yazyk } from '@/lib/admin/slova';
+import { slovar, sostoyanie, type Klyuch, type Perevod, type Yazyk } from '@/lib/admin/slova';
 import { imyaTarifaIz, srokKratkoDlyaSotrudnika, type ImenaTarifov } from '@/lib/plans';
 import { prichinaSotrudniku, prichinyDlya } from '@/lib/admin/prichiny';
+import { poMoskve } from '@/lib/admin/vremya';
 
 /**
  * Рабочий экран оператора: ЗАКАЗ РАЗБИТ НА ШАГИ.
@@ -137,6 +138,11 @@ export default function OrderWork({
         {z.secretsWiped ? <p className="hint">{t('z.wiped')}</p> : null}
       </div>
 
+      {/* ⚠️ ИСТОРИЯ — ТОЛЬКО АДМИНИСТРАТОРУ, и решает это не разметка:
+          исполнителю сервер список не отдаёт вовсе (`istoriya === null`,
+          постановка сорок четвёртой итерации, пункт 5). */}
+      {z.istoriya ? <Istoriya spisok={z.istoriya} t={t} en={y === 'en'} /> : null}
+
       {!moy && !zakryt ? <p className="hint">{t('z.take_first')}</p> : null}
 
       {/* ⚠️ ОДНО МЕСТО ДЛЯ СООБЩЕНИЯ, И ОНО ЗДЕСЬ — ВЫШЕ ШАГОВ.
@@ -179,6 +185,65 @@ export default function OrderWork({
         />
       ) : null}
     </>
+  );
+}
+
+/**
+ * КОРОТКАЯ ИСТОРИЯ РАБОТЫ НАД ЗАКАЗОМ.
+ *
+ * Постановка: «кто взял заказ, кто вернул его в очередь, кто
+ * выполнил, кто отменил. У каждой записи — почта сотрудника,
+ * с которой он вошёл в админку, дата и время по Москве. Если заказ
+ * передавали из рук в руки, видны все записи по порядку».
+ *
+ * ⚠️ ПУСТАЯ ИСТОРИЯ — ЗАКОННОЕ СОСТОЯНИЕ, А НЕ ОШИБКА. У заказа,
+ * который ещё никто не брал, событий нет вовсе; у старого — есть
+ * то, что удалось восстановить из базы при заведении журнала
+ * (миграция 012). Пункт 6 постановки ровно об этом.
+ *
+ * ⚠️ ВРЕМЯ РАСКЛАДЫВАЕТСЯ ПО МОСКВЕ ЯВНОЙ ЗОНОЙ, а не по часам
+ * машины, с которой смотрят (`lib/admin/vremya.ts`).
+ */
+function Istoriya({ spisok, t, en }: { spisok: Sobytie[]; t: Perevod; en: boolean }) {
+  const imya: Record<Sobytie['vid'], Klyuch> = {
+    vzyal: 'h.vzyal',
+    vernul: 'h.vernul',
+    vypolnil: 'h.vypolnil',
+    otmenil: 'h.otmenil',
+  };
+  return (
+    <div className="ad__card">
+      <h3>{t('h.h')}</h3>
+      {!spisok.length ? (
+        <p className="hint">{t('h.none')}</p>
+      ) : (
+        <>
+          <div className="ad__scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>{t('t.event')}</th>
+                  <th>{t('t.staff')}</th>
+                  <th>{t('t.when')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {spisok.map((e, i) => (
+                  <tr key={`${e.kogda}-${i}`}>
+                    <td>{t(imya[e.vid])}</td>
+                    {/* ⚠️ ПУСТАЯ ПОЧТА ЗНАЧИТ «СОТРУДНИКА НЕ БЫЛО»,
+                        и так выглядит отмена самим покупателем. */}
+                    <td>{e.email ?? <span className="hint">{t('h.klient')}</span>}</td>
+                    <td className="tnum">{poMoskve(e.kogda, en)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="hint">{t('h.note')}</p>
+        </>
+      )}
+    </div>
   );
 }
 
