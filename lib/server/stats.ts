@@ -51,12 +51,25 @@ export type StrokaIstochnika = { istochnik: string | null; zakazov: number; doly
  * ⚠️ ПЕРИОД БЕРЁТСЯ ПО ВРЕМЕНИ СОБЫТИЯ, а не по оплате заказа:
  * спрашивают, сколько человек сделал ЗА ЭТИ ДНИ, а оплатить заказ
  * могли месяцем раньше.
+ *
+ * ⚠️ ОТМЕНЫ САМИМ ПОКУПАТЕЛЕМ СЮДА НЕ ВХОДЯТ, И ДЕРЖИТСЯ ЭТО
+ * ПОСТРОЕНИЕМ, А НЕ УСЛОВИЕМ. У такой отмены `staff_id` пустой —
+ * «сотрудника не было» (Р-153), — а запрос СОЕДИНЯЕТСЯ со `staff`
+ * внутренним соединением: строка без сотрудника не доходит
+ * до группировки вовсе. Отдельный признак «это не покупатель» был бы
+ * вторым источником одного и того же и разошёлся бы с первым
+ * на ближайшей правке порядка отмены (то же, что закон 48 про пустой
+ * `operator_id`).
  */
 export type StrokaSotrudnika = {
   email: string;
   zakazov: number;
-  /** Разбивка по тарифам; `planId` сырой — переводит страница. */
+  /** Разбивка ВЫПОЛНЕННЫХ по тарифам; `planId` сырой — переводит страница. */
   tarify: { planId: string; zakazov: number }[];
+  /** Сколько заказов сотрудник ОТМЕНИЛ за тот же период. */
+  otmen: number;
+  /** Разбивка ОТМЕНЁННЫХ по тарифам; `planId` сырой — переводит страница. */
+  tarifyOtmen: { planId: string; zakazov: number }[];
 };
 
 export type BystryPeriod = 'day' | 'week' | 'month';
@@ -213,25 +226,44 @@ export async function svodka(p: Period, admin = false): Promise<Svodka> {
   let poSotrudnikam: StrokaSotrudnika[] | null = null;
   if (admin) {
     const gs = granicy(p, 'e.created_at');
-    const rows = await zapros<{ email: string; plan_id: string; n: string }>(
-      `select f.email, o.plan_id, count(*)::text as n
+    /* ⚠️ ВЫПОЛНЕННОЕ И ОТМЕНЁННОЕ БЕРУТСЯ ОДНИМ ЗАПРОСОМ, а не двумя.
+       Два запроса считали бы одно и то же поле `e.created_at` в разные
+       мгновения, и событие, случившееся в зазор между ними, попало бы
+       только во второй: у одного сотрудника число выполненных и число
+       отменённых оказались бы за чуть разные периоды, и на экране
+       это было бы не видно. Вид события едет колонкой и разбирается
+       здесь же. */
+    const rows = await zapros<{ email: string; plan_id: string; vid: string; n: string }>(
+      `select f.email, o.plan_id, e.vid, count(*)::text as n
          from order_event e
          join staff f on f.id = e.staff_id
          join shop_order o on o.id = e.order_id
-        where e.vid = 'vypolnil' and ${gs.uslovie}
-        group by f.email, o.plan_id
+        where e.vid in ('vypolnil', 'otmenil') and ${gs.uslovie}
+        group by f.email, o.plan_id, e.vid
         order by f.email, count(*) desc, o.plan_id`,
       gs.params,
     );
     const po = new Map<string, StrokaSotrudnika>();
     for (const r of rows) {
       const n = Number(r.n);
-      const est = po.get(r.email) ?? { email: r.email, zakazov: 0, tarify: [] };
-      est.zakazov += n;
-      est.tarify.push({ planId: r.plan_id, zakazov: n });
+      const est = po.get(r.email) ?? { email: r.email, zakazov: 0, tarify: [], otmen: 0, tarifyOtmen: [] };
+      if (r.vid === 'otmenil') {
+        est.otmen += n;
+        est.tarifyOtmen.push({ planId: r.plan_id, zakazov: n });
+      } else {
+        est.zakazov += n;
+        est.tarify.push({ planId: r.plan_id, zakazov: n });
+      }
       po.set(r.email, est);
     }
-    poSotrudnikam = [...po.values()].sort((a, b) => b.zakazov - a.zakazov || a.email.localeCompare(b.email));
+    /* ⚠️ ПОРЯДОК ДЕРЖИТСЯ ВЫПОЛНЕННЫМИ, А НЕ СУММОЙ СОБЫТИЙ: таблица
+       отвечает на вопрос «сколько сделал каждый», и сотрудник,
+       который много отменял, не должен из-за этого подниматься выше
+       того, кто много выполнил. В списке он при этом остаётся —
+       даже с нулём выполненных: за период он работал. */
+    poSotrudnikam = [...po.values()].sort(
+      (a, b) => b.zakazov - a.zakazov || b.otmen - a.otmen || a.email.localeCompare(b.email),
+    );
   }
 
   return {

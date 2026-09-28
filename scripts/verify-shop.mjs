@@ -2513,15 +2513,21 @@ console.log('── ИСТОРИЯ РАБОТЫ: ДВА СОТРУДНИКА, П
 
   /* ── 3. СТАТИСТИКА ЗА СЕГОДНЯ: по сотрудникам ──────────────────── */
   await admin.goto(`http://localhost:${PORT}/admin/stats/?p=day`, { waitUntil: 'networkidle' });
-  const poLyudyam = await admin.evaluate(() => {
+  /* ⚠️ ЗАГОЛОВКИ СНИМАЮТСЯ `textContent`, А НЕ `innerText`: у `.ad th`
+     стоит `text-transform: uppercase` (см. ниже про «ORDERS COMPLETED»). */
+  const blokLyudi = await admin.evaluate(() => {
     const k = [...document.querySelectorAll('.ad__card')].find((c) =>
       /По сотрудникам/.test(c.querySelector('h3')?.textContent ?? ''),
     );
     if (!k) return null;
-    return [...k.querySelectorAll('tbody tr')].map((tr) =>
-      [...tr.querySelectorAll('td')].map((td) => (td.textContent ?? '').trim()),
-    );
+    return {
+      shapka: [...k.querySelectorAll('thead th')].map((th) => (th.textContent ?? '').trim()),
+      stroki: [...k.querySelectorAll('tbody tr')].map((tr) =>
+        [...tr.querySelectorAll('td')].map((td) => (td.textContent ?? '').trim()),
+      ),
+    };
   });
+  const poLyudyam = blokLyudi?.stroki ?? null;
   chk('в статистике есть блок по сотрудникам', Array.isArray(poLyudyam) && poLyudyam.length > 0,
     poLyudyam ? `${poLyudyam.length} строк` : 'блока нет');
   const strokaOper = (poLyudyam ?? []).find((r) => r[0] === OPER);
@@ -2537,6 +2543,59 @@ console.log('── ИСТОРИЯ РАБОТЫ: ДВА СОТРУДНИКА, П
   );
   chk('число на экране сходится с журналом в базе',
     Number(strokaOper?.[1] ?? -1) === vypolnilPoBaze.rows[0].n, `${strokaOper?.[1]} против ${vypolnilPoBaze.rows[0].n}`);
+
+  /* ── 3а. КОЛОНКА «ОТМЕНИЛ» (сорок пятая итерация) ───────────────
+     Постановка: «рядом с выполненными колонка „Отменил" — сколько
+     заказов сотрудник отменил за выбранный период, с той же
+     разбивкой по тарифам. Отмены самим покупателем сюда не входят».
+
+     ⚠️ ЧИСЛА СУДЯТСЯ ОТДЕЛЬНЫМ ЗАПРОСОМ К БАЗЕ, а не пересчётом той же
+     арифметикой, какой их считает страница (Р-47). */
+  chk('в блоке по сотрудникам есть колонка «Отменил» и её разбивка',
+    Array.isArray(blokLyudi?.shapka) && blokLyudi.shapka.includes('Отменил') &&
+      blokLyudi.shapka.includes('Отменил по тарифам'),
+    blokLyudi ? blokLyudi.shapka.join(' | ') : 'блока нет');
+
+  const strokaAdmin = (poLyudyam ?? []).find((r) => r[0] === ADMIN);
+  const otmenilPoBaze = await p2.query(
+    `select count(*)::int as n from order_event e join staff f on f.id = e.staff_id
+      where e.vid = 'otmenil' and f.email = $1 and e.created_at > now() - interval '1 day'`,
+    [ADMIN],
+  );
+  chk('у администратора число отменённых сходится с журналом в базе',
+    Boolean(strokaAdmin) && otmenilPoBaze.rows[0].n > 0 &&
+      Number(strokaAdmin[3]) === otmenilPoBaze.rows[0].n,
+    strokaAdmin ? `${strokaAdmin[3]} против ${otmenilPoBaze.rows[0].n}` : 'строки нет');
+
+  /** Сумма чисел в разбивке вида «Имя — 2 · Имя — 1». */
+  const summaRazbivki = (t) =>
+    (t ?? '').split('·').reduce((a, x) => a + Number((x.match(/—\s*(\d+)\s*$/) ?? [])[1] ?? 0), 0);
+  chk('разбивка отмен по тарифам сходится с самим числом',
+    Boolean(strokaAdmin) && /Индивидуальный — \d+/.test(strokaAdmin[4] ?? '') &&
+      summaRazbivki(strokaAdmin[4]) === Number(strokaAdmin[3]),
+    strokaAdmin ? `«${strokaAdmin[4]}» против ${strokaAdmin[3]}` : 'строки нет');
+
+  /* ⚠️ ВЫПОЛНЕННОЕ И ОТМЕНЁННОЕ НЕ ПЕРЕТЕКАЮТ ДРУГ В ДРУГА: второй
+     сотрудник за этот период ничего не отменял, и в его строке ноль,
+     а не его же выполненный заказ. */
+  chk('у второго сотрудника отмен нет, а выполненное на месте',
+    strokaOper?.[3] === '0' && strokaOper?.[1] === '1', `${strokaOper?.[1]} / ${strokaOper?.[3]}`);
+
+  /* ⚠️ ОТМЕНЫ САМИМ ПОКУПАТЕЛЕМ В БЛОК НЕ ИДУТ, и проверка
+     не вакуумная: сначала база обязана подтвердить, что такие отмены
+     за период ЕСТЬ (их делает проверка «отменённый покупателем заказ
+     исчезает» выше), и только потом сумма колонки сравнивается
+     с числом отмен, у которых сотрудник ЕСТЬ. */
+  const otmenVsego = await p2.query(
+    `select count(*) filter (where e.staff_id is not null)::int as sotrudnikami,
+            count(*) filter (where e.staff_id is null)::int as pokupatelyami
+       from order_event e
+      where e.vid = 'otmenil' and e.created_at > now() - interval '1 day'`,
+  );
+  const summaKolonki = (poLyudyam ?? []).reduce((a, r) => a + Number(r[3] || 0), 0);
+  chk('отмены самим покупателем в блок не попадают',
+    otmenVsego.rows[0].pokupatelyami > 0 && summaKolonki === otmenVsego.rows[0].sotrudnikami,
+    `на экране ${summaKolonki}, сотрудниками ${otmenVsego.rows[0].sotrudnikami}, покупателями ${otmenVsego.rows[0].pokupatelyami}`);
 
   /* ── 4. АНГЛИЙСКАЯ АДМИНКА ─────────────────────────────────────── */
   await admin.goto(`http://localhost:${PORT}/admin/orders/${peredannyy}/`, { waitUntil: 'networkidle' });
@@ -2566,7 +2625,8 @@ console.log('── ИСТОРИЯ РАБОТЫ: ДВА СОТРУДНИКА, П
   });
   chk('в английской статистике блок по сотрудникам английский',
     Array.isArray(shapkiEn) && shapkiEn.includes('Orders completed') && shapkiEn.includes('Staff') &&
-      /By staff/.test(statEn) && !/По сотрудникам/.test(statEn),
+      shapkiEn.includes('Orders cancelled') && shapkiEn.includes('Cancelled by plan') &&
+      /By staff/.test(statEn) && !/По сотрудникам/.test(statEn) && !/Отменил/.test(statEn),
     `${shapkiEn ? shapkiEn.join(' | ') : 'блока нет'} · русского нет ${!/По сотрудникам/.test(statEn)}`);
   await admin.goto(`http://localhost:${PORT}/admin/`, { waitUntil: 'networkidle' });
   await nazhat(admin, '.ad__lang-btn[value="ru"]');

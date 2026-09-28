@@ -174,8 +174,10 @@ export default async function AdminStats({
 
       {/* ── ПО СОТРУДНИКАМ ────────────────────────────────────────
           Постановка: «почта сотрудника, сколько заказов он выполнил,
-          с разбивкой по тарифам». Период — тот же, что выбран выше
-          на экране: он один на всю страницу (Р-147). */}
+          с разбивкой по тарифам», и рядом столько же про отменённые.
+          Период — тот же, что выбран выше на экране: он один на всю
+          страницу (Р-147). Отмены самим покупателем сюда не попадают
+          по построению — у них нет сотрудника (см. `stats.ts`). */}
       {d.poSotrudnikam ? (
         <div className="ad__card">
           <h3>{t('ss.by_staff')}</h3>
@@ -188,7 +190,9 @@ export default async function AdminStats({
                   <tr>
                     <th>{t('t.staff')}</th>
                     <th>{t('ss.done_n')}</th>
-                    <th>{t('ss.by_plan')}</th>
+                    <th>{t('ss.done_plans')}</th>
+                    <th>{t('ss.cancelled_n')}</th>
+                    <th>{t('ss.cancelled_plans')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -200,6 +204,12 @@ export default async function AdminStats({
                           админке они английские (закон 40). */}
                       <td>
                         {r.tarify
+                          .map((x) => `${imyaTarifaIz(imena, x.planId, y === 'en')} — ${x.zakazov}`)
+                          .join(' · ')}
+                      </td>
+                      <td className="tnum">{r.otmen}</td>
+                      <td>
+                        {r.tarifyOtmen
                           .map((x) => `${imyaTarifaIz(imena, x.planId, y === 'en')} — ${x.zakazov}`)
                           .join(' · ')}
                       </td>

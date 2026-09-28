@@ -466,9 +466,16 @@ const S = {
   'ss.by_plan': ['По тарифам и срокам', 'By plan and term'],
   'ss.by_staff': ['По сотрудникам', 'By staff'],
   'ss.done_n': ['Выполнено заказов', 'Orders completed'],
+  /* ⚠️ У КАЖДОЙ РАЗБИВКИ СВОЯ НАДПИСЬ. Столбцов с тарифами в этой
+     таблице два — у выполненных и у отменённых, — и общий `ss.by_plan`
+     («По тарифам и срокам») не сказал бы, чего именно; сроков там
+     к тому же нет вовсе. */
+  'ss.done_plans': ['Выполнил по тарифам', 'Completed by plan'],
+  'ss.cancelled_n': ['Отменил', 'Orders cancelled'],
+  'ss.cancelled_plans': ['Отменил по тарифам', 'Cancelled by plan'],
   'ss.by_staff_note': [
-    'Считаются заказы, ВЫПОЛНЕННЫЕ за выбранный период: время берётся по самому выполнению, а не по оплате заказа.',
-    'Counts orders COMPLETED within the selected period: the time taken is that of the completion itself, not of the payment.',
+    'Считаются события за выбранный период: время берётся по самому выполнению или отмене, а не по оплате заказа. Заказы, отменённые самим покупателем, сюда не входят — сотрудника у них нет.',
+    'Counts events within the selected period: the time taken is that of the completion or the cancellation itself, not of the payment. Orders cancelled by the buyer are not counted here — they have no staff member.',
   ],
   'ss.certs': ['Сертификаты', 'Certificates'],
   'ss.certs_bought': ['Куплено', 'Bought'],
