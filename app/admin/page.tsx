@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import Queue from '@/components/admin/Queue';
 import { ktoSotrudnik } from '@/lib/server/auth';
 import { ochered, zakrytye } from '@/lib/server/views';
+import { dostupSotrudnika } from '@/lib/server/dostup';
 import { bazaEst } from '@/lib/server/db';
 import { pochtaNastroena } from '@/lib/server/mail';
 import { shifrGotov } from '@/lib/server/crypto';
@@ -34,7 +35,12 @@ export default async function AdminHome() {
      сотрудников исполнителю сервер не отдаёт вовсе (постановка сорок
      четвёртой итерации, пункт 5; то же, что с деньгами заказа, Р-148). */
   const admin = s.role === 'admin';
-  const [rows, closed, imena] = await Promise.all([ochered(), zakrytye(20, admin), imenaTarifov()]);
+  /* ⚠️ ДОСТУП ЕДЕТ В ОБЕ ВЫБОРКИ (сорок шестая итерация): оператору
+     не показывается вовсе ни заказ, взятый другим, ни заказ тарифа,
+     которого ему не разрешили. Решает это ОДНО условие в `dostup.ts`,
+     а не разметка и не две разные проверки. */
+  const d = await dostupSotrudnika(s);
+  const [rows, closed, imena] = await Promise.all([ochered(d), zakrytye(d, 20), imenaTarifov()]);
   const en = y === 'en';
 
   return (
@@ -61,7 +67,7 @@ export default async function AdminHome() {
         </ul>
       </div>
 
-      <Queue rows={rows} me={s.email} y={y} sek={s.queueSec} imena={imena} admin={admin} />
+      <Queue rows={rows} y={y} sek={s.queueSec} imena={imena} admin={admin} />
 
       <h2>{t('q.closed')}</h2>
       <div className="ad__scroll">

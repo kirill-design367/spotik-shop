@@ -44,6 +44,8 @@ import { zadatNastroyku, SROK_SERTIFIKATA } from './settings';
 import { shifrGotov } from './crypto';
 import { katalogPolny } from './catalog';
 import { zakazDlyaAdminki } from './views';
+import { dostupSotrudnika, zapretyTarifov } from './dostup';
+import { DARIMYE } from '@/lib/plans';
 import { CHASTOTY_OCHEREDI } from '@/lib/admin/chastoty';
 import { zapomnitYazyk } from './yazyk';
 import { ponyatYazyk, type Klyuch, type Podstanovki } from '@/lib/admin/slova';
@@ -112,11 +114,27 @@ async function tolkoSvoy(zakaz: number, staffId: number): Promise<boolean> {
   return Boolean(r);
 }
 
+/**
+ * Взять заказ в работу.
+ *
+ * ⚠️ РАЗРЕШЁННЫЕ ТАРИФЫ ПРОВЕРЯЕТ НЕ ЭТО ДЕЙСТВИЕ, А САМО ВЗЯТИЕ
+ * (`vzyatZakaz`), И ЭТО НЕ ПРИДИРКА. Проверка там стоит внутри
+ * транзакции и под тем же `for update`, что и «свободен ли заказ»:
+ * мимо неё пройти нечем. Здесь мы только приносим список запретов;
+ * у администратора его нет вовсе — «Сам администратор может взять
+ * любой заказ всегда».
+ *
+ * ⚠️ НЕ ВЗЯЛ — ВЕДЁМ ТУДА ЖЕ, И СТРАНИЦА САМА СКАЖЕТ ПОЧЕМУ.
+ * Заказ чужого тарифа оператору не виден (`zakazDlyaAdminki`),
+ * то есть он увидит «Заказ недоступен» — ровно то, что требует
+ * постановка; отдельной ветки с отказом для этого не надо.
+ */
 export async function adminTake(fd: FormData): Promise<void> {
   const s = await ktoSotrudnik();
   if (!s) redirect('/admin/login/');
   const id = Number(fd.get('order') ?? 0);
-  const vzyal = await vzyatZakaz(id, s.id);
+  const zapreshcheno = s.role === 'admin' ? null : await zapretyTarifov(s.id);
+  const vzyal = await vzyatZakaz(id, s.id, zapreshcheno);
   if (vzyal) await soobshchitKomande({ vid: 'zakaz_vzyat', zakaz: id, kto: s.email });
   revalidatePath('/admin');
   redirect(`/admin/orders/${id}/`);
@@ -237,7 +255,7 @@ export async function adminShag(_p: OtvetA, fd: FormData): Promise<OtvetA> {
     let slotId: number | null = null;
     let pochtaAkkaunta: string | null = null;
     if (nomer !== null) {
-      const vid = await zakazDlyaAdminki(zakaz, s.id, s.role === 'admin');
+      const vid = await zakazDlyaAdminki(zakaz, await dostupSotrudnika(s));
       const sl = vid?.slots.find((x) => x.idx === nomer) ?? null;
       if (!sl) return { error: 'e.no_slot' };
       slotId = sl.id;
@@ -491,6 +509,55 @@ export async function adminAddStaff(_p: OtvetA, fd: FormData): Promise<OtvetA> {
   );
   revalidatePath('/admin/staff');
   return { ok: 'k.staff_saved', polya: { email, role } };
+}
+
+/**
+ * ТАРИФЫ, КОТОРЫЕ МОЖЕТ ВЫПОЛНЯТЬ ОПЕРАТОР.
+ *
+ * Постановка сорок шестой итерации: «Администратор выбирает
+ * галочками, какие тарифы может выполнять каждый оператор».
+ *
+ * ⚠️ В БАЗУ ЛОЖАТСЯ ЗАПРЕТЫ, А ПРИХОДЯТ РАЗРЕШЕНИЯ, и это не
+ * путаница, а прямое следствие требования «новый оператор
+ * по умолчанию получает все тарифы»: пустая таблица обязана значить
+ * «можно всё» (см. миграцию 013 и Р-116). Форма отдаёт отмеченные
+ * галочки — их и вычитаем из состава тарифов.
+ *
+ * ⚠️ СОСТАВ ТАРИФОВ БЕРЁТСЯ ИЗ `lib/plans.ts`, А НЕ ИЗ КАТАЛОГА.
+ * Каталог знает про цены, скидки и выключенные пары — от всего
+ * этого галочки обязаны не зависеть вовсе: «Переименование тарифа,
+ * смена цены, скидки, скрытие тарифа на сайте галочки не
+ * сбрасывают». Состав же лежит в коде и от базы не зависит
+ * (`lib/server/catalog.ts`).
+ *
+ * ⚠️ ПЕРЕПИСЫВАЕМ ЦЕЛИКОМ, ОДНОЙ ТРАНЗАКЦИЕЙ НЕ НАДО: две строки
+ * идут подряд, и между ними состояние «запретов нет» означает
+ * «разрешено всё» — то есть в худшем случае оператор на долю
+ * секунды видит чуть больше, а не меньше. Потерять доступ
+ * к взятому заказу он при этом не может: свой заказ виден всегда,
+ * о тарифе его никто не спрашивает (`dostup.ts`).
+ */
+export async function adminSetStaffPlans(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+  const s = await ktoSotrudnik();
+  if (!s || s.role !== 'admin') return { error: 'o.only_admin' };
+  const id = Number(fd.get('id') ?? 0);
+  const kto = await odna<{ email: string; role: string }>('select email, role from staff where id = $1', [id]);
+  if (!kto) return { error: 'e.check_email' };
+  /* Разрешения приходят списком отмеченных галочек; чужое значение
+     просто не совпадёт ни с одним тарифом и в запреты не попадёт. */
+  const razresheno = new Set(fd.getAll('plan').map((x) => String(x)));
+  const zapreshcheno = DARIMYE.filter((p) => !razresheno.has(p.id)).map((p) => p.id);
+  await zapros('delete from staff_plan_off where staff_id = $1', [id]);
+  if (zapreshcheno.length) {
+    await zapros(
+      `insert into staff_plan_off (staff_id, plan_id)
+         select $1, unnest($2::text[]) on conflict do nothing`,
+      [id, zapreshcheno],
+    );
+  }
+  revalidatePath('/admin/staff');
+  revalidatePath('/admin');
+  return { ok: 'f.plans_saved', polya: { email: kto.email } };
 }
 
 export async function adminDisableStaff(fd: FormData): Promise<void> {

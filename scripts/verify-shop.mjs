@@ -62,9 +62,18 @@ const pool = new pg.Pool({ connectionString: URL_BAZY, max: 1 });
    Индивидуальный» вместо «На двоих» — и честно провалилась,
    хотя нынешний прогон был исправен. Тот же класс, что «последняя
    строка таблицы» в Р-94. */
+/* ⚠️ `plan_name` И `staff_plan_off` ТОЖЕ В СПИСКЕ, И ПОПАЛИ ОНИ ТУДА
+   ПОСЛЕ НАСТОЯЩЕГО ПАДЕНИЯ. Имя тарифа и запреты операторов — такая же
+   настройка, как цена, и прогон, который их менял и не убрал за собой,
+   ронял СЛЕДУЮЩИЙ прогон: тот искал в админке строку «Duo» и не
+   находил её, потому что тариф остался переименованным с прошлого
+   раза. Убирать за собой в конце блока всё равно надо (так и сделано),
+   но чистка в начале — единственное, что переживает падение
+   посередине. */
 await pool.query(`truncate balance_move, payment, order_slot, certificate, shop_order,
-  session, login_code, cert_try, support_try, app_user, staff, plan_price, plan_discount,
-  plan_off, setting, notify_outbox restart identity cascade`);
+  session, login_code, cert_try, support_try, app_user, staff, staff_plan_off,
+  plan_price, plan_name, plan_discount, plan_off, setting, notify_outbox
+  restart identity cascade`);
 await pool.end();
 
 const server = await serveOut(PORT, {
@@ -1999,15 +2008,34 @@ console.log('── ПЛАШКА ПРО РАБОЧЕЕ ВРЕМЯ ──');
     if (!el) return null;
     const panely = [...document.querySelectorAll('form.ozhivayet > .panel')];
     const st = getComputedStyle(el);
-    const chislo = (v) => (v.match(/[\d.]+/g) ?? []).map(Number);
+    /* ⚠️ ЦВЕТ ЧИТАЕТСЯ ХОЛСТОМ, А НЕ РАЗБОРОМ СТРОКИ, И ЭТО ТЕ ЖЕ
+       ГРАБЛИ, ЧТО У ПЛАШКИ ПРО VPN (см. выше и раздел 5 CLAUDE.md).
+       Подложка задана `color-mix`, и браузер отдаёт её как
+       `color(srgb 0.077 0.175 0.112)` — доли единицы, — а разбор
+       числами сравнивал 0.175 с 0.077 + 4 и падал на ИСПРАВНОЙ
+       плашке. Поймано прогоном в этой среде: прежний Chromium
+       отдавал ту же запись как `rgb(…)`, и проверка проходила
+       по счастливой случайности. Холст приводит любую запись
+       к одному виду. */
+    const cv = document.createElement('canvas');
+    cv.width = 1;
+    cv.height = 1;
+    const g2 = cv.getContext('2d');
+    const px = (c) => {
+      g2.clearRect(0, 0, 1, 1);
+      g2.fillStyle = c;
+      g2.fillRect(0, 0, 1, 1);
+      const d = g2.getImageData(0, 0, 1, 1).data;
+      return [d[0], d[1], d[2]];
+    };
     return {
       tekst: (el.textContent ?? '').replace(/\s+/g, ' ').trim(),
       /* Плашка стоит МЕЖДУ панелями, а не внутри панели тарифа. */
       snaruzhi: el.parentElement?.classList.contains('ozhivayet') === true,
       posleTarifa: Boolean(panely[0] && el.compareDocumentPosition(panely[0]) & Node.DOCUMENT_POSITION_PRECEDING),
       doAkkaunta: Boolean(panely[1] && el.compareDocumentPosition(panely[1]) & Node.DOCUMENT_POSITION_FOLLOWING),
-      fon: chislo(st.backgroundColor),
-      tsvet: chislo(st.color),
+      fon: px(st.backgroundColor),
+      tsvet: px(st.color),
       kayma: st.boxShadow,
       znak: el.querySelectorAll('svg').length,
     };
@@ -2556,6 +2584,16 @@ console.log('── ИСТОРИЯ РАБОТЫ: ДВА СОТРУДНИКА, П
       blokLyudi.shapka.includes('Отменил по тарифам'),
     blokLyudi ? blokLyudi.shapka.join(' | ') : 'блока нет');
 
+  /* ⚠️ ПОДПИСИ СВЕДЕНЫ К ОДНОЙ ФОРМЕ (сорок шестая итерация):
+     «Выполнил» и «Отменил», по тарифам — «Выполнил по тарифам»
+     и «Отменил по тарифам». Проверяется и отсутствие прежней
+     формы: она говорила о заказах, а соседняя — о человеке. */
+  chk('подписи колонок по сотрудникам одной формы',
+    Array.isArray(blokLyudi?.shapka) && blokLyudi.shapka.includes('Выполнил') &&
+      blokLyudi.shapka.includes('Выполнил по тарифам') &&
+      !blokLyudi.shapka.includes('Выполнено заказов'),
+    blokLyudi ? blokLyudi.shapka.join(' | ') : 'блока нет');
+
   const strokaAdmin = (poLyudyam ?? []).find((r) => r[0] === ADMIN);
   const otmenilPoBaze = await p2.query(
     `select count(*)::int as n from order_event e join staff f on f.id = e.staff_id
@@ -2655,8 +2693,34 @@ console.log('── ИСТОРИЯ РАБОТЫ: ДВА СОТРУДНИКА, П
     !/По сотрудникам/.test(uOperaStat) && !uOperaStat.includes(ADMIN),
     uOperaStat.includes(ADMIN) ? 'чужой адрес на экране'
       : (uOperaStat.replace(/\s+/g, ' ').match(/По сотрудникам/)?.[0] ?? 'чисто'));
-  /* Статистика при этом ему по-прежнему открыта целиком (Р-147). */
-  chk('сама статистика исполнителю открыта', /Выручка/.test(uOperaStat) && /По тарифам и срокам/.test(uOperaStat));
+  /* Сам раздел статистики ему по-прежнему открыт (Р-147): заказы
+     по тарифам на месте, и это прямая постановка — «сами заказы
+     по тарифам оставь». */
+  chk('сама статистика исполнителю открыта', /По тарифам и срокам/.test(uOperaStat) && /Заказов/.test(uOperaStat));
+
+  /* ── ПУНКТ 1: У ОПЕРАТОРА НЕТ НИ ДЕНЕГ, НИ РЕКЛАМЫ ──────────────
+     Постановка: «Убирай на сервере: данные о деньгах не должны
+     уходить оператору вообще, а не прятаться разметкой». Поэтому
+     проверяется И экран, И РАЗМЕТКА: спрячь мы строку стилем — сумма
+     всё равно лежала бы в исходнике страницы (то же, что с деньгами
+     заказа, Р-148). */
+  const uOperaStatHtml = await oper.content();
+  chk('у исполнителя в статистике нет выручки',
+    !/Выручка/.test(uOperaStat) && !/деньги, прошедшие через кассу/.test(uOperaStat) &&
+      !/Выручка/.test(uOperaStatHtml),
+    uOperaStat.replace(/\s+/g, ' ').match(/Выручка[^·]{0,40}/)?.[0] ?? 'чисто');
+  chk('у исполнителя нет раздела «Ссылка с метками»',
+    !/Ссылка с метками/.test(uOperaStat) && !/Ссылка с метками/.test(uOperaStatHtml));
+
+  /* ⚠️ НЕВАКУУМНО: у АДМИНИСТРАТОРА за тот же период обе вещи
+     на месте. Без этой строки проверка выше проходила бы и на пустой
+     странице, и на сломанной статистике. */
+  await admin.goto(`http://localhost:${PORT}/admin/stats/?p=day`, { waitUntil: 'networkidle' });
+  const uAdminaStat = await admin.innerText('main.ad');
+  chk('у администратора выручка и ссылка с метками на месте',
+    /Выручка/.test(uAdminaStat) && /деньги, прошедшие через кассу/.test(uAdminaStat) &&
+      /Ссылка с метками/.test(uAdminaStat),
+    `выручка ${/Выручка/.test(uAdminaStat)} · метки ${/Ссылка с метками/.test(uAdminaStat)}`);
 
   await oper.goto(`http://localhost:${PORT}/admin/`, { waitUntil: 'networkidle' });
   const shapkiUOpera = await oper.$$eval('table thead th', (e) => e.map((x) => (x.textContent ?? '').trim()));
@@ -2680,6 +2744,318 @@ console.log('── ИСТОРИЯ РАБОТЫ: ДВА СОТРУДНИКА, П
     typeof pustaya === 'string' && /Записей нет/.test(pustaya), pustaya === null ? 'блока нет вовсе' : 'есть');
 
   await oper.close();
+}
+
+console.log('── ТАРИФЫ ПО ОПЕРАТОРАМ И ЧУЖИЕ ЗАКАЗЫ ──');
+{
+  /* Постановка сорок шестой итерации, пункты 2 и 3, и проверка ровно
+     та, которую просили: «два оператора с разными тарифами — каждый
+     видит и может взять только свои. Первый берёт заказ, второй его
+     не видит и по прямой ссылке получает „Заказ недоступен".
+     Переименуй тариф и поменяй цену — галочки на месте».
+
+     ⚠️ ДВА ТРЕБОВАНИЯ РАЗВЕДЕНЫ ДВУМЯ ЗАКАЗАМИ, И ИНАЧЕ ПРОВЕРКА
+     НИЧЕГО НЕ ЗНАЧИЛА БЫ. На заказе, тариф которого второму и так
+     запрещён, «не видит» верно по ДВУМ причинам сразу, и какая
+     из них сработала — не различить. Поэтому:
+       заказ «Индивидуальный» — разрешён только первому: он и ловит
+         разделение по тарифам (пункт 3);
+       заказ «На двоих» — разрешён ОБОИМ, и первый его берёт: на нём
+         и только на нём проверяется, что взятый другим заказ
+         пропадает у второго целиком (пункт 2). */
+  const OP1 = 'tarif1@spotik.test';
+  const OP2 = 'tarif2@spotik.test';
+  for (const e of [OP1, OP2]) {
+    await p2.query(`insert into staff (email, role) values ($1, 'operator') on conflict (email) do nothing`, [e]);
+  }
+  const nomerStaff = async (e) => Number((await p2.query('select id from staff where email = $1', [e])).rows[0].id);
+  const id1 = await nomerStaff(OP1);
+  const id2 = await nomerStaff(OP2);
+
+  const op1 = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const op2 = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await voyti(op1, OP1, '/admin/login/');
+  await voyti(op2, OP2, '/admin/login/');
+
+  /** Оформить и оплатить заказ выбранного тарифа; вернуть номер. */
+  const zakazTarifa = async (plan, mest, metka) => {
+    await klient.goto(`http://localhost:${PORT}/checkout/?plan=${plan}&period=1`, { waitUntil: 'networkidle' });
+    const galka = klient.locator('input[name="balance"]');
+    if (await galka.count()) await galka.uncheck();
+    for (let i = 0; i < mest; i += 1) {
+      await klient.fill(`input[name="login${i}"]`, `${metka}-${i}@pochta.test`);
+      await klient.fill(`input[name="password${i}"]`, `Tarify46-${i}8`);
+    }
+    await klient.check('input[name="consent"]');
+    await nazhat(klient, 'button[type="submit"]');
+    await nazhat(klient, 'button[type="submit"]');
+    const r = await p2.query(`select id from shop_order where status = 'paid' order by id desc limit 1`);
+    return Number(r.rows[0].id);
+  };
+
+  /** Номера заказов, которые сотрудник видит у себя в очереди. */
+  const ocheredNa = async (stranica) => {
+    await stranica.goto(`http://localhost:${PORT}/admin/`, { waitUntil: 'networkidle' });
+    return stranica.$$eval('table tbody tr td:first-child a', (e) =>
+      e.map((x) => Number((x.textContent ?? '').trim())).filter((n) => Number.isFinite(n)),
+    );
+  };
+
+  /** Отметить оператору разрешённые тарифы галочками и сохранить.
+
+      ⚠️ ОБЫЧНЫЙ КЛИК С ОЖИДАНИЕМ ОТРИСОВКИ, А НЕ `nazhat`: серверное
+      действие адреса не меняет, и `nazhat` впустую ждал бы перехода
+      все свои десять секунд. */
+  const zadatTarify = async (staffId, razresheno) => {
+    await admin.goto(`http://localhost:${PORT}/admin/staff/`, { waitUntil: 'networkidle' });
+    for (const plan of ['solo', 'duo', 'trio']) {
+      const g = admin.locator(`input[form="tarify-${staffId}"][value="${plan}"]`);
+      if (razresheno.includes(plan)) await g.check();
+      else await g.uncheck();
+    }
+    await admin.locator(`form#tarify-${staffId} button[type="submit"]`).click();
+    await admin.waitForLoadState('networkidle');
+    await admin.waitForTimeout(900);
+  };
+
+  /* ── 1. НОВЫЙ ОПЕРАТОР ПОЛУЧАЕТ ВСЕ ТАРИФЫ ──────────────────────
+     Постановка прямо: «Новый оператор по умолчанию получает все
+     тарифы». В базе это выражено ОТСУТСТВИЕМ строк (миграция 013),
+     поэтому спрашиваем и базу, и живой экран: галочки обязаны стоять
+     все до одной. */
+  const zapretovSrazu = await p2.query('select count(*)::int as n from staff_plan_off where staff_id = any($1::bigint[])', [[id1, id2]]);
+  chk('у нового оператора запретов в базе нет ни одного', zapretovSrazu.rows[0].n === 0, String(zapretovSrazu.rows[0].n));
+  await admin.goto(`http://localhost:${PORT}/admin/staff/`, { waitUntil: 'networkidle' });
+  const galkiSrazu = await admin.$$eval(`input[form="tarify-${id1}"]`, (e) => e.map((x) => x.checked));
+  chk('у нового оператора отмечены все тарифы',
+    galkiSrazu.length === 3 && galkiSrazu.every(Boolean), galkiSrazu.join(','));
+
+  /* ── 2. ВТОРОЙ ОПЕРАТОР ТЕРЯЕТ «ИНДИВИДУАЛЬНЫЙ» ПРЯМО ПРИ
+        ОТКРЫТОЙ ОЧЕРЕДИ — ЭТО И ЕСТЬ ПРОВЕРКА СЕРВЕРА ────────────
+     ⚠️ ОЧЕРЕДЬ ОТКРЫВАЕТСЯ ДО СНЯТИЯ ГАЛОЧКИ, И КНОПКА «ВЗЯТЬ»
+     НАЖИМАЕТСЯ ПОСЛЕ. Это ровно тот обход, от которого постановка
+     и требует «проверку на сервере»: разметка у него на экране
+     уже устарела, а взятие обязано отказать. Проверь мы только
+     пропажу строки из очереди — доказано было бы, что страница
+     её не рисует, и ничего больше. */
+  const zakazSolo = await zakazTarifa('solo', 1, 'solo46');
+  const doSnyatiya = await ocheredNa(op2);
+  chk('до снятия галочки заказ виден второму оператору', doSnyatiya.includes(zakazSolo), doSnyatiya.join(','));
+
+  await zadatTarify(id1, ['solo', 'duo']);
+  await zadatTarify(id2, ['duo']);
+
+  const zapisano = await p2.query(
+    'select staff_id, plan_id from staff_plan_off where staff_id = any($1::bigint[]) order by staff_id, plan_id',
+    [[id1, id2]],
+  );
+  chk('в базе лежат ЗАПРЕТЫ, а не разрешения',
+    zapisano.rows.length === 3 &&
+      zapisano.rows.some((r) => Number(r.staff_id) === id1 && r.plan_id === 'trio') &&
+      zapisano.rows.some((r) => Number(r.staff_id) === id2 && r.plan_id === 'solo') &&
+      zapisano.rows.some((r) => Number(r.staff_id) === id2 && r.plan_id === 'trio'),
+    zapisano.rows.map((r) => `${r.staff_id}:${r.plan_id}`).join(' '));
+
+  /* Кнопка на СТАРОЙ, уже неверной странице второго оператора.
+     ⚠️ ЖДЁМ ПЕРЕХОДА, А НЕ ТИШИНЫ В СЕТИ: действие кончается
+     `redirect` на карточку заказа, и `networkidle` наступает раньше,
+     чем роутер её отрисует. */
+  await nazhat(op2, `form:has(input[name="order"][value="${zakazSolo}"]) button[type="submit"]`);
+  const posleObhoda = await p2.query('select status, operator_id from shop_order where id = $1', [zakazSolo]);
+  chk('сервер не даёт взять заказ чужого тарифа',
+    posleObhoda.rows[0].status === 'paid' && posleObhoda.rows[0].operator_id === null,
+    `${posleObhoda.rows[0].status} / ${posleObhoda.rows[0].operator_id}`);
+  chk('после отказа он видит «Заказ недоступен»',
+    /Заказ недоступен/.test(await op2.innerText('main.ad')));
+
+  /* ── 3. КАЖДЫЙ ВИДИТ ТОЛЬКО СВОИ ТАРИФЫ ─────────────────────────
+     ⚠️ ПРОВЕРКА НЕВАКУУМНАЯ: сначала заказ обязан быть виден ПЕРВОМУ
+     оператору, и только потом отсутствие его у второго что-то значит.
+     Пустая очередь иначе проходила бы обе строки разом. */
+  const u1 = await ocheredNa(op1);
+  const u2 = await ocheredNa(op2);
+  chk('заказ разрешённого тарифа виден первому оператору', u1.includes(zakazSolo), u1.join(','));
+  chk('заказ чужого тарифа второму оператору не виден', !u2.includes(zakazSolo), u2.join(','));
+
+  const chuzhoyTarif = await op2.goto(`http://localhost:${PORT}/admin/orders/${zakazSolo}/`, { waitUntil: 'networkidle' });
+  const tekstChuzhogo = await op2.innerText('main.ad');
+  chk('по прямой ссылке чужой тариф — «Заказ недоступен»',
+    chuzhoyTarif.status() === 200 && /Заказ недоступен/.test(tekstChuzhogo) &&
+      !/solo46-0@pochta\.test/.test(tekstChuzhogo),
+    tekstChuzhogo.replace(/\s+/g, ' ').slice(0, 80));
+
+  /* ── 4. ВЗЯТЫЙ ДРУГИМ ЗАКАЗ ПРОПАДАЕТ ЦЕЛИКОМ (пункт 2) ─────────
+     Тариф «На двоих» разрешён ОБОИМ, поэтому здесь работает ровно
+     то, что просили: первый берёт — второй перестаёт видеть. */
+  const zakazDuo = await zakazTarifa('duo', 2, 'duo46');
+  const doVzyatiya = await ocheredNa(op2);
+  chk('свободный заказ общего тарифа виден обоим', doVzyatiya.includes(zakazDuo), doVzyatiya.join(','));
+
+  await op1.goto(`http://localhost:${PORT}/admin/orders/${zakazDuo}/`, { waitUntil: 'networkidle' });
+  await nazhat(op1, 'button:has-text("Взять")');
+  const vzyal = await p2.query('select operator_id from shop_order where id = $1', [zakazDuo]);
+  chk('первый оператор заказ взял', Number(vzyal.rows[0].operator_id) === id1, String(vzyal.rows[0].operator_id));
+
+  const posleVzyatiya = await ocheredNa(op2);
+  chk('взятый другим заказ у второго из очереди пропал', !posleVzyatiya.includes(zakazDuo), posleVzyatiya.join(','));
+
+  const chuzhoy = await op2.goto(`http://localhost:${PORT}/admin/orders/${zakazDuo}/`, { waitUntil: 'networkidle' });
+  const tekstChuzhoy = await op2.innerText('main.ad');
+  const razmetkaChuzhoy = await op2.content();
+  chk('по прямой ссылке чужой заказ — «Заказ недоступен» без имени и почты',
+    chuzhoy.status() === 200 && /Заказ недоступен/.test(tekstChuzhoy) &&
+      !tekstChuzhoy.includes(OP1) && !razmetkaChuzhoy.includes(OP1) &&
+      !razmetkaChuzhoy.includes('duo46-0@pochta.test'),
+    tekstChuzhoy.replace(/\s+/g, ' ').slice(0, 80));
+
+  /* ⚠️ И СВОЙ ЗАКАЗ ПРИ ЭТОМ ОТКРЫВАЕТСЯ, а «взял: почта» на нём
+     не пишется вовсе: постановка — «Подписи „взял: {почта}"
+     у оператора нет нигде». */
+  await op1.goto(`http://localhost:${PORT}/admin/orders/${zakazDuo}/`, { waitUntil: 'networkidle' });
+  const svoy = await op1.innerText('main.ad');
+  chk('свой заказ первому оператору открыт и назван своим',
+    /ваш/.test(svoy) && !/взял /.test(svoy) && !svoy.includes(OP2), svoy.replace(/\s+/g, ' ').slice(0, 90));
+
+  /* ⚠️ САМООБНОВЛЕНИЕ ХОДИТ ЧЕРЕЗ ТУ ЖЕ ДВЕРЬ. Отдай маршрут очередь
+     целиком — и всё, чего страница не показала, приехало бы
+     следующим тиком опроса, в JSON. */
+  const json = await op2.evaluate(async () => (await (await fetch('/api/admin/queue/', { cache: 'no-store' })).json()));
+  chk('в JSON самообновления чужих заказов и почт нет',
+    !json.rows.some((r) => r.id === zakazDuo || r.id === zakazSolo) &&
+      !json.rows.some((r) => r.operator !== null),
+    JSON.stringify(json.rows.map((r) => [r.id, r.operator])).slice(0, 90));
+
+  /* ── 5. ЗАКАЗ ОСТАЁТСЯ У ОПЕРАТОРА, ДАЖЕ ЕСЛИ ГАЛОЧКУ СНЯЛИ ──── */
+  await zadatTarify(id1, ['solo']);
+  await op1.goto(`http://localhost:${PORT}/admin/orders/${zakazDuo}/`, { waitUntil: 'networkidle' });
+  chk('взятый заказ остаётся у оператора после снятия галочки',
+    !/Заказ недоступен/.test(await op1.innerText('main.ad')) &&
+      (await op1.locator('.ad__shag[data-sost="seychas"]').count()) > 0);
+
+  /* ── 6. АДМИНИСТРАТОР ВИДИТ ВСЁ И БЕРЁТ ЛЮБОЙ ЗАКАЗ ───────────── */
+  const uAdmina = await ocheredNa(admin);
+  chk('администратору видны оба заказа', uAdmina.includes(zakazSolo) && uAdmina.includes(zakazDuo), uAdmina.join(','));
+  await admin.goto(`http://localhost:${PORT}/admin/orders/${zakazSolo}/`, { waitUntil: 'networkidle' });
+  await nazhat(admin, 'button:has-text("Взять")');
+  const vzyalAdmin = await p2.query('select operator_id from shop_order where id = $1', [zakazSolo]);
+  chk('администратор берёт заказ любого тарифа',
+    vzyalAdmin.rows[0].operator_id !== null, String(vzyalAdmin.rows[0].operator_id));
+
+  /* ── 7. ПЕРЕИМЕНОВАНИЕ И ЦЕНА ГАЛОЧЕК НЕ СБРАСЫВАЮТ ─────────────
+     Постановка: «Галочки привязаны к самому тарифу, а не к названию
+     или цене». Правится и то, и другое — через живую админку,
+     а не вставкой в базу: вставкой проверялось бы не то, что делает
+     человек. */
+  const doPravki = await p2.query(
+    'select plan_id from staff_plan_off where staff_id = $1 order by plan_id',
+    [id2],
+  );
+  await admin.goto(`http://localhost:${PORT}/admin/settings/`, { waitUntil: 'networkidle' });
+
+  /* Имя: форма с тремя полями имени у строки тарифа `duo`. */
+  const formaImeni = admin
+    .locator('form')
+    .filter({ has: admin.locator('input[name="plan"][value="duo"]') })
+    .filter({ has: admin.locator('input[name="nameEn"]') })
+    .first();
+  await formaImeni.locator('input[name="name"]').fill('На двоих ПЕРЕИМЕНОВАН');
+  await formaImeni.locator('input[name="short"]').fill('Двое');
+  await formaImeni.locator('input[name="nameEn"]').fill('Duo renamed');
+  await formaImeni.locator('button[type="submit"]').click();
+  await admin.waitForLoadState('networkidle');
+  await admin.waitForTimeout(900);
+
+  /* Цена: форма БЕЗ поля `until` — иначе это форма скидки. */
+  await admin.goto(`http://localhost:${PORT}/admin/settings/`, { waitUntil: 'networkidle' });
+  const formaCeny = admin
+    .locator('form')
+    .filter({ has: admin.locator('input[name="plan"][value="duo"]') })
+    .filter({ has: admin.locator('input[name="period"][value="1"]') })
+    .filter({ has: admin.locator('input[name="price"]') })
+    .filter({ hasNot: admin.locator('input[name="until"]') })
+    .first();
+  await formaCeny.locator('input[name="price"]').fill('777');
+  await formaCeny.locator('button[type="submit"]').click();
+  await admin.waitForLoadState('networkidle');
+  await admin.waitForTimeout(900);
+
+  const cenaVBaze = await p2.query(
+    `select price_kop from plan_price where plan_id = 'duo' and period = 1`,
+  );
+  const imyaVBaze = await p2.query(`select name from plan_name where plan_id = 'duo'`);
+  chk('правки имени и цены действительно применились',
+    Number(cenaVBaze.rows[0]?.price_kop) === 77700 && imyaVBaze.rows[0]?.name === 'На двоих ПЕРЕИМЕНОВАН',
+    `${cenaVBaze.rows[0]?.price_kop} · ${imyaVBaze.rows[0]?.name}`);
+
+  const poslePravki = await p2.query(
+    'select plan_id from staff_plan_off where staff_id = $1 order by plan_id',
+    [id2],
+  );
+  chk('переименование и цена галочек не сбрасывают',
+    JSON.stringify(doPravki.rows) === JSON.stringify(poslePravki.rows) && poslePravki.rows.length === 2,
+    `${doPravki.rows.map((r) => r.plan_id).join(',')} → ${poslePravki.rows.map((r) => r.plan_id).join(',')}`);
+
+  await admin.goto(`http://localhost:${PORT}/admin/staff/`, { waitUntil: 'networkidle' });
+  const galkiPosle = await admin.$$eval(`input[form="tarify-${id2}"]`, (e) =>
+    e.map((x) => `${x.value}:${x.checked ? 1 : 0}`),
+  );
+  chk('на экране галочки после переименования те же',
+    galkiPosle.join(' ') === 'solo:0 duo:1 trio:0', galkiPosle.join(' '));
+
+  /* ── 8. ТАРИФ, КОТОРЫЙ НИКТО НЕ МОЖЕТ ВЫПОЛНИТЬ ────────────────
+     ⚠️ ПРОВЕРКА НЕВАКУУМНАЯ С ОБЕИХ СТОРОН: сначала предупреждения
+     про «На двоих» быть НЕ ДОЛЖНО (его может второй), и только потом
+     оно обязано появиться, когда его снимут у всех. */
+  const doZapreta = await admin.innerText('main.ad');
+  chk('пока тариф кому-то разрешён, предупреждения нет',
+    !/никто не может выполнить/.test(doZapreta));
+  /* ⚠️ СНИМАТЬ НАДО У ВСЕХ ДЕЙСТВУЮЩИХ ОПЕРАТОРОВ, А НЕ У ДВОИХ
+     НАШИХ. Предупреждение по построению считается по живым
+     операторам, а в базе к этому моменту есть и третий — тот,
+     на котором шла проверка истории работы. Оставь мы его
+     с полными правами, предупреждение не появилось бы, и это
+     было бы верным поведением, а не поломкой. */
+  const zhivye = await p2.query(
+    `select id from staff where role = 'operator' and not disabled order by id`,
+  );
+  for (const r of zhivye.rows) await zadatTarify(Number(r.id), []);
+  await admin.goto(`http://localhost:${PORT}/admin/staff/`, { waitUntil: 'networkidle' });
+  const sZapretom = await admin.innerText('main.ad');
+  chk('«этот тариф сейчас никто не может выполнить» появилось',
+    /Этот тариф сейчас никто не может выполнить/.test(sZapretom),
+    sZapretom.replace(/\s+/g, ' ').match(/Этот тариф[^\n]{0,60}/)?.[0] ?? 'нет');
+
+  /* ── 9. АНГЛИЙСКАЯ АДМИНКА ─────────────────────────────────────── */
+  await nazhat(admin, '.ad__lang-btn[value="en"]');
+  await admin.goto(`http://localhost:${PORT}/admin/staff/`, { waitUntil: 'networkidle' });
+  const staffEn = await admin.innerText('main.ad');
+  chk('в английской админке тарифы операторов подписаны по-английски',
+    /Operator plans/.test(staffEn) && /Nobody can fulfil this plan/.test(staffEn) &&
+      !/Тарифы оператора/.test(staffEn) && !/никто не может выполнить/.test(staffEn),
+    staffEn.replace(/\s+/g, ' ').match(/Operator plans|Тарифы оператора/)?.[0] ?? 'ни одного');
+  await nazhat(admin, '.ad__lang-btn[value="ru"]');
+
+  /* ⚠️ ВОЗВРАЩАЕМ ИМЯ И ЦЕНУ КАК БЫЛИ. Это настройка, она переживает
+     конец прогона, и оставленное переименование роняет СЛЕДУЮЩИЙ
+     прогон на ровном месте: он ищет в админке «Duo», а там стоит наше
+     «Duo renamed». Проверено настоящим падением. */
+  await admin.goto(`http://localhost:${PORT}/admin/settings/`, { waitUntil: 'networkidle' });
+  const vernut = admin
+    .locator('form')
+    .filter({ has: admin.locator('input[name="plan"][value="duo"]') })
+    .filter({ has: admin.locator('input[name="nameEn"]') })
+    .first();
+  await vernut.locator('input[name="name"]').fill('');
+  await vernut.locator('input[name="short"]').fill('');
+  await vernut.locator('input[name="nameEn"]').fill('');
+  await vernut.locator('button[type="submit"]').click();
+  await admin.waitForLoadState('networkidle');
+  await admin.waitForTimeout(900);
+  const vernuli = await p2.query(`select count(*)::int as n from plan_name where plan_id = 'duo'`);
+  chk('имя тарифа возвращено как было', vernuli.rows[0].n === 0, String(vernuli.rows[0].n));
+
+  await op1.close();
+  await op2.close();
 }
 
 chk('ни одной ошибки JavaScript', oshibkiJS.length === 0, oshibkiJS.slice(0, 3).join(' | '));

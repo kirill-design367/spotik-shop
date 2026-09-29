@@ -33,8 +33,16 @@
 
 import { odna, zapros } from './db';
 
-/* ⚠️ ТАРИФ И СРОК СЫРЫЕ: переводит их страница, зная свой язык. */
-export type StrokaTarifa = { planId: string; period: number; zakazov: number; vyruchkaKop: number };
+/* ⚠️ ТАРИФ И СРОК СЫРЫЕ: переводит их страница, зная свой язык.
+
+   ⚠️ `vyruchkaKop` — `null` У ИСПОЛНИТЕЛЯ (сорок шестая итерация).
+   Постановка: «У оператора убери всё про деньги… Убирай на сервере:
+   данные о деньгах не должны уходить оператору вообще, а не
+   прятаться разметкой». Отсутствие величины выражено `null`,
+   а не нулём: ноль — законная выручка (подарочные заказы её
+   не приносят вовсе), и путать эти два состояния нельзя — то же
+   правило, что у денег одного заказа (Р-148). */
+export type StrokaTarifa = { planId: string; period: number; zakazov: number; vyruchkaKop: number | null };
 export type StrokaIstochnika = { istochnik: string | null; zakazov: number; dolya: number };
 
 /**
@@ -85,7 +93,8 @@ export const BYSTRYE: { kluch: BystryPeriod; sql: string }[] = [
 
 export type Svodka = {
   zakazov: number;
-  vyruchkaKop: number;
+  /** Выручка за период. `null` — СПРАШИВАЛ НЕ АДМИНИСТРАТОР. */
+  vyruchkaKop: number | null;
   vOcheredi: number;
   /** Минуты. `null` — выполненных заказов за период не было. */
   srednyayaMinut: number | null;
@@ -143,8 +152,13 @@ function granicy(
 export async function svodka(p: Period, admin = false): Promise<Svodka> {
   const g = granicy(p);
 
-  const itog = await odna<{ n: string; kop: string }>(
-    `select count(*)::text as n, coalesce(sum(money_kop), 0)::text as kop
+  /* ⚠️ ДЕНЬГИ НЕ ПОДНИМАЮТСЯ ИЗ БАЗЫ ВОВСЕ, КОГДА ПОКАЗЫВАТЬ ИХ
+     НЕКОМУ. «Убирай на сервере» можно было бы выполнить и стиранием
+     числа перед возвратом, но не считать его — короче и строже:
+     тогда нет ни одного места, где сумма существует и её забыли
+     убрать. То же рассуждение, что у списка сотрудников ниже. */
+  const itog = await odna<{ n: string; kop: string | null }>(
+    `select count(*)::text as n${admin ? ', coalesce(sum(money_kop), 0)::text as kop' : ', null as kop'}
        from shop_order
       where paid_at is not null and ${g.uslovie}`,
     g.params,
@@ -167,8 +181,10 @@ export async function svodka(p: Period, admin = false): Promise<Svodka> {
     gz.params,
   );
 
-  const potarif = await zapros<{ plan_id: string; period: number; n: string; kop: string }>(
-    `select plan_id, period, count(*)::text as n, coalesce(sum(money_kop), 0)::text as kop
+  const potarif = await zapros<{ plan_id: string; period: number; n: string; kop: string | null }>(
+    `select plan_id, period, count(*)::text as n${
+      admin ? ', coalesce(sum(money_kop), 0)::text as kop' : ', null as kop'
+    }
        from shop_order
       where paid_at is not null and ${g.uslovie}
       group by plan_id, period
@@ -179,7 +195,7 @@ export async function svodka(p: Period, admin = false): Promise<Svodka> {
     planId: r.plan_id,
     period: r.period,
     zakazov: Number(r.n),
-    vyruchkaKop: Number(r.kop),
+    vyruchkaKop: r.kop === null ? null : Number(r.kop),
   }));
 
   /* ⚠️ СЕРТИФИКАТЫ СЧИТАЮТСЯ ЗА ВСЁ ВРЕМЯ, И ЭТО НАЗВАНО НА ЭКРАНЕ.
@@ -268,7 +284,7 @@ export async function svodka(p: Period, admin = false): Promise<Svodka> {
 
   return {
     zakazov: Number(itog?.n ?? 0),
-    vyruchkaKop: Number(itog?.kop ?? 0),
+    vyruchkaKop: itog?.kop == null ? null : Number(itog.kop),
     vOcheredi: Number(och?.n ?? 0),
     srednyayaMinut: sr?.min == null ? null : Number(sr.min),
     tarify,

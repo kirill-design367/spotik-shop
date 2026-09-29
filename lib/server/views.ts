@@ -13,6 +13,7 @@ import { poprobovatRasshifrovat } from './crypto';
 import { dopisatAdres } from '@/lib/admin/prichiny';
 import { STATUS_SLOVAMI, type Rezhim, type Status } from './orders';
 import { katalog, naytiTarif, srokKratko } from './catalog';
+import { usloviyeVidimosti, type Dostup } from './dostup';
 import { METKI } from './utm';
 
 export type SlotKlientu = {
@@ -249,11 +250,39 @@ export type StrokaOcheredi = {
   status: Status;
   paidAt: string | null;
   createdAt: string;
+  /**
+   * Почта держателя. `null` — СПРАШИВАЛ НЕ АДМИНИСТРАТОР.
+   *
+   * ⚠️ С СОРОК ШЕСТОЙ ИТЕРАЦИИ ЭТО ПОЛЕ АДМИНИСТРАТОРСКОЕ, и это
+   * отменяет прежнее исключение (Р-153): до неё почта держателя
+   * ездила в очередь ВСЕМ сотрудникам с двадцать седьмой итерации
+   * и стояла в колонке состояния — «взял: …». Постановка сорок
+   * шестой прямо говорит: «Подписи „взял: {почта}" у оператора нет
+   * нигде». Спрятать её разметкой было бы мало — адрес всё равно
+   * лежал бы в разметке страницы и в JSON самообновления (Р-148).
+   */
   operator: string | null;
+  /**
+   * Заказ взят ТЕМ, кто спрашивает.
+   *
+   * ⚠️ СЧИТАЕТ ЭТО СЕРВЕР, А НЕ СРАВНЕНИЕ ПОЧТ НА СТРАНИЦЕ. Прежде
+   * очередь сама сличала `operator` со своей почтой; теперь почты
+   * у оператора нет вовсе, и сличать было бы нечего.
+   */
+  moy: boolean;
   bySertificate: boolean;
 };
 
-export async function ochered(): Promise<StrokaOcheredi[]> {
+/**
+ * Очередь.
+ *
+ * ⚠️ ЧТО ВИДНО — РЕШАЕТ ОДНО УСЛОВИЕ ИЗ `dostup.ts`, а не разметка:
+ * оператору не показывается вовсе ни заказ, взятый другим, ни заказ
+ * тарифа, которого ему не разрешили (постановка сорок шестой
+ * итерации, пункты 2 и 3).
+ */
+export async function ochered(d: Dostup): Promise<StrokaOcheredi[]> {
+  const v = usloviyeVidimosti(d, 'o', 1);
   const rows = await zapros<{
     id: string;
     plan_id: string;
@@ -263,16 +292,18 @@ export async function ochered(): Promise<StrokaOcheredi[]> {
     paid_at: Date | null;
     created_at: Date;
     operator: string | null;
+    operator_id: string | null;
     slots: string;
   }>(
     `select o.id, o.plan_id, o.period, o.status, o.source, o.paid_at, o.created_at,
-            f.email as operator,
+            f.email as operator, o.operator_id,
             (select count(*) from order_slot s where s.order_id = o.id)::text as slots
        from shop_order o
        left join staff f on f.id = o.operator_id
-      where o.status in ('paid', 'in_work')
+      where o.status in ('paid', 'in_work')${v.uslovie}
       order by o.paid_at asc nulls last, o.id asc
       limit 200`,
+    v.params,
   );
   return rows.map((r) => ({
     id: Number(r.id),
@@ -282,7 +313,8 @@ export async function ochered(): Promise<StrokaOcheredi[]> {
     status: r.status,
     paidAt: r.paid_at ? new Date(r.paid_at).toISOString() : null,
     createdAt: new Date(r.created_at).toISOString(),
-    operator: r.operator,
+    operator: d.admin ? r.operator : null,
+    moy: r.operator_id !== null && Number(r.operator_id) === d.staffId,
     bySertificate: r.source === 'certificate',
   }));
 }
@@ -401,8 +433,24 @@ export type ZakazOperatoru = {
  * `moy` — заказ взят ЭТИМ оператором. Только при `moy` наружу уходят
  * расшифрованные пароли; остальным видна структура заказа и ничего
  * больше.
+ *
+ * ⚠️ `null` ЗНАЧИТ «НЕ ПОКАЗЫВАЕМ», А НЕ «ЗАКАЗА НЕТ». С сорок
+ * шестой итерации сюда же попадает заказ, взятый ДРУГИМ оператором,
+ * и заказ чужого тарифа: постановка требует, чтобы по прямой ссылке
+ * оператор увидел «Заказ недоступен» — то есть одно и то же и в том
+ * случае, когда заказа нет вовсе. Различать их на экране значило бы
+ * отвечать на вопрос «а такой заказ вообще есть?», которого никто
+ * не задавал; администратору, у которого условие пустое, `null`
+ * по-прежнему означает ровно «не найден», и страница так и говорит.
+ *
+ * ⚠️ УСЛОВИЕ ТО ЖЕ САМОЕ, ЧТО У ОЧЕРЕДИ, и берётся оно из того же
+ * места (`dostup.ts`). Своя проверка здесь разошлась бы с очередью
+ * на первой же правке — и разошлась бы молча.
  */
-export async function zakazDlyaAdminki(id: number, staffId: number, admin: boolean): Promise<ZakazOperatoru | null> {
+export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOperatoru | null> {
+  const admin = d.admin;
+  const staffId = d.staffId;
+  const v = usloviyeVidimosti(d, 'o', 2);
   const r = await odna<{
     id: string;
     plan_id: string;
@@ -432,8 +480,8 @@ export async function zakazDlyaAdminki(id: number, staffId: number, admin: boole
        from shop_order o
        join app_user u on u.id = o.user_id
        left join staff f on f.id = o.operator_id
-      where o.id = $1`,
-    [id],
+      where o.id = $1${v.uslovie}`,
+    [id, ...v.params],
   );
   if (!r) return null;
   const moy = r.operator_id !== null && Number(r.operator_id) === staffId;
@@ -462,7 +510,11 @@ export async function zakazDlyaAdminki(id: number, staffId: number, admin: boole
     status: r.status,
     clientEmail: r.email,
     operatorId: r.operator_id ? Number(r.operator_id) : null,
-    operatorEmail: r.operator_email,
+    /* ⚠️ ПОЧТА ДЕРЖАТЕЛЯ — ТОЛЬКО АДМИНИСТРАТОРУ (постановка сорок
+       шестой итерации): «Подписи „взял: {почта}" у оператора нет
+       нигде». Свой заказ карточка при этом по-прежнему называет
+       своим — по `operatorId`, а не по адресу. */
+    operatorEmail: admin ? r.operator_email : null,
     bySertificate: r.source === 'certificate',
     utm: METKI.flatMap((m) => (r[m] ? [{ imya: m as string, znachenie: r[m] as string }] : [])),
     totalKop: admin ? Number(r.total_kop) : null,
@@ -585,8 +637,16 @@ export type ZakrytyyZakaz = {
  * какое попало»: у выполненного это `vypolnil`, у отменённого
  * `otmenil`. Возьми мы просто последнее — заказ, брошенный обратно
  * в очередь, показывал бы того, кто его ВЕРНУЛ.
+ *
+ * ⚠️ СПИСОК ТОЖЕ ФИЛЬТРУЕТСЯ ДОСТУПОМ (сорок шестая итерация):
+ * постановка говорит «в его очереди и СПИСКАХ не показываются
+ * вовсе», и закрытый заказ, который вёл другой оператор, — такой же
+ * чужой заказ. Свои закрытые при этом остаются: `operator_id`
+ * у закрытого хранит того, кто его закрыл.
  */
-export async function zakrytye(limit = 50, admin = false): Promise<ZakrytyyZakaz[]> {
+export async function zakrytye(d: Dostup, limit = 50): Promise<ZakrytyyZakaz[]> {
+  const admin = d.admin;
+  const v = usloviyeVidimosti(d, 'o', 2);
   const rows = await zapros<{
     id: string;
     status: Status;
@@ -605,9 +665,9 @@ export async function zakrytye(limit = 50, admin = false): Promise<ZakrytyyZakaz
           order by e.created_at desc, e.id desc limit 1
        ) ev on true
        left join staff fs on fs.id = ev.staff_id
-      where o.status in ('done', 'cancelled')
+      where o.status in ('done', 'cancelled')${v.uslovie}
       order by o.closed_at desc limit $1`,
-    [limit],
+    [limit, ...v.params],
   );
   return rows.map((r) => ({
     id: Number(r.id),

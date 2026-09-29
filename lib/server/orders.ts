@@ -441,15 +441,33 @@ async function zapisatSobytie(
   await c.query('insert into order_event (order_id, staff_id, vid) values ($1, $2, $3)', [zakaz, staffId, vid]);
 }
 
-export async function vzyatZakaz(zakaz: number, staffId: number): Promise<boolean> {
+/**
+ * Взять заказ в работу.
+ *
+ * `zapreshcheno` — тарифы, которых ЭТОМУ сотруднику брать нельзя;
+ * `null` значит «ограничений нет» и приходит от администратора
+ * («Сам администратор может взять любой заказ всегда»).
+ *
+ * ⚠️ ПРОВЕРКА ТАРИФА СТОИТ ВНУТРИ ТОЙ ЖЕ ТРАНЗАКЦИИ И ПОД ТЕМ ЖЕ
+ * `for update`, ЧТО И ПРОВЕРКА «СВОБОДЕН ЛИ ЗАКАЗ». Поставь мы её
+ * на странице или в действии — получилась бы ещё одна дверь, мимо
+ * которой можно пройти: серверное действие вызывается и без
+ * страницы. Здесь её обойти нечем — взятие заказа идёт только сюда.
+ */
+export async function vzyatZakaz(
+  zakaz: number,
+  staffId: number,
+  zapreshcheno: string[] | null,
+): Promise<boolean> {
   return vTranzakcii(async (c) => {
-    const r = await c.query<{ status: Status; operator_id: string | null }>(
-      'select status, operator_id from shop_order where id = $1 for update',
+    const r = await c.query<{ status: Status; operator_id: string | null; plan_id: string }>(
+      'select status, operator_id, plan_id from shop_order where id = $1 for update',
       [zakaz],
     );
     const row = r.rows[0];
     if (!row) return false;
     if (row.status !== 'paid' || row.operator_id) return false;
+    if (zapreshcheno && zapreshcheno.includes(row.plan_id)) return false;
     await c.query(`update shop_order set status = 'in_work', operator_id = $2, taken_at = now() where id = $1`, [
       zakaz,
       staffId,
