@@ -109,7 +109,15 @@ export type Svodka = {
   poSotrudnikam: StrokaSotrudnika[] | null;
   sertifikatovKupleno: number;
   sertifikatovAktivirovano: number;
-  istochniki: StrokaIstochnika[];
+  /**
+   * Источники заказов. `null` — СПРАШИВАЛ НЕ АДМИНИСТРАТОР.
+   *
+   * ⚠️ ПОСТАНОВКА СОРОК СЕДЬМОЙ ИТЕРАЦИИ: «Убери у оператора таблицу
+   * „Источники заказов" — на сервере, как выручку». Значит запрос
+   * не выполняется вовсе, а не прячется разметкой: реклама — это
+   * то же, что деньги, и знать о ней исполнителю незачем (Р-155).
+   */
+  istochniki: StrokaIstochnika[] | null;
 };
 
 /**
@@ -212,23 +220,31 @@ export async function svodka(p: Period, admin = false): Promise<Svodka> {
 
   /* ⚠️ ИСТОЧНИКИ СЧИТАЮТСЯ ПО ОПЛАЧЕННЫМ ЗАКАЗАМ, а не по всем
      созданным: незавершённое оформление — это не источник заказа,
-     а брошенная корзина, и смешивать их в одной таблице нельзя. */
-  const ist = await zapros<{ utm_source: string | null; n: string }>(
-    `select utm_source, count(*)::text as n
-       from shop_order
-      where paid_at is not null and ${g.uslovie}
-      group by utm_source
-      order by count(*) desc`,
-    g.params,
-  );
-  const vsego = ist.reduce((a, r) => a + Number(r.n), 0);
-  const istochniki: StrokaIstochnika[] = ist.map((r) => ({
-    istochnik: r.utm_source,
-    zakazov: Number(r.n),
-    /* Деление на ноль невозможно по построению: если строк нет,
-       цикла нет вовсе. */
-    dolya: vsego ? Math.round((Number(r.n) / vsego) * 100) : 0,
-  }));
+     а брошенная корзина, и смешивать их в одной таблице нельзя.
+
+     ⚠️ И СЧИТАЮТСЯ ОНИ ТОЛЬКО АДМИНИСТРАТОРУ (сорок седьмая
+     итерация). Запрос не выполняется вовсе, когда показывать
+     нечего и некому, — ровно как выручка выше: тогда нет места,
+     где величина существует и её забыли убрать. */
+  let istochniki: StrokaIstochnika[] | null = null;
+  if (admin) {
+    const ist = await zapros<{ utm_source: string | null; n: string }>(
+      `select utm_source, count(*)::text as n
+         from shop_order
+        where paid_at is not null and ${g.uslovie}
+        group by utm_source
+        order by count(*) desc`,
+      g.params,
+    );
+    const vsego = ist.reduce((a, r) => a + Number(r.n), 0);
+    istochniki = ist.map((r) => ({
+      istochnik: r.utm_source,
+      zakazov: Number(r.n),
+      /* Деление на ноль невозможно по построению: если строк нет,
+         цикла нет вовсе. */
+      dolya: vsego ? Math.round((Number(r.n) / vsego) * 100) : 0,
+    }));
+  }
 
   /* ⚠️ ОДИН ЗАПРОС НА ИТОГ И НА РАЗБИВКУ. Две выборки — «сколько
      всего» и «по тарифам» — считали бы одно и то же дважды и разошлись

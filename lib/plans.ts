@@ -20,6 +20,39 @@ export const PERIODS: { key: PeriodKey; label: string; short: string; en: string
   { key: 12, label: 'Год', short: '12 мес', en: '12 months' },
 ];
 
+/**
+ * Ключ пары «тариф × срок» ОДНОЙ СТРОКОЙ.
+ *
+ * Нужен там, где пара обязана уместиться в одно значение: в `value`
+ * галочки и в поле формы. Собирается и разбирается ОДНИМ местом —
+ * иначе две стороны разойдутся на первом же тарифе с необычным
+ * идентификатором.
+ *
+ * ⚠️ ЖИВЁТ ЗДЕСЬ, А НЕ В `lib/server/dostup.ts`, потому что зовут
+ * его и с сервера, и из КЛИЕНТСКОГО компонента админки: `dostup.ts`
+ * ходит в базу и в браузерный чанк попасть не может.
+ */
+export function klyuchPary(planId: string, period: number): string {
+  return `${planId}:${period}`;
+}
+
+/**
+ * Разобрать ключ обратно.
+ *
+ * ⚠️ ОТВЕТ МОЖЕТ БЫТЬ ПУСТЫМ, И ЭТО НОРМАЛЬНОЕ СОСТОЯНИЕ: строка
+ * приходит из формы, то есть её пишет кто угодно. Неизвестная пара
+ * просто не совпадёт ни с одной настоящей — валить на ней нечего.
+ */
+export function razobratParu(s: string): { planId: string; period: PeriodKey } | null {
+  const i = s.lastIndexOf(':');
+  if (i <= 0) return null;
+  const period = Number(s.slice(i + 1));
+  if (!PERIODS.some((x) => x.key === period)) return null;
+  const planId = s.slice(0, i);
+  if (!PLANS.some((p) => p.id === planId)) return null;
+  return { planId, period: period as PeriodKey };
+}
+
 export type Plan = {
   id: string;
   name: string;

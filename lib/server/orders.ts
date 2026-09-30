@@ -23,6 +23,7 @@ import { vydatSertifikat } from './certificates';
 import { cenaTarifa, katalog, naytiTarif, srokKratko } from './catalog';
 import { imyaTarifaIz, srokDlyaSotrudnika } from '@/lib/plans';
 import { imenaTarifov } from './imena';
+import type { Para } from './dostup';
 import { parolNeGoditsya, pochtaNeVerna } from '@/lib/proverka';
 
 export type Status = 'new' | 'paid' | 'in_work' | 'done' | 'cancelled';
@@ -457,17 +458,20 @@ async function zapisatSobytie(
 export async function vzyatZakaz(
   zakaz: number,
   staffId: number,
-  zapreshcheno: string[] | null,
+  zapreshcheno: Para[] | null,
 ): Promise<boolean> {
   return vTranzakcii(async (c) => {
-    const r = await c.query<{ status: Status; operator_id: string | null; plan_id: string }>(
-      'select status, operator_id, plan_id from shop_order where id = $1 for update',
+    const r = await c.query<{ status: Status; operator_id: string | null; plan_id: string; period: number }>(
+      'select status, operator_id, plan_id, period from shop_order where id = $1 for update',
       [zakaz],
     );
     const row = r.rows[0];
     if (!row) return false;
     if (row.status !== 'paid' || row.operator_id) return false;
-    if (zapreshcheno && zapreshcheno.includes(row.plan_id)) return false;
+    /* ⚠️ СРАВНИВАЕТСЯ ПАРА ЦЕЛИКОМ (сорок седьмая итерация): тариф
+       оператору может быть разрешён, а этот его срок — нет. */
+    if (zapreshcheno && zapreshcheno.some((z) => z.planId === row.plan_id && z.period === Number(row.period)))
+      return false;
     await c.query(`update shop_order set status = 'in_work', operator_id = $2, taken_at = now() where id = $1`, [
       zakaz,
       staffId,

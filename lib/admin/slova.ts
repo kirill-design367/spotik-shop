@@ -352,13 +352,13 @@ const S = {
   /* ── Тарифы по операторам (сорок шестая итерация) ───────────────
      Надписи админки, и в английской версии они английские
      (постановка, пункт 3; закон 40). */
-  'f.plans': ['Тарифы оператора', 'Operator plans'],
+  'f.plans': ['Тарифы и сроки оператора', 'Operator plans and terms'],
   'f.plans_hint': [
-    'Отметьте, какие тарифы может выполнять каждый оператор. Новый оператор получает все тарифы. Заказ, уже взятый оператором, остаётся у него до конца, даже если галочку снять. Администратор может взять любой заказ всегда.',
-    'Tick the plans each operator may fulfil. A new operator gets every plan. An order already taken by an operator stays with them to the end even if the tick is removed. An administrator can always take any order.',
+    'Отметьте, какие тарифы и на какие сроки может выполнять каждый оператор. Галочка тарифа выбирает все его сроки сразу. Новый оператор получает все тарифы и все сроки. Заказ, уже взятый оператором, остаётся у него до конца, даже если галочку снять. Администратор может взять любой заказ всегда.',
+    'Tick the plans and terms each operator may fulfil. A plan tick selects all its terms at once. A new operator gets every plan and every term. An order already taken by an operator stays with them to the end even if the tick is removed. An administrator can always take any order.',
   ],
-  'f.plans_save': ['Сохранить тарифы', 'Save plans'],
-  'f.plans_saved': ['Тарифы сохранены: {email}', 'Plans saved: {email}'],
+  'f.plans_save': ['Сохранить тарифы и сроки', 'Save plans and terms'],
+  'f.plans_saved': ['Тарифы и сроки сохранены: {email}', 'Plans and terms saved: {email}'],
   'f.nobody': [
     'Этот тариф сейчас никто не может выполнить: {plan}',
     'Nobody can fulfil this plan right now: {plan}',

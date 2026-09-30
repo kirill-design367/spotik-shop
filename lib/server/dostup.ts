@@ -1,5 +1,6 @@
 /**
- * КАКИЕ ТАРИФЫ МОЖЕТ ВЫПОЛНЯТЬ ОПЕРАТОР И ЧТО ЕМУ ВООБЩЕ ВИДНО.
+ * КАКИЕ ПАРЫ «ТАРИФ × СРОК» МОЖЕТ ВЫПОЛНЯТЬ ОПЕРАТОР И ЧТО ЕМУ
+ * ВООБЩЕ ВИДНО.
  *
  * Постановка сорок шестой итерации, два требования сразу:
  *
@@ -12,26 +13,42 @@
  *    и может взять только их. Проверка на сервере, в том числе при
  *    открытии заказа по прямой ссылке».
  *
- * ⚠️ ОБА ТРЕБОВАНИЯ СВОДЯТСЯ К ОДНОМУ УСЛОВИЮ, И ЖИВЁТ ОНО ЗДЕСЬ,
+ * И сорок седьмой — та же проверка, но мельче:
+ *
+ *   «Оператор видит в очереди и может взять только заказы разрешённых
+ *    ему пар „тариф × срок". Проверка на сервере, как сейчас, включая
+ *    прямую ссылку».
+ *
+ * ⚠️ ВСЕ ТРИ ТРЕБОВАНИЯ СВОДЯТСЯ К ОДНОМУ УСЛОВИЮ, И ЖИВЁТ ОНО ЗДЕСЬ,
  * В ОДНОМ МЕСТЕ. Оператору виден заказ, который либо ЕГО, либо
- * свободен И разрешённого ему тарифа. Разведи мы это по трём
- * выборкам — очередь, закрытые, карточка, — и на четвёртой кто-нибудь
- * забыл бы половину. Условие отдаётся строкой SQL с параметрами:
- * склейка значений в текст запроса тут не нужна вовсе.
+ * свободен И разрешённой ему пары. Разведи мы это по трём выборкам —
+ * очередь, закрытые, карточка, — и на четвёртой кто-нибудь забыл бы
+ * половину. Условие отдаётся строкой SQL с параметрами: склейка
+ * значений в текст запроса тут не нужна вовсе.
+ *
+ * ⚠️ СОРОК СЕДЬМАЯ ИЗМЕНИЛА ТОЛЬКО МЕРУ ЗАПРЕТА — БЫЛ ТАРИФ, СТАЛА
+ * ПАРА, — а форма условия та же. Это и было смыслом того, чтобы
+ * держать его одним куском: правка легла в одну строку SQL, и все
+ * три выборки поехали за ней сами.
  *
  * ⚠️ «ЗАКАЗ, УЖЕ ВЗЯТЫЙ ОПЕРАТОРОМ, ОСТАЁТСЯ У НЕГО ДО КОНЦА, ДАЖЕ
  * ЕСЛИ ГАЛОЧКУ СНЯЛИ» — это первая половина условия, и она стоит
- * ПЕРЕД проверкой тарифа: свой заказ виден всегда, о тарифе его
- * никто не спрашивает.
+ * ПЕРЕД проверкой пары: свой заказ виден всегда, о тарифе и сроке
+ * его никто не спрашивает.
  *
  * ⚠️ ЗАПРЕТ ПРОВЕРЯЕТСЯ ТОЛЬКО У СВОБОДНОГО ЗАКАЗА, потому что
  * взять можно только свободный. У закрытого заказа `operator_id`
  * хранит того, кто его закрыл, — и он же решает, свой это заказ
- * или чужой.
+ * или чужой. Отсюда же ответ на вопрос прошлой итерации: закрытые
+ * заказы оператор видит ТОЛЬКО СВОИ, и это постановка сорок седьмой,
+ * а не побочное следствие.
  */
 
 import { tikho, zapros } from './db';
-import { DARIMYE } from '@/lib/plans';
+import { DARIMYE, PERIODS } from '@/lib/plans';
+
+/** Пара «тариф × срок» — единица запрета с сорок седьмой итерации. */
+export type Para = { planId: string; period: number };
 
 /**
  * Что сотруднику доступно.
@@ -43,24 +60,39 @@ import { DARIMYE } from '@/lib/plans';
  */
 export type Dostup =
   | { admin: true; staffId: number }
-  | { admin: false; staffId: number; zapreshcheno: string[] };
+  | { admin: false; staffId: number; zapreshcheno: Para[] };
 
-/** Запреты одного сотрудника. Пусто — «все тарифы разрешены». */
-export async function zapretyTarifov(staffId: number): Promise<string[]> {
+/**
+ * Запреты одного сотрудника. Пусто — «все пары разрешены».
+ *
+ * ⚠️ ИМЯ СМЕНИЛОСЬ ВМЕСТЕ С МЕРОЙ (было `zapretyTarifov`). Смысл
+ * у функции стал другой — пара вместо тарифа, — и тихо оставить
+ * прежнее имя значило бы спрятать разворот от того, кто будет читать
+ * код через десять итераций. Тот же приём, что с `slotAkkaunta`
+ * в Р-151.
+ */
+export async function zapretyPar(staffId: number): Promise<Para[]> {
   const rows = await tikho(
-    () => zapros<{ plan_id: string }>('select plan_id from staff_plan_off where staff_id = $1', [staffId]),
-    [] as { plan_id: string }[],
+    () =>
+      zapros<{ plan_id: string; period: number }>(
+        'select plan_id, period from staff_plan_off where staff_id = $1',
+        [staffId],
+      ),
+    [] as { plan_id: string; period: number }[],
   );
-  return rows.map((r) => r.plan_id);
+  return rows.map((r) => ({ planId: r.plan_id, period: Number(r.period) }));
 }
 
-/** Все запреты разом — для таблицы галочек в разделе «Сотрудники». */
-export async function vseZaprety(): Promise<{ staffId: number; planId: string }[]> {
+/** Все запреты разом — для карточек галочек в разделе «Сотрудники». */
+export async function vseZaprety(): Promise<{ staffId: number; planId: string; period: number }[]> {
   const rows = await tikho(
-    () => zapros<{ staff_id: string; plan_id: string }>('select staff_id, plan_id from staff_plan_off'),
-    [] as { staff_id: string; plan_id: string }[],
+    () =>
+      zapros<{ staff_id: string; plan_id: string; period: number }>(
+        'select staff_id, plan_id, period from staff_plan_off',
+      ),
+    [] as { staff_id: string; plan_id: string; period: number }[],
   );
-  return rows.map((r) => ({ staffId: Number(r.staff_id), planId: r.plan_id }));
+  return rows.map((r) => ({ staffId: Number(r.staff_id), planId: r.plan_id, period: Number(r.period) }));
 }
 
 /**
@@ -71,7 +103,7 @@ export async function vseZaprety(): Promise<{ staffId: number; planId: string }[
  */
 export async function dostupSotrudnika(s: { id: number; role: 'admin' | 'operator' }): Promise<Dostup> {
   if (s.role === 'admin') return { admin: true, staffId: s.id };
-  return { admin: false, staffId: s.id, zapreshcheno: await zapretyTarifov(s.id) };
+  return { admin: false, staffId: s.id, zapreshcheno: await zapretyPar(s.id) };
 }
 
 /**
@@ -80,6 +112,11 @@ export async function dostupSotrudnika(s: { id: number; role: 'admin' | 'operato
  * `alias` — псевдоним таблицы `shop_order` в запросе; `s` — номер
  * первого свободного параметра ($1, $2, …). Возвращает пустое
  * условие администратору: ему видно всё.
+ *
+ * ⚠️ ПАРАМЕТРОВ ТЕПЕРЬ ТРИ, А НЕ ДВА, и вызывающие об этом не знают:
+ * все три выборки подставляют `v.params` россыпью, поэтому число
+ * параметров меняется само. Специально проверено на `zakrytye`
+ * и `zakazDlyaAdminki`, где до условия стоит ещё один свой параметр.
  */
 export function usloviyeVidimosti(
   d: Dostup,
@@ -88,21 +125,45 @@ export function usloviyeVidimosti(
 ): { uslovie: string; params: unknown[] } {
   if (d.admin) return { uslovie: '', params: [] };
   return {
-    /* ⚠️ `not (… = any(…))` — ЭТО «ТАРИФ НЕ ЗАПРЕЩЁН», а не «тариф
-       разрешён», и разница видна на тарифе, которого в списке
-       запретов нет вообще: он ДОСТУПЕН. Так же читается и пустая
+    /* ⚠️ `not exists (… unnest …)` — ЭТО «ПАРА НЕ ЗАПРЕЩЕНА», а не
+       «пара разрешена», и разница видна на паре, которой в списке
+       запретов нет вообще: она ДОСТУПНА. Так же читается и пустая
        таблица у нового оператора — «ничего не сказано значит можно»
-       (см. миграцию 013 и Р-116). */
-    uslovie: ` and (${alias}.operator_id = $${s} or (${alias}.operator_id is null and not (${alias}.plan_id = any($${s + 1}::text[]))))`,
-    params: [d.staffId, d.zapreshcheno],
+       (см. миграции 013 и 014, Р-116).
+
+       ⚠️ ПАРА СРАВНИВАЕТСЯ ЦЕЛИКОМ, ДВУМЯ МАССИВАМИ РАЗОМ, а не
+       склеенным ключом: склейка завела бы вторую кодировку рядом
+       с `klyuchPary`, и разошлись бы они молча. `unnest` двух
+       массивов идёт по ним парно — первый с первым, второй
+       со вторым. */
+    uslovie:
+      ` and (${alias}.operator_id = $${s}` +
+      ` or (${alias}.operator_id is null and not exists (` +
+      `select 1 from unnest($${s + 1}::text[], $${s + 2}::int[]) as z (plan_id, period)` +
+      ` where z.plan_id = ${alias}.plan_id and z.period = ${alias}.period)))`,
+    params: [d.staffId, d.zapreshcheno.map((z) => z.planId), d.zapreshcheno.map((z) => z.period)],
   };
 }
 
+/** Все пары «тариф × срок», какие вообще бывают. Источник — `lib/plans.ts`. */
+export function vsePary(): Para[] {
+  return DARIMYE.flatMap((p) => PERIODS.map((s) => ({ planId: p.id, period: s.key as number })));
+}
+
 /**
- * Тарифы, которые НИКТО из действующих операторов выполнить не может.
+ * Пары, которые НИКТО из действующих операторов выполнить не может.
  *
- * Постановка: «Если тариф никому не разрешён, администратор видит
- * предупреждение „Этот тариф сейчас никто не может выполнить"».
+ * Постановка сорок седьмой итерации: «Предупреждение „Этот тариф
+ * сейчас никто не может выполнить" — теперь по каждой паре
+ * „тариф × срок", которая продаётся на сайте».
+ *
+ * ⚠️ «ПРОДАЁТСЯ НА САЙТЕ» — ЭТО КАТАЛОГ, А НЕ ВСЕ ДВЕНАДЦАТЬ ПАР.
+ * `katalog()` уже не отдаёт ни выключенную в админке пару (`plan_off`),
+ * ни пару без цены (Р-116, закон 50): предупреждать о том, чего
+ * на сайте нет, значило бы звать чинить несуществующее. Поэтому
+ * список продаваемых пар приходит СЮДА готовым, а не выводится тут
+ * заново: второй источник разошёлся бы с первым на ближайшей правке
+ * сетки доступности.
  *
  * ⚠️ СЧИТАЕТСЯ ПО ДЕЙСТВУЮЩИМ ОПЕРАТОРАМ, А НЕ ПО ВСЕМ СТРОКАМ
  * `staff`. Отключённый сотрудник в админку не входит вовсе, значит
@@ -110,18 +171,22 @@ export function usloviyeVidimosti(
  * более — они берут любой заказ всегда, и предупреждение про них
  * было бы неправдой.
  *
- * ⚠️ ОПЕРАТОРОВ НЕТ НИ ОДНОГО — ПРЕДУПРЕЖДЕНИЙ НЕТ ТОЖЕ. Формально
- * «никто не может» тогда верно про каждый тариф, но рядом стоит
- * пустой список сотрудников, который говорит то же самое и яснее:
- * строка о каждом тарифе была бы шумом, а не находкой.
+ * ⚠️ ОПЕРАТОРОВ НЕТ НИ ОДНОГО — ПРЕДУПРЕЖДЕНИЙ НЕТ ТОЖЕ, и это
+ * РЕШЕНИЕ ЗАКАЗЧИКА сорок седьмой итерации, а не наше умолчание:
+ * «предупреждение при пустом списке операторов не нужно». Формально
+ * «никто не может» тогда верно про каждую пару, но рядом стоит пустой
+ * список сотрудников, который говорит то же самое и яснее.
  */
 export function niktoNeMozhet(
   operatory: { id: number; disabled: boolean }[],
-  zaprety: { staffId: number; planId: string }[],
-): string[] {
+  zaprety: { staffId: number; planId: string; period: number }[],
+  prodayutsya: Para[],
+): Para[] {
   const zhivye = operatory.filter((o) => !o.disabled);
   if (!zhivye.length) return [];
-  return DARIMYE.filter((p) => zhivye.every((o) => zaprety.some((z) => z.staffId === o.id && z.planId === p.id))).map(
-    (p) => p.id,
+  return prodayutsya.filter((para) =>
+    zhivye.every((o) =>
+      zaprety.some((z) => z.staffId === o.id && z.planId === para.planId && z.period === para.period),
+    ),
   );
 }

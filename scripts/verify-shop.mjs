@@ -2805,13 +2805,24 @@ console.log('── ТАРИФЫ ПО ОПЕРАТОРАМ И ЧУЖИЕ ЗАК�
 
       ⚠️ ОБЫЧНЫЙ КЛИК С ОЖИДАНИЕМ ОТРИСОВКИ, А НЕ `nazhat`: серверное
       действие адреса не меняет, и `nazhat` впустую ждал бы перехода
-      все свои десять секунд. */
+      все свои десять секунд.
+
+      ⚠️ С СОРОК СЕДЬМОЙ ИТЕРАЦИИ ГАЛОЧКА — ЭТО ПАРА «ТАРИФ × СРОК»,
+      и здесь мы трогаем САМИ СРОКИ, а не галочку тарифа. У галочки
+      тарифа есть третье состояние — частичный выбор, — и Playwright
+      про него ничего не знает: `uncheck()` у частично отмеченной
+      видит `checked === false` и не делает НИЧЕГО, оставляя половину
+      сроков включённой. Разрешить тариф значит разрешить все его
+      сроки, и так это и выражается. */
+  const SROKI_PROVERKI = [1, 3, 6, 12];
   const zadatTarify = async (staffId, razresheno) => {
     await admin.goto(`http://localhost:${PORT}/admin/staff/`, { waitUntil: 'networkidle' });
     for (const plan of ['solo', 'duo', 'trio']) {
-      const g = admin.locator(`input[form="tarify-${staffId}"][value="${plan}"]`);
-      if (razresheno.includes(plan)) await g.check();
-      else await g.uncheck();
+      for (const srok of SROKI_PROVERKI) {
+        const g = admin.locator(`form#tarify-${staffId} input[name="pair"][value="${plan}:${srok}"]`);
+        if (razresheno.includes(plan)) await g.check();
+        else await g.uncheck();
+      }
     }
     await admin.locator(`form#tarify-${staffId} button[type="submit"]`).click();
     await admin.waitForLoadState('networkidle');
@@ -2826,9 +2837,9 @@ console.log('── ТАРИФЫ ПО ОПЕРАТОРАМ И ЧУЖИЕ ЗАК�
   const zapretovSrazu = await p2.query('select count(*)::int as n from staff_plan_off where staff_id = any($1::bigint[])', [[id1, id2]]);
   chk('у нового оператора запретов в базе нет ни одного', zapretovSrazu.rows[0].n === 0, String(zapretovSrazu.rows[0].n));
   await admin.goto(`http://localhost:${PORT}/admin/staff/`, { waitUntil: 'networkidle' });
-  const galkiSrazu = await admin.$$eval(`input[form="tarify-${id1}"]`, (e) => e.map((x) => x.checked));
-  chk('у нового оператора отмечены все тарифы',
-    galkiSrazu.length === 3 && galkiSrazu.every(Boolean), galkiSrazu.join(','));
+  const galkiSrazu = await admin.$$eval(`form#tarify-${id1} input[name="pair"]`, (e) => e.map((x) => x.checked));
+  chk('у нового оператора отмечены все тарифы и сроки',
+    galkiSrazu.length === 12 && galkiSrazu.every(Boolean), `${galkiSrazu.length}: ${galkiSrazu.join(',')}`);
 
   /* ── 2. ВТОРОЙ ОПЕРАТОР ТЕРЯЕТ «ИНДИВИДУАЛЬНЫЙ» ПРЯМО ПРИ
         ОТКРЫТОЙ ОЧЕРЕДИ — ЭТО И ЕСТЬ ПРОВЕРКА СЕРВЕРА ────────────
@@ -2845,16 +2856,18 @@ console.log('── ТАРИФЫ ПО ОПЕРАТОРАМ И ЧУЖИЕ ЗАК�
   await zadatTarify(id1, ['solo', 'duo']);
   await zadatTarify(id2, ['duo']);
 
+  /* ⚠️ ЗАПРЕТ ТЕПЕРЬ ПО ПАРЕ, поэтому запрещённый целиком тариф — это
+     ЧЕТЫРЕ строки, а не одна: три запрещённых тарифа дают двенадцать. */
   const zapisano = await p2.query(
-    'select staff_id, plan_id from staff_plan_off where staff_id = any($1::bigint[]) order by staff_id, plan_id',
+    `select staff_id, plan_id, count(*)::int as n
+       from staff_plan_off where staff_id = any($1::bigint[])
+      group by staff_id, plan_id order by staff_id, plan_id`,
     [[id1, id2]],
   );
+  const zapreshchenCelikom = (st, pl) => zapisano.rows.some((r) => Number(r.staff_id) === st && r.plan_id === pl && r.n === 4);
   chk('в базе лежат ЗАПРЕТЫ, а не разрешения',
-    zapisano.rows.length === 3 &&
-      zapisano.rows.some((r) => Number(r.staff_id) === id1 && r.plan_id === 'trio') &&
-      zapisano.rows.some((r) => Number(r.staff_id) === id2 && r.plan_id === 'solo') &&
-      zapisano.rows.some((r) => Number(r.staff_id) === id2 && r.plan_id === 'trio'),
-    zapisano.rows.map((r) => `${r.staff_id}:${r.plan_id}`).join(' '));
+    zapisano.rows.length === 3 && zapreshchenCelikom(id1, 'trio') && zapreshchenCelikom(id2, 'solo') && zapreshchenCelikom(id2, 'trio'),
+    zapisano.rows.map((r) => `${r.staff_id}:${r.plan_id}×${r.n}`).join(' '));
 
   /* Кнопка на СТАРОЙ, уже неверной странице второго оператора.
      ⚠️ ЖДЁМ ПЕРЕХОДА, А НЕ ТИШИНЫ В СЕТИ: действие кончается
@@ -2947,7 +2960,7 @@ console.log('── ТАРИФЫ ПО ОПЕРАТОРАМ И ЧУЖИЕ ЗАК�
      а не вставкой в базу: вставкой проверялось бы не то, что делает
      человек. */
   const doPravki = await p2.query(
-    'select plan_id from staff_plan_off where staff_id = $1 order by plan_id',
+    'select plan_id, period from staff_plan_off where staff_id = $1 order by plan_id, period',
     [id2],
   );
   await admin.goto(`http://localhost:${PORT}/admin/settings/`, { waitUntil: 'networkidle' });
@@ -2988,16 +3001,20 @@ console.log('── ТАРИФЫ ПО ОПЕРАТОРАМ И ЧУЖИЕ ЗАК�
     `${cenaVBaze.rows[0]?.price_kop} · ${imyaVBaze.rows[0]?.name}`);
 
   const poslePravki = await p2.query(
-    'select plan_id from staff_plan_off where staff_id = $1 order by plan_id',
+    'select plan_id, period from staff_plan_off where staff_id = $1 order by plan_id, period',
     [id2],
   );
+  const svodkaPar = (rows) => rows.map((r) => `${r.plan_id}:${r.period}`).join(',');
   chk('переименование и цена галочек не сбрасывают',
-    JSON.stringify(doPravki.rows) === JSON.stringify(poslePravki.rows) && poslePravki.rows.length === 2,
-    `${doPravki.rows.map((r) => r.plan_id).join(',')} → ${poslePravki.rows.map((r) => r.plan_id).join(',')}`);
+    svodkaPar(doPravki.rows) === svodkaPar(poslePravki.rows) && poslePravki.rows.length === 8,
+    `${svodkaPar(doPravki.rows)} → ${svodkaPar(poslePravki.rows)}`);
 
   await admin.goto(`http://localhost:${PORT}/admin/staff/`, { waitUntil: 'networkidle' });
-  const galkiPosle = await admin.$$eval(`input[form="tarify-${id2}"]`, (e) =>
-    e.map((x) => `${x.value}:${x.checked ? 1 : 0}`),
+  /* Галочка ТАРИФА отправке не подлежит и потому без `name`; по ней
+     и видно состояние строки целиком. */
+  const galkiPosle = await admin.$$eval(
+    `form#tarify-${id2} input[type="checkbox"]:not([name])`,
+    (e) => e.map((x) => `${x.value}:${x.checked ? 1 : 0}`),
   );
   chk('на экране галочки после переименования те же',
     galkiPosle.join(' ') === 'solo:0 duo:1 trio:0', galkiPosle.join(' '));

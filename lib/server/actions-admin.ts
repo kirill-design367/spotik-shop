@@ -44,8 +44,8 @@ import { zadatNastroyku, SROK_SERTIFIKATA } from './settings';
 import { shifrGotov } from './crypto';
 import { katalogPolny } from './catalog';
 import { zakazDlyaAdminki } from './views';
-import { dostupSotrudnika, zapretyTarifov } from './dostup';
-import { DARIMYE } from '@/lib/plans';
+import { dostupSotrudnika, vsePary, zapretyPar } from './dostup';
+import { klyuchPary } from '@/lib/plans';
 import { CHASTOTY_OCHEREDI } from '@/lib/admin/chastoty';
 import { zapomnitYazyk } from './yazyk';
 import { ponyatYazyk, type Klyuch, type Podstanovki } from '@/lib/admin/slova';
@@ -133,7 +133,7 @@ export async function adminTake(fd: FormData): Promise<void> {
   const s = await ktoSotrudnik();
   if (!s) redirect('/admin/login/');
   const id = Number(fd.get('order') ?? 0);
-  const zapreshcheno = s.role === 'admin' ? null : await zapretyTarifov(s.id);
+  const zapreshcheno = s.role === 'admin' ? null : await zapretyPar(s.id);
   const vzyal = await vzyatZakaz(id, s.id, zapreshcheno);
   if (vzyal) await soobshchitKomande({ vid: 'zakaz_vzyat', zakaz: id, kto: s.email });
   revalidatePath('/admin');
@@ -543,16 +543,25 @@ export async function adminSetStaffPlans(_p: OtvetA, fd: FormData): Promise<Otve
   const id = Number(fd.get('id') ?? 0);
   const kto = await odna<{ email: string; role: string }>('select email, role from staff where id = $1', [id]);
   if (!kto) return { error: 'e.check_email' };
-  /* Разрешения приходят списком отмеченных галочек; чужое значение
-     просто не совпадёт ни с одним тарифом и в запреты не попадёт. */
-  const razresheno = new Set(fd.getAll('plan').map((x) => String(x)));
-  const zapreshcheno = DARIMYE.filter((p) => !razresheno.has(p.id)).map((p) => p.id);
+  /* ⚠️ РАЗРЕШЕНИЯ ПРИХОДЯТ СПИСКОМ ОТМЕЧЕННЫХ ГАЛОЧЕК, А В БАЗУ
+     ЛОЖАТСЯ ЗАПРЕТЫ, и переворот идёт здесь: «все пары минус
+     отмеченные». Отсюда даром выходит и защита от чужого значения
+     в форме — выдуманная пара просто не совпадёт ни с одной
+     настоящей и в запреты не попадёт, ронять на ней нечего.
+
+     ⚠️ ПАРА ЕДЕТ ОДНОЙ СТРОКОЙ (`klyuchPary`), потому что у галочки
+     одно значение; собирает и разбирает её одно место в `lib/plans.ts`,
+     общее с разметкой. */
+  const razresheno = new Set(fd.getAll('pair').map((x) => String(x)));
+  const zapreshcheno = vsePary().filter((p) => !razresheno.has(klyuchPary(p.planId, p.period)));
   await zapros('delete from staff_plan_off where staff_id = $1', [id]);
   if (zapreshcheno.length) {
     await zapros(
-      `insert into staff_plan_off (staff_id, plan_id)
-         select $1, unnest($2::text[]) on conflict do nothing`,
-      [id, zapreshcheno],
+      `insert into staff_plan_off (staff_id, plan_id, period)
+         select $1, z.plan_id, z.period
+           from unnest($2::text[], $3::int[]) as z (plan_id, period)
+         on conflict do nothing`,
+      [id, zapreshcheno.map((z) => z.planId), zapreshcheno.map((z) => z.period)],
     );
   }
   revalidatePath('/admin/staff');

@@ -212,3 +212,37 @@
 }
 .ad__sure p { margin: 0; font-size: 14px; }
 .ad__sure .ad__actions { margin: 10px 0 0; }
+
+/*
+  ТАРИФЫ И СРОКИ ПО ОПЕРАТОРАМ — карточка на человека.
+
+  ⚠️ КАРТОЧКА, А НЕ ТАБЛИЦА, И ЭТО ПОСТАНОВКА: «На телефоне таблица
+  с двенадцатью галочками не должна уезжать вбок». Тарифы идут
+  строками, сроки — галочками в строке, поэтому вширь считается
+  четыре галочки, а не двенадцать, и `.ad__scroll` тут не нужен
+  вовсе: прокручивать нечего.
+
+  ⚠️ РАДИУСЫ БЕРУТСЯ ИЗ ТОКЕНОВ (Р-133): своих чисел здесь нет
+  ни одного, и сторож требует совпадения с одним из трёх.
+*/
+.ad__op { border-top: 1px solid var(--hair); padding: 14px 0 0; margin: 14px 0 0; }
+.ad__op:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+.ad__op-kto { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; margin: 0 0 10px; }
+.ad__op-set { display: grid; gap: 10px; }
+
+/* Строка тарифа: имя слева, сроки справа. На узком экране сроки
+   переезжают под имя — перенос, а не прокрутка. */
+.ad__op-row {
+  display: flex;
+  align-items: center;
+  gap: 10px 16px;
+  flex-wrap: wrap;
+  background: var(--ink);
+  border-radius: var(--ui-r);
+  padding: 10px 12px;
+}
+.ad__op-plan { display: flex; align-items: center; gap: 8px; font-size: 14px; min-width: 9em; cursor: pointer; }
+.ad__op-plan span { font-variation-settings: 'wght' 600; }
+.ad__op-sroki { display: flex; gap: 6px 14px; flex-wrap: wrap; }
+.ad__op-srok { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--dim); cursor: pointer; }
+.ad__op-srok input, .ad__op-plan input { margin: 0; }
