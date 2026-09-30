@@ -42,6 +42,7 @@ export default function Staff({
   imena,
   tarify,
   sroki,
+  prodayutsya,
   nikto,
 }: {
   list: Chelovek[];
@@ -51,6 +52,10 @@ export default function Staff({
   tarify: string[];
   /** Все сроки, в порядке каталога. */
   sroki: number[];
+  /** Пары, которые ПРОДАЮТСЯ на сайте, ключами. Всё остальное
+      из двенадцати на сайте не существует: цены нет или пара
+      выключена в «Ценах». */
+  prodayutsya: string[];
   /** Пары, которые не может выполнить ни один действующий оператор. */
   nikto: { planId: string; period: number }[];
 }) {
@@ -61,6 +66,7 @@ export default function Staff({
   const imya = (id: string) => imyaTarifaIz(imena, id, y === 'en');
   const srok = (n: number) => srokKratkoDlyaSotrudnika(n, y === 'en');
   const operatory = list.filter((x) => x.role === 'operator');
+  const prodano = new Set(prodayutsya);
   return (
     <>
       <h1>{t('f.h')}</h1>
@@ -142,7 +148,7 @@ export default function Staff({
             много. Пара названа именем тарифа и сроком — это надписи. */}
         {nikto.map((para) => (
           <p key={klyuchPary(para.planId, para.period)} className="err">
-            {t('f.nobody', { plan: `${imya(para.planId)}, ${srok(para.period)}` })}
+            {t('f.nobody', { plan: imya(para.planId), srok: srok(para.period) })}
           </p>
         ))}
 
@@ -155,6 +161,7 @@ export default function Staff({
               c={c}
               tarify={tarify}
               sroki={sroki}
+              prodano={prodano}
               imya={imya}
               srok={srok}
               t={t}
@@ -184,6 +191,7 @@ function KartaOperatora({
   c,
   tarify,
   sroki,
+  prodano,
   imya,
   srok,
   t,
@@ -193,6 +201,7 @@ function KartaOperatora({
   c: Chelovek;
   tarify: string[];
   sroki: number[];
+  prodano: Set<string>;
   imya: (id: string) => string;
   srok: (n: number) => string;
   t: ReturnType<typeof slovar>;
@@ -266,21 +275,37 @@ function KartaOperatora({
               </label>
 
               <div className="ad__op-sroki">
-                {sroki.map((s) => (
-                  <label key={s} className="ad__op-srok">
-                    {/* Имя поля общее: браузер шлёт столько значений
-                        `pair`, сколько галочек отмечено. */}
-                    <input
-                      type="checkbox"
-                      name="pair"
-                      value={klyuchPary(id, s)}
-                      checked={est(id, s)}
-                      onChange={() => perekluchitSrok(id, s)}
-                      aria-label={`${c.email} · ${imya(id)} · ${srok(s)}`}
-                    />
-                    <span>{srok(s)}</span>
-                  </label>
-                ))}
+                {sroki.map((s) => {
+                  /* ⚠️ «НЕ ПРОДАЁТСЯ» — ЭТО ПРО САЙТ, А НЕ ПРО ПРАВО
+                     ОПЕРАТОРА, и потому галочка тут живая: её можно
+                     снять и поставить, и сохраняется она как любая
+                     другая. Приглушён ТЕКСТ, а не сам переключатель —
+                     приглушённый переключатель читался бы как
+                     отключённый, то есть неправдой. */
+                  const vProdazhe = prodano.has(klyuchPary(id, s));
+                  return (
+                    <label key={s} className={`ad__op-srok${vProdazhe ? '' : ' ad__op-srok--net'}`}>
+                      {/* Имя поля общее: браузер шлёт столько значений
+                          `pair`, сколько галочек отмечено. */}
+                      <input
+                        type="checkbox"
+                        name="pair"
+                        value={klyuchPary(id, s)}
+                        checked={est(id, s)}
+                        onChange={() => perekluchitSrok(id, s)}
+                        /* Подпись уезжает и в имя для экранного
+                           диктора: рядом с галочкой она видна глазом,
+                           а ему — только отсюда. */
+                        aria-label={
+                          `${c.email} · ${imya(id)} · ${srok(s)}` +
+                          (vProdazhe ? '' : ` · ${t('f.not_sold')}`)
+                        }
+                      />
+                      <span>{srok(s)}</span>
+                      {vProdazhe ? null : <span className="ad__op-net">{t('f.not_sold')}</span>}
+                    </label>
+                  );
+                })}
               </div>
             </div>
           );

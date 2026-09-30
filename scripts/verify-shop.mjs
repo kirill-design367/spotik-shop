@@ -3038,16 +3038,16 @@ console.log('── ТАРИФЫ ПО ОПЕРАТОРАМ И ЧУЖИЕ ЗАК�
   for (const r of zhivye.rows) await zadatTarify(Number(r.id), []);
   await admin.goto(`http://localhost:${PORT}/admin/staff/`, { waitUntil: 'networkidle' });
   const sZapretom = await admin.innerText('main.ad');
-  chk('«этот тариф сейчас никто не может выполнить» появилось',
-    /Этот тариф сейчас никто не может выполнить/.test(sZapretom),
-    sZapretom.replace(/\s+/g, ' ').match(/Этот тариф[^\n]{0,60}/)?.[0] ?? 'нет');
+  chk('«сейчас никто не может выполнить» появилось',
+    /Сейчас никто не может выполнить/.test(sZapretom),
+    sZapretom.replace(/\s+/g, ' ').match(/Сейчас никто[^\n]{0,60}/)?.[0] ?? 'нет');
 
   /* ── 9. АНГЛИЙСКАЯ АДМИНКА ─────────────────────────────────────── */
   await nazhat(admin, '.ad__lang-btn[value="en"]');
   await admin.goto(`http://localhost:${PORT}/admin/staff/`, { waitUntil: 'networkidle' });
   const staffEn = await admin.innerText('main.ad');
   chk('в английской админке тарифы операторов подписаны по-английски',
-    /Operator plans/.test(staffEn) && /Nobody can fulfil this plan/.test(staffEn) &&
+    /Operator plans/.test(staffEn) && /Nobody can fulfil this right now/.test(staffEn) &&
       !/Тарифы оператора/.test(staffEn) && !/никто не может выполнить/.test(staffEn),
     staffEn.replace(/\s+/g, ' ').match(/Operator plans|Тарифы оператора/)?.[0] ?? 'ни одного');
   await nazhat(admin, '.ad__lang-btn[value="ru"]');
