@@ -28,6 +28,13 @@ export const dynamic = 'force-dynamic';
  * обеим ролям, но деньги и генератор рекламных ссылок в нём —
  * администраторские.
  *
+ * ⚠️ А С СОРОК ДЕВЯТОЙ ОПЕРАТОР ВИДИТ ЗДЕСЬ ТОЛЬКО СЕБЯ: «только его
+ * выполненные заказы за выбранный период — по почте, с которой он
+ * вошёл: общее число и разбивку „По тарифам и срокам". Общих цифр
+ * по всему сервису у него нет… Отбор — на сервере». Раздел открыт
+ * обеим ролям по-прежнему, но у оператора это его личный отчёт,
+ * а не отчёт сервиса (Р-159).
+ *
  * ⚠️ ЧИСЛА НЕТ — ЗНАЧИТ НЕТ И СТРОКИ. Сервер отдаёт `null` вместо
  * суммы (`lib/server/stats.ts`), и страница рисует строку выручки
  * только там, где число пришло: спрячь мы её стилем — сумма всё
@@ -65,7 +72,10 @@ export default async function AdminStats({
      статистики при этом открыт обеим ролям с сорок второй итерации
      (Р-147) — это разные вещи. */
   const admin = s.role === 'admin';
-  const [d, imena] = await Promise.all([svodka(period, admin), imenaTarifov()]);
+  /* ⚠️ КТО СПРАШИВАЕТ, ЕДЕТ В ВЫБОРКУ ЦЕЛИКОМ (сорок девятая итерация,
+     пункт 4): оператору сервер отдаёт только его выполненные заказы,
+     а общих цифр по сервису не считает вовсе. */
+  const [d, imena] = await Promise.all([svodka(period, { admin, staffId: s.id }), imenaTarifov()]);
   const imyaPerioda: Record<string, Klyuch> = { day: 'ss.day', week: 'ss.week', month: 'ss.month' };
   const vremya = (min: number) => t('ss.hm', { h: Math.floor(min / 60), m: min % 60 });
   const vybran = period.vid === 'daty' ? '' : period.vid;
@@ -111,52 +121,71 @@ export default async function AdminStats({
             </label>
           </div>
         </form>
-        <p className="hint" style={{ margin: 0 }}>{t('ss.period_note')}</p>
+        <p className="hint" style={{ margin: 0 }}>{t(admin ? 'ss.period_note' : 'ss.period_note_my')}</p>
       </div>
 
-      <div className="ad__card">
-        <dl className="ad__kv">
-          <dt>{t('ss.orders')}</dt>
-          <dd className="tnum">{d.zakazov}</dd>
-          {d.vyruchkaKop !== null ? (
-            <>
+      {/* ⚠️ ОБЩИЕ ЦИФРЫ ПО СЕРВИСУ — ТОЛЬКО АДМИНИСТРАТОРУ (сорок
+          девятая итерация, пункт 4): «Общих цифр по всему сервису
+          у него нет: общего числа заказов, очереди, среднего времени,
+          сертификатов». Признак тот же, что у выручки: `null` значит
+          «спрашивал не администратор», и чисел в разметке нет вовсе —
+          их не считали. */}
+      {d.obshchee ? (
+        <>
+          <div className="ad__card">
+            <dl className="ad__kv">
+              <dt>{t('ss.orders')}</dt>
+              <dd className="tnum">{d.obshchee.zakazov}</dd>
               <dt>{t('ss.revenue')}</dt>
-              <dd className="tnum">{rubli(d.vyruchkaKop)}</dd>
-            </>
-          ) : null}
-        </dl>
-        {/* Пояснение про кассу — часть строки выручки, и без неё
-            оно объясняет число, которого на экране нет. */}
-        {d.vyruchkaKop !== null ? <p className="hint">{t('ss.revenue_note')}</p> : null}
-      </div>
+              <dd className="tnum">{rubli(d.obshchee.vyruchkaKop)}</dd>
+            </dl>
+            <p className="hint">{t('ss.revenue_note')}</p>
+          </div>
 
-      <div className="ad__card">
-        <dl className="ad__kv">
-          <dt>{t('ss.queue')}</dt>
-          <dd className="tnum">
-            {d.vOcheredi} <span className="hint">{t('ss.queue_note')}</span>
-          </dd>
-          <dt>{t('ss.avg')}</dt>
-          <dd>
-            {d.srednyayaMinut === null ? (
-              <span className="hint">{t('ss.avg_none')}</span>
-            ) : (
-              <>
-                <span className="tnum">{vremya(d.srednyayaMinut)}</span>{' '}
-                <span className="hint">{t('ss.avg_note')}</span>
-              </>
-            )}
-          </dd>
-          <dt>{t('ss.certs')}</dt>
-          <dd className="tnum">
-            {t('ss.certs_bought')}: {d.sertifikatovKupleno} · {t('ss.certs_used')}:{' '}
-            {d.sertifikatovAktivirovano} <span className="hint">({t('ss.certs_all')})</span>
-          </dd>
-        </dl>
-      </div>
+          <div className="ad__card">
+            <dl className="ad__kv">
+              <dt>{t('ss.queue')}</dt>
+              <dd className="tnum">
+                {d.obshchee.vOcheredi} <span className="hint">{t('ss.queue_note')}</span>
+              </dd>
+              <dt>{t('ss.avg')}</dt>
+              <dd>
+                {d.obshchee.srednyayaMinut === null ? (
+                  <span className="hint">{t('ss.avg_none')}</span>
+                ) : (
+                  <>
+                    <span className="tnum">{vremya(d.obshchee.srednyayaMinut)}</span>{' '}
+                    <span className="hint">{t('ss.avg_note')}</span>
+                  </>
+                )}
+              </dd>
+              <dt>{t('ss.certs')}</dt>
+              <dd className="tnum">
+                {t('ss.certs_bought')}: {d.obshchee.sertifikatovKupleno} · {t('ss.certs_used')}:{' '}
+                {d.obshchee.sertifikatovAktivirovano} <span className="hint">({t('ss.certs_all')})</span>
+              </dd>
+            </dl>
+          </div>
+        </>
+      ) : (
+        /* ⚠️ У ОПЕРАТОРА — ЕГО ВЫПОЛНЕННЫЕ ЗАКАЗЫ ЗА ПЕРИОД, и только
+           они. Считает их сервер по журналу: «по почте, с которой он
+           вошёл» — это его номер в событии «выполнил». */
+        <div className="ad__card">
+          <dl className="ad__kv">
+            <dt>{t('ss.my_done')}</dt>
+            <dd className="tnum">{d.vypolneno}</dd>
+          </dl>
+          <p className="hint">{t('ss.my_done_note')}</p>
+        </div>
+      )}
 
       <div className="ad__card">
         <h3>{t('ss.by_plan')}</h3>
+        {/* Что именно здесь считается — названо прямо: «только
+            выполненные, по времени выполнения» (сорок девятая
+            итерация, пункт 1). */}
+        <p className="hint">{admin ? t('ss.by_plan_note') : t('ss.by_plan_note_my')}</p>
         {!d.tarify.length ? (
           <p className="hint">{t('ss.none')}</p>
         ) : (
@@ -199,9 +228,19 @@ export default async function AdminStats({
           Период — тот же, что выбран выше на экране: он один на всю
           страницу (Р-147). Отмены самим покупателем сюда не попадают
           по построению — у них нет сотрудника (см. `stats.ts`). */}
+      {/* ⚠️ КОЛОНКИ ОТМЕН СКРЫТЫ ПО УМОЛЧАНИЮ И ВКЛЮЧАЮТСЯ ГАЛОЧКОЙ
+          (сорок девятая итерация, пункт 3). Переключает их ЧИСТЫЙ CSS
+          через `:has()`: галочка и таблица лежат в одной карточке,
+          и скрипт тут не нужен вовсе — страница серверная. Данные при
+          этом в разметке есть: это не секрет, а вид, и решает его тот,
+          кто смотрит (числа отмен и так видит только администратор). */}
       {d.poSotrudnikam ? (
-        <div className="ad__card">
+        <div className="ad__card ss-staff">
           <h3>{t('ss.by_staff')}</h3>
+          <label className="ad__check">
+            <input type="checkbox" className="ss-staff__pokaz" />
+            <span>{t('ss.show_cancels')}</span>
+          </label>
           {!d.poSotrudnikam.length ? (
             <p className="hint">{t('ss.none')}</p>
           ) : (
@@ -212,8 +251,8 @@ export default async function AdminStats({
                     <th>{t('t.staff')}</th>
                     <th>{t('ss.done_n')}</th>
                     <th>{t('ss.done_plans')}</th>
-                    <th>{t('ss.cancelled_n')}</th>
-                    <th>{t('ss.cancelled_plans')}</th>
+                    <th className="ss-otm">{t('ss.cancelled_n')}</th>
+                    <th className="ss-otm">{t('ss.cancelled_plans')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -228,8 +267,8 @@ export default async function AdminStats({
                           .map((x) => `${imyaTarifaIz(imena, x.planId, y === 'en')} — ${x.zakazov}`)
                           .join(' · ')}
                       </td>
-                      <td className="tnum">{r.otmen}</td>
-                      <td>
+                      <td className="tnum ss-otm">{r.otmen}</td>
+                      <td className="ss-otm">
                         {r.tarifyOtmen
                           .map((x) => `${imyaTarifaIz(imena, x.planId, y === 'en')} — ${x.zakazov}`)
                           .join(' · ')}
@@ -251,6 +290,7 @@ export default async function AdminStats({
       {d.istochniki ? (
       <div className="ad__card">
         <h3>{t('ss.sources')}</h3>
+        <p className="hint">{t('ss.sources_note')}</p>
         {!d.istochniki.length ? (
           <p className="hint">{t('ss.none')}</p>
         ) : (

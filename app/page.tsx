@@ -1,5 +1,5 @@
 import Hero from '@/components/sections/Hero';
-import Pricing, { type CenyTarifov, type ImenaKart, type SkidkiTarifov } from '@/components/sections/Pricing';
+import Pricing, { type CenyTarifov, type EgipetPary, type ImenaKart, type SkidkiTarifov } from '@/components/sections/Pricing';
 import Marquee from '@/components/mid/Marquee';
 import HowItWorks from '@/components/sections/HowItWorks';
 import Faq from '@/components/sections/Faq';
@@ -42,11 +42,14 @@ export default async function Page() {
      имя прямо из `DARIMYE`, переименованный тариф менялся везде,
      кроме главной (Р-142). */
   const imena: ImenaKart = {};
+  /* Пары с Египтом едут из того же каталога: признак лежит у цены. */
+  const egipet: EgipetPary = [];
   for (const t of spisok) {
     const m: Partial<Record<PeriodKey, number>> = {};
     const sk: Partial<Record<PeriodKey, { bylo: number; doDaty: string }>> = {};
     for (const c of t.ceny) {
       m[c.period] = c.kop / 100;
+      if (c.egipet) egipet.push({ planId: t.id, period: c.period });
       if (c.bezSkidki && c.doDaty) sk[c.period] = { bylo: c.bezSkidki / 100, doDaty: c.doDaty };
     }
     ceny[t.id] = m;
@@ -58,7 +61,7 @@ export default async function Page() {
     <>
       <main id="main" tabIndex={-1}>
         <Hero />
-        <Pricing ceny={ceny} skidki={skidki} imena={imena} />
+        <Pricing ceny={ceny} skidki={skidki} imena={imena} egipet={egipet} />
         <Marquee items={PERKS} />
         <HowItWorks />
         <Faq />

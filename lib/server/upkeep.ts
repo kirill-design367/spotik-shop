@@ -63,6 +63,11 @@ export async function ubrat(): Promise<void> {
     // Ушедшие уведомления держать незачем: разбор беды идёт
     // по журналу, а неушедшие остаются в очереди до последней попытки.
     await zapros(`delete from notify_outbox where sent_at is not null and sent_at < now() - interval '14 days'`);
+    // ⚠️ Неушедшее уведомление С ПАРОЛЕМ живёт не дольше недели:
+    // шифротекст пароля нигде не держится дольше семи дней (закон 35),
+    // и через неделю отменять подписку по нему уже поздно — задача
+    // в очереди и карточка заказа говорят то же самое.
+    await zapros(`delete from notify_outbox where vid = 'otmena_podpiski' and created_at < now() - interval '7 days'`);
   } catch (e) {
     log.error('уборка не прошла', { text: String((e as Error).message) });
   }

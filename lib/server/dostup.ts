@@ -145,6 +145,65 @@ export function usloviyeVidimosti(
   };
 }
 
+/**
+ * То же условие, но вместе с ЗАДАЧЕЙ «ОТМЕНА ПОДПИСКИ» (сорок девятая
+ * итерация) — для карточки заказа.
+ *
+ * ⚠️ У ЗАДАЧИ СВОЙ ДЕРЖАТЕЛЬ, И ОН МОЖЕТ НЕ СОВПАДАТЬ С ДЕРЖАТЕЛЕМ
+ * ЗАКАЗА. Заказ выполнил администратор (или оператор, которого уже
+ * нет), задача ушла в общую очередь, и взял её третий человек: по
+ * одному `operator_id` заказа он свою задачу не открыл бы вовсе.
+ * Поэтому заказ виден, если он виден сам ИЛИ если у него есть задача,
+ * которая видна: своя — всегда, свободная — тем же правилом пары,
+ * что и свободный заказ.
+ *
+ * ⚠️ ФОРМА ТА ЖЕ, ЧТО У `usloviyeVidimosti`, И ПАРАМЕТРЫ ТЕ ЖЕ ТРИ:
+ * вызывающий подставляет `params` россыпью и о составе не знает.
+ */
+export function usloviyeVidimostiSZadachey(
+  d: Dostup,
+  alias: string,
+  s: number,
+): { uslovie: string; params: unknown[] } {
+  if (d.admin) return { uslovie: '', params: [] };
+  const para = (kto: string) =>
+    `not exists (select 1 from unnest($${s + 1}::text[], $${s + 2}::int[]) as z (plan_id, period)` +
+    ` where z.plan_id = ${kto}.plan_id and z.period = ${kto}.period)`;
+  return {
+    uslovie:
+      ` and (${alias}.operator_id = $${s}` +
+      ` or (${alias}.operator_id is null and ${para(alias)})` +
+      ` or exists (select 1 from sub_cancel zt where zt.order_id = ${alias}.id` +
+      ` and (zt.operator_id = $${s} or (zt.operator_id is null and zt.done_at is null and ${para(alias)}))))`,
+    params: [d.staffId, d.zapreshcheno.map((z) => z.planId), d.zapreshcheno.map((z) => z.period)],
+  };
+}
+
+/**
+ * Какие ОТКРЫТЫЕ задачи «Отмена подписки» видны в очереди.
+ *
+ * `t` — псевдоним `sub_cancel`, `o` — `shop_order`. Своя задача видна
+ * всегда, свободная — тем же правилом пары, что свободный заказ
+ * (Р-155, Р-156): оператор, которому пара запрещена, её не видит
+ * и не возьмёт.
+ */
+export function usloviyeVidimostiOtmeny(
+  d: Dostup,
+  t: string,
+  o: string,
+  s: number,
+): { uslovie: string; params: unknown[] } {
+  if (d.admin) return { uslovie: '', params: [] };
+  return {
+    uslovie:
+      ` and (${t}.operator_id = $${s}` +
+      ` or (${t}.operator_id is null and not exists (` +
+      `select 1 from unnest($${s + 1}::text[], $${s + 2}::int[]) as z (plan_id, period)` +
+      ` where z.plan_id = ${o}.plan_id and z.period = ${o}.period)))`,
+    params: [d.staffId, d.zapreshcheno.map((z) => z.planId), d.zapreshcheno.map((z) => z.period)],
+  };
+}
+
 /** Все пары «тариф × срок», какие вообще бывают. Источник — `lib/plans.ts`. */
 export function vsePary(): Para[] {
   return DARIMYE.flatMap((p) => PERIODS.map((s) => ({ planId: p.id, period: s.key as number })));

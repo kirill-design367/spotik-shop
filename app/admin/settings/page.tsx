@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import Prices, { type Stroka } from '@/components/admin/Prices';
 import { ktoSotrudnik } from '@/lib/server/auth';
 import { bazaEst, zapros } from '@/lib/server/db';
-import { katalogPoUmolchaniyu, skidkiIVyklyuchennye, SROKI } from '@/lib/server/catalog';
+import { egipetskiePary, katalogPoUmolchaniyu, skidkiIVyklyuchennye, SROKI } from '@/lib/server/catalog';
 import { srokSertifikataDney } from '@/lib/server/settings';
 import { DARIMYE, imyaTarifaIz, srokDlyaSotrudnika } from '@/lib/plans';
 import { imenaSyrye, imenaTarifov } from '@/lib/server/imena';
@@ -32,6 +32,7 @@ export default async function AdminSettings() {
      у сертификата больше не бывает, он стоит ровно столько, сколько
      подаренный тариф. Осталась только настройка срока жизни кода. */
   const { skidki, vyklyucheny } = await skidkiIVyklyuchennye();
+  const egipet = await egipetskiePary();
   const imena = await imenaTarifov();
   /* ⚠️ ПОЛЯ ЗАПОЛНЕНЫ ДЕЙСТВУЮЩИМ ИМЕНЕМ, А НЕ ПУСТЫЕ. Пустое поле
      читалось бы как «имени нет», а имя есть всегда — либо своё,
@@ -81,6 +82,10 @@ export default async function AdminSettings() {
            означала бы карточку, которая на этом сроке молчит. */
         prodayom:
           kop !== undefined && !vyklyucheny.some((v) => v.planId === p.id && v.period === s2.key),
+        /* ⚠️ ГАЛОЧКА СТОИТ У ВСЕХ ДВЕНАДЦАТИ ПАР, ВКЛЮЧАЯ НЕПРОДАВАЕМЫЕ:
+           Египет — свойство аккаунта на паре, а не её цены, и снятая
+           с продажи пара обязана вернуться с той же отметкой. */
+        egipet: egipet.some((e) => e.planId === p.id && e.period === s2.key),
       });
     }
   }

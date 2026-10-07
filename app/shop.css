@@ -806,6 +806,15 @@
    ниже считает ДИВЫ, и абзац их счёт не сбивает. */
 .ozhivayet > .panel__note--plate,
 .ozhivayet > .plashka-chasy { animation: panel-vhod 420ms var(--ease) 75ms both; }
+/* Плашка про египетский VPN (сорок девятая итерация) стоит рядом
+   с плашкой часов и с тем же воздухом снизу — постановка: «с тем же
+   воздухом». Поле лежит ВНУТРИ схлопывающейся обёртки: у скрытой
+   плашки пропадает и оно, и лишнего воздуха между панелями нет.
+   Приезжает тем же ходом, что плашка часов. */
+.ozhivayet .plashka-egipet {
+  margin-bottom: var(--ritm-lg);
+  animation: panel-vhod 420ms var(--ease) 75ms both;
+}
 .ozhivayet > .panel:nth-of-type(1) { animation-delay: 40ms; }
 .ozhivayet > .panel:nth-of-type(2) { animation-delay: 110ms; }
 .ozhivayet > .panel:nth-of-type(3) { animation-delay: 180ms; }
@@ -826,5 +835,6 @@
   .svorach { transition: none; }
   .galka__krug, .galka__put { animation: none; stroke-dashoffset: 0; }
   .ozhivayet > .panel, .ozhivayet > .panel__note--plate, .ozhivayet > .plashka-chasy, .summa { animation: none; }
+  .ozhivayet .plashka-egipet { animation: none; }
   .shkala__tochka { transition: none; }
 }

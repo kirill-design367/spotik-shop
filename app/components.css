@@ -2411,3 +2411,61 @@
   align-items: center;
   padding-block: 80px;
 }
+
+/* ── ПЛАШКА ПРО ЕГИПЕТСКИЙ VPN ───────────────────────────────────────────
+   Сорок девятая итерация: «Визуально — как плашка про рабочее время».
+   Значит те же величины, что у `.plashka-chasy` (`app/shop.css`):
+   зелёная кайма и знак, подложка из зелёного подмешиванием, белый
+   текст. Живёт ЗДЕСЬ, а не в `shop.css`, потому что стоит и на главной,
+   а `shop.css` главная не грузит.
+
+   ⚠️ НА ЛЕНДИНГЕ ЭТО ТРЕТИЙ РАДИУС, И ЗАВЁЛ ЕГО НЕ ВКУС, А ПОСТАНОВКА.
+   Закон раздела 3 скругляет на лендинге только кнопку, плашки и карту;
+   «как плашка про рабочее время» значит `--ui-r`, и это названо
+   исключением, а не тихой правкой (Р-158).
+
+   ⚠️ ВЫСОТУ ВЕДЁТ `grid-template-rows`, А ВОЗДУХ ЛЕЖИТ ВНУТРИ
+   СХЛОПЫВАЮЩЕЙСЯ ЧАСТИ. Внутренняя обёртка — `overflow: hidden`, то
+   есть свой блочный контекст, и поле плашки остаётся ВНУТРИ неё:
+   закрытая плашка занимает ровно ноль вместе со своим воздухом.
+   ⚠️ ПЕРВАЯ РЕДАКЦИЯ СНИМАЛА ВОЗДУХ ОТРИЦАТЕЛЬНЫМ ПОЛЕМ, И В СЕТКЕ
+   ЭТО НЕ РАБОТАЕТ ВОВСЕ: промежуток сетки `.order` стоит между
+   дорожками, поле его не снимает, а растяжение элемента превращает
+   минус двенадцать в двенадцать пикселей высоты. Закрытая плашка
+   оставляла под кнопкой лишние 12 px — поймано ручной проверкой
+   по геометрии, а не глазом. Поэтому на главной кнопка и плашка
+   стоят в своей обёртке без промежутка (`.order__knopka`). */
+.egipet {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 380ms var(--ease),
+    opacity 280ms var(--ease);
+}
+.egipet[data-on] { grid-template-rows: 1fr; opacity: 1; }
+.egipet__nutro { min-height: 0; overflow: hidden; }
+.plashka-egipet {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  background: color-mix(in srgb, var(--green) 16%, var(--ink));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 62%, transparent);
+  border-radius: var(--ui-r);
+  padding: 14px 16px;
+  color: #fff;
+  font-size: 14px;
+  line-height: 1.45;
+  text-align: left;
+}
+.plashka-egipet svg { flex: none; color: var(--green); }
+/* На главной плашка стоит под кнопкой, по центру, шириной с плашки
+   выбора аккаунта. Обёртка растянута на колонку `.order`, иначе
+   проценты ширины кнопки и плашки считались бы от неё самой. */
+.order__knopka { justify-self: stretch; display: grid; justify-items: center; }
+.order .egipet { width: min(100%, 420px); }
+.order .plashka-egipet { margin-top: 12px; }
+@media (prefers-reduced-motion: reduce) {
+  .egipet { transition: none; }
+}

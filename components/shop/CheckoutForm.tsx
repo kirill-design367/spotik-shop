@@ -9,8 +9,15 @@ import { Pole, PoleParolya } from './Polya';
 import { parolNeGoditsya, pochtaNeVerna, PRAVILO_PAROLYA } from '@/lib/proverka';
 import { CHASY_SLOVAMI } from '@/lib/chasy';
 import { useUhodNaOplatu } from './uhod';
+import EgipetPlashka from '@/components/EgipetPlashka';
 
-export type SrokVybor = { period: number; kop: number; label: string };
+export type SrokVybor = {
+  period: number;
+  kop: number;
+  label: string;
+  /** Аккаунт на этой паре привязан к Египту (сорок девятая итерация). */
+  egipet: boolean;
+};
 
 export type TarifVybor = {
   id: string;
@@ -166,6 +173,11 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
 
   const cena = sroki.find((s) => s.period === period)?.kop ?? 0;
   const srokLabel = sroki.find((s) => s.period === period)?.label ?? '';
+  /* ⚠️ ПЛАШКА ИДЁТ ЗА ВЫБРАННОЙ ПАРОЙ, А НЕ ЗА ПРИШЕДШЕЙ С ГЛАВНОЙ:
+     человек может сменить тариф и срок в «Изменить», и плашка обязана
+     появиться или уйти вслед за этим. У сертификата её нет, как и у
+     плашки часов: покупатель подарка аккаунт не заводит. */
+  const egipet = !vvod.sertifikat && Boolean(sroki.find((s) => s.period === period)?.egipet);
   const imyaTarifa = vvod.sertifikat ? `Сертификат · ${tarif?.name ?? vvod.planName}` : (tarif?.name ?? vvod.planName);
   const sBalansa = tratit ? Math.min(vvod.balansKop, cena) : 0;
   const kOplate = cena - sBalansa;
@@ -294,6 +306,13 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
           <span>Заказ будет выполнен в рабочее время сервиса ({CHASY_SLOVAMI}).</span>
         </p>
       ) : null}
+
+      {/* ⚠️ ПЛАШКА ПРО ЕГИПЕТСКИЙ VPN — РЯДОМ С ПЛАШКОЙ ЧАСОВ И С ТЕМ ЖЕ
+          ВОЗДУХОМ (постановка сорок девятой итерации). Стоит в разметке
+          всегда и показывается признаком: при смене тарифа или срока
+          она плавно появляется и уходит, а снятый узел не анимируется
+          ничем. */}
+      {!vvod.sertifikat ? <EgipetPlashka pokaz={egipet} /> : null}
 
       {!vvod.sertifikat ? (
         <div className="panel">

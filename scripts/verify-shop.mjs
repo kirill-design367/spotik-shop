@@ -542,8 +542,11 @@ console.log('── СТАТИСТИКА: ПЕРИОД, ДОСТУП ИСПОЛ�
   await p2.query(`update staff set role = 'operator' where email = $1`, [ADMIN]);
   await admin.goto(`http://localhost:${PORT}/admin/stats/`, { waitUntil: 'networkidle' });
   const ispolnitelyu = (await admin.innerText('main.ad')) ?? '';
+  /* ⚠️ С СОРОК ДЕВЯТОЙ ОПЕРАТОР ВИДИТ ТОЛЬКО СВОИ ВЫПОЛНЕННЫЕ:
+     общих цифр сервиса — очереди в том числе — у него нет (Р-159),
+     поэтому открытость раздела судится по его собственной карточке. */
   chk('исполнителю статистика ОТКРЫТА',
-    /Сейчас в очереди/.test(ispolnitelyu) && !/Только для администраторов/.test(ispolnitelyu),
+    /Вы выполнили/.test(ispolnitelyu) && !/Только для администраторов/.test(ispolnitelyu),
     ispolnitelyu.replace(/\s+/g, ' ').slice(0, 80));
   chk('исполнителю виден и выбор периода', (await admin.$$('input[name="ot"]')).length === 1);
 
@@ -1120,8 +1123,13 @@ console.log('── СКРУГЛЁННЫЕ УГЛЫ В РАЗДЕЛЕ, И ЛЕН
     kab.length >= 2 && kab.every((v) => v.r >= 6),
     `${kab.length} шт., наименьший ${hudshy(kab)}${imena(kab) ? `: ${imena(kab)}` : ''}`);
 
-  const adm1 = await kruglo(admin, '/admin/', '.ad__card, .ad input, .ad select, .ad__tag, .ad__secret');
-  const adm2 = await kruglo(admin, '/admin/settings/', '.ad__card, .ad input, .ad select, .ad__tag, .ad__secret');
+  /* ⚠️ ГАЛОЧКА — НЕ ПОЛЕ: с сорок девятой в «Ценах» стоит галочка
+     «Египет», а нативный переключатель рисует себя сам и радиуса
+     из CSS не берёт. Правило про радиус — о полях, панелях и тегах,
+     и галочки в разделе «Сотрудники» тоже нативные. */
+  const POLYA = '.ad__card, .ad input:not([type="checkbox"]), .ad select, .ad__tag, .ad__secret';
+  const adm1 = await kruglo(admin, '/admin/', POLYA);
+  const adm2 = await kruglo(admin, '/admin/settings/', POLYA);
   const adm = [...adm1, ...adm2];
   chk('в админке скруглены карточки, поля и теги',
     adm.length >= 3 && adm.every((v) => v.r >= 6),
@@ -1157,10 +1165,13 @@ console.log('── СКРУГЛЁННЫЕ УГЛЫ В РАЗДЕЛЕ, И ЛЕН
          ⚠️ `.opt` ДОБАВЛЕН В ТРИДЦАТЬ ШЕСТОЙ: выбор аккаунта стал
          двумя крупными плашками вместо двух кружков, и форма у них
          та же пилюля, что у плашки срока. Третьего радиуса
-         на лендинге не завелось. */
+         на лендинге не завелось.
+         ⚠️ `.plashka-egipet` ДОБАВЛЕНА В СОРОК ДЕВЯТОЙ ПОСТАНОВКОЙ:
+         «визуально — как плашка про рабочее время», а та живёт
+         на `--ui-r` раздела. Это исключение названо в Р-158. */
       if (
         el.closest(
-          '.btn, .seg, .seg__btn, .opt, .card, .cards__glow, .burger, .menu, .rstep__wave, .route__node, .pd__knopka',
+          '.btn, .seg, .seg__btn, .opt, .card, .cards__glow, .burger, .menu, .rstep__wave, .route__node, .pd__knopka, .plashka-egipet',
         )
       )
         continue;
@@ -2696,7 +2707,11 @@ console.log('── ИСТОРИЯ РАБОТЫ: ДВА СОТРУДНИКА, П
   /* Сам раздел статистики ему по-прежнему открыт (Р-147): заказы
      по тарифам на месте, и это прямая постановка — «сами заказы
      по тарифам оставь». */
-  chk('сама статистика исполнителю открыта', /По тарифам и срокам/.test(uOperaStat) && /Заказов/.test(uOperaStat));
+  /* ⚠️ С СОРОК ДЕВЯТОЙ «Заказов» у оператора стоит только заголовком
+     таблицы, а `.ad th` набран прописными, и `innerText` отдаёт
+     «ЗАКАЗОВ». Общей карточки с этим словом у него больше нет (Р-159):
+     его число — «Вы выполнили». */
+  chk('сама статистика исполнителю открыта', /По тарифам и срокам/.test(uOperaStat) && /Вы выполнили/.test(uOperaStat));
 
   /* ── ПУНКТ 1: У ОПЕРАТОРА НЕТ НИ ДЕНЕГ, НИ РЕКЛАМЫ ──────────────
      Постановка: «Убирай на сервере: данные о деньгах не должны

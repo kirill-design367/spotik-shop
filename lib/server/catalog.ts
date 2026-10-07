@@ -12,7 +12,7 @@
  * в сервер они домножаются на сто ОДИН раз, здесь.
  */
 
-import { DARIMYE, PERIODS, type ImenaTarifov, type Plan, type PeriodKey } from '@/lib/plans';
+import { DARIMYE, EGIPET_PO_UMOLCHANIYU, PERIODS, type ImenaTarifov, type Plan, type PeriodKey } from '@/lib/plans';
 import { tikho, zapros } from './db';
 import { imenaTarifov } from './imena';
 
@@ -25,7 +25,19 @@ import { imenaTarifov } from './imena';
  * Знать о ней должен ровно один: тот, кто рисует зачёркнутую
  * старую цену.
  */
-export type Cena = { period: PeriodKey; kop: number; bezSkidki?: number; doDaty?: string };
+export type Cena = {
+  period: PeriodKey;
+  kop: number;
+  bezSkidki?: number;
+  doDaty?: string;
+  /**
+   * Аккаунт на этой паре привязан к Египту — на главной и в оформлении
+   * под выбором встаёт плашка про египетский VPN (сорок девятая
+   * итерация). Признак ПАРЫ, а не тарифа: «Индивидуальный» на месяц
+   * обычный, а на полгода — египетский.
+   */
+  egipet: boolean;
+};
 
 export type TarifSCenami = {
   id: string;
@@ -103,7 +115,27 @@ export async function katalog(): Promise<TarifSCenami[]> {
      оно ровно так же, как цена: недоступна база — работает имя
      из кода (Р-142). */
   const imena = await imenaTarifov();
-  return DARIMYE.map((p) => svesti(p, ceny.get(p.id), skidki, vyklyucheny, imena));
+  const egipet = await egipetskiePary();
+  return DARIMYE.map((p) => svesti(p, ceny.get(p.id), skidki, vyklyucheny, imena, egipet));
+}
+
+/**
+ * Пары с привязкой к Египту (сорок девятая итерация).
+ *
+ * ⚠️ БАЗА ОТВЕЧАЕТ ЦЕЛИКОМ, А НЕ НАКЛАДЫВАЕТСЯ ПОВЕРХ УМОЛЧАНИЯ, и это
+ * не то же, что с ценами. Цена из базы перекрывает цену из кода
+ * по одной паре; здесь таблица — сам список, и пустая таблица законно
+ * значит «Египта нет нигде» (администратор снял все галочки). Поэтому
+ * умолчание из `lib/plans.ts` работает ТОЛЬКО когда базы нет вовсе —
+ * на раннере, где собирается лендинг.
+ */
+export async function egipetskiePary(): Promise<{ planId: string; period: number }[]> {
+  const rows = await tikho(
+    () => zapros<{ plan_id: string; period: number }>('select plan_id, period from plan_egypt'),
+    null as { plan_id: string; period: number }[] | null,
+  );
+  if (rows === null) return EGIPET_PO_UMOLCHANIYU.map((e) => ({ planId: e.planId, period: e.period }));
+  return rows.map((r) => ({ planId: r.plan_id, period: Number(r.period) }));
 }
 
 /** Скидки и выключенные пары — для админки, без наложения на цены. */
@@ -136,7 +168,7 @@ export async function skidkiIVyklyuchennye(): Promise<{
 /** Тот же каталог, но без единого обращения к базе. */
 export function katalogPoUmolchaniyu(): TarifSCenami[] {
   const ceny = umolchaniya();
-  return DARIMYE.map((p) => svesti(p, ceny.get(p.id)));
+  return DARIMYE.map((p) => svesti(p, ceny.get(p.id), [], [], null, EGIPET_PO_UMOLCHANIYU));
 }
 
 /**
@@ -156,7 +188,8 @@ export async function katalogPolny(): Promise<TarifSCenami[]> {
     ceny.set(r.plan_id, m);
   }
   const imena = await imenaTarifov();
-  return DARIMYE.map((p) => svesti(p, ceny.get(p.id), [], [], imena));
+  const egipet = await egipetskiePary();
+  return DARIMYE.map((p) => svesti(p, ceny.get(p.id), [], [], imena, egipet));
 }
 
 function svesti(
@@ -165,12 +198,14 @@ function svesti(
   skidki: { plan_id: string; period: number; price_kop: string; until: Date }[] = [],
   vyklyucheny: { plan_id: string; period: number }[] = [],
   imena: ImenaTarifov | null = null,
+  egipet: { planId: string; period: number }[] = [],
 ): TarifSCenami {
   const spisok: Cena[] = [];
   for (const s of PERIODS) {
     const kop = ceny?.get(s.key);
     if (typeof kop !== 'number') continue;
     if (vyklyucheny.some((v) => v.plan_id === p.id && Number(v.period) === s.key)) continue;
+    const eg = egipet.some((e) => e.planId === p.id && e.period === s.key);
     const sk = skidki.find((x) => x.plan_id === p.id && Number(x.period) === s.key);
     if (sk && Number(sk.price_kop) < kop) {
       const d = new Date(sk.until);
@@ -179,10 +214,11 @@ function svesti(
         kop: Number(sk.price_kop),
         bezSkidki: kop,
         doDaty: `${String(d.getUTCDate()).padStart(2, '0')}.${String(d.getUTCMonth() + 1).padStart(2, '0')}`,
+        egipet: eg,
       });
       continue;
     }
-    spisok.push({ period: s.key, kop });
+    spisok.push({ period: s.key, kop, egipet: eg });
   }
   /* ⚠️ КОРОТКОЕ ИМЯ ТЕПЕРЬ СВОЁ, А НЕ КОПИЯ ПОЛНОГО (постановка
      сорок третьей итерации, открытый вопрос 99). До неё своё имя

@@ -54,7 +54,12 @@ export default async function Checkout({
   const planId = odin('plan') || 'solo';
   const tarif = naytiTarif(spisok, planId) ?? spisok[0]!;
   const zapros = Number(odin('period'));
-  const sroki = tarif.ceny.map((c) => ({ period: c.period, kop: c.kop, label: srokPolno(c.period) }));
+  const sroki = tarif.ceny.map((c) => ({
+    period: c.period,
+    kop: c.kop,
+    label: srokPolno(c.period),
+    egipet: c.egipet,
+  }));
   /* ⚠️ БЕЗ ЯВНОГО СРОКА В АДРЕСЕ ОТКРЫВАЕТСЯ САМЫЙ КОРОТКИЙ, А НЕ САМЫЙ
      ДЛИННЫЙ. Раньше умолчанием был последний срок из списка, то есть
      год: человек, пришедший по ссылке без срока, видел самую крупную
@@ -113,7 +118,10 @@ export default async function Checkout({
       name: t.name,
       people: t.people,
       note: t.note,
-      sroki: t.ceny.map((c) => ({ period: c.period, kop: c.kop, label: srokPolno(c.period) })),
+      /* Признак «Египет» едет с каждым сроком: плашка про египетский
+         VPN обязана идти за ПАРОЙ, которую человек выбрал в «Изменить»,
+         а не за той, с которой он пришёл. */
+      sroki: t.ceny.map((c) => ({ period: c.period, kop: c.kop, label: srokPolno(c.period), egipet: c.egipet })),
     }));
 
   const vvod: Vvod = {

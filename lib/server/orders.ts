@@ -431,7 +431,17 @@ export async function zakazPoSertifikatu(opts: {
  * одной строкой, и копия в журнале разошлась бы с ней на первой же
  * правке; подставляется она при чтении (Р-151, миграция 012).
  */
-type VidSobytiya = 'vzyal' | 'vernul' | 'vypolnil' | 'otmenil';
+type VidSobytiya =
+  | 'vzyal'
+  | 'vernul'
+  | 'vypolnil'
+  | 'otmenil'
+  /* ⚠️ ДВА ГЛАГОЛА ОТМЕНЫ ПОДПИСКИ (сорок девятая итерация), и «Отменил»
+     среди них нет: `otmenil` считает статистика по сотрудникам, и это
+     отмена ДО выполнения, с деньгами на балансе. Здесь работа сделана
+     и деньги остаются — другое действие, другое слово (миграция 015). */
+  | 'otmena_zaproshena'
+  | 'podpiska_otmenena';
 
 async function zapisatSobytie(
   c: PoolClient,
@@ -776,4 +786,169 @@ export async function otmenitZakaz(
   }
   await soobshchitKomande({ vid: 'zakaz_otmenyon', zakaz });
   return { ok: true };
+}
+
+/* ── ОТМЕНА ПОДПИСКИ У ВЫПОЛНЕННОГО ЗАКАЗА ─────────────────────────────
+   Сорок девятая итерация, пункт 9:
+
+     «„Отменить" у выполненного заказа спрашивает подтверждение. Затем
+      создаётся задача „Отмена подписки" и попадает в очередь тому
+      оператору, который выполнял заказ. Если выполнял администратор
+      или оператора больше нет — в общую очередь… Деньги клиенту
+      не возвращаются. В кабинете клиента заказ помечается „Отменён",
+      письмо клиенту не отправляем. Событие пишется в журнал заказа:
+      кто нажал „Отменить", кто выполнил отмену подписки».
+
+   ⚠️ ЗАКАЗ ПОМЕЧАЕТСЯ «ОТМЕНЁН» СРАЗУ, НА НАЖАТИИ АДМИНИСТРАТОРА,
+   а не когда оператор доберётся до Spotify. Решение принято в эту
+   секунду: с неё в кабинете не должно быть ни «Продлить», ни письма
+   за три дня до конца срока (закон 44 зовёт напоминание только
+   у `done`). Подписка при этом ещё живёт — её снимает задача.
+
+   ⚠️ `closed_at` НЕ ТРОГАЕТСЯ. От него считается семидневное стирание
+   паролей (закон 35), и постановка говорит прямо: «Пароли хранятся
+   7 дней после закрытия, как сейчас». Перепиши мы его — пароль
+   выполненного месяц назад заказа ожил бы ещё на неделю.
+
+   ⚠️ ДЕНЕГ НИКТО НЕ ВОЗВРАЩАЕТ, И СЕРТИФИКАТ НЕ ОЖИВАЕТ. Это главное
+   отличие от `otmenitZakaz`: там заказ не выполнен и всё уходит назад,
+   здесь услуга оказана. Письма клиенту нет — постановка. */
+
+export type ItogOtmenyPodpiski =
+  | { ok: true; operatorId: number | null }
+  | { ok: false; pochemu: 'net_zakaza' | 'ne_vypolnen' | 'sertifikat' | 'uzhe' };
+
+export async function zaprositOtmenuPodpiski(zakaz: number, adminId: number): Promise<ItogOtmenyPodpiski> {
+  return vTranzakcii(async (c) => {
+    const r = await c.query<{ status: Status; kind: 'plan' | 'certificate' }>(
+      'select status, kind from shop_order where id = $1 for update',
+      [zakaz],
+    );
+    const row = r.rows[0];
+    if (!row) return { ok: false as const, pochemu: 'net_zakaza' as const };
+    /* Заказ на сертификат подписки не несёт вовсе: его «выполнение» —
+       это выданный код, и отменять в Spotify нечего. */
+    if (row.kind !== 'plan') return { ok: false as const, pochemu: 'sertifikat' as const };
+    if (row.status !== 'done') return { ok: false as const, pochemu: 'ne_vypolnen' as const };
+    const est = await c.query('select 1 from sub_cancel where order_id = $1', [zakaz]);
+    if (est.rows.length) return { ok: false as const, pochemu: 'uzhe' as const };
+
+    /* ⚠️ «КТО ВЫПОЛНЯЛ» — ИЗ ЖУРНАЛА, А НЕ ИЗ `operator_id`: держатель
+       заказа — величина текущая, а вопрос исторический (Р-153).
+       Задача уходит ему, только если он ОПЕРАТОР и ЕЩЁ РАБОТАЕТ:
+       постановка — «если выполнял администратор или оператора больше
+       нет — в общую очередь». «Больше нет» у нас значит «отключён»:
+       строки сотрудников не удаляются, их гасят (`disabled`). */
+    const kto = await c.query<{ id: string }>(
+      `select f.id
+         from order_event e
+         join staff f on f.id = e.staff_id
+        where e.order_id = $1 and e.vid = 'vypolnil' and f.role = 'operator' and not f.disabled
+        order by e.created_at desc, e.id desc
+        limit 1`,
+      [zakaz],
+    );
+    const operatorId = kto.rows[0] ? Number(kto.rows[0].id) : null;
+
+    await c.query(
+      `update shop_order set status = 'cancelled', cancel_reason = null, cancelled_by_client = false where id = $1`,
+      [zakaz],
+    );
+    await c.query('insert into sub_cancel (order_id, requested_by, operator_id) values ($1, $2, $3)', [
+      zakaz,
+      adminId,
+      operatorId,
+    ]);
+    await zapisatSobytie(c, zakaz, adminId, 'otmena_zaproshena');
+    return { ok: true as const, operatorId };
+  });
+}
+
+/**
+ * Взять задачу из общей очереди.
+ *
+ * ⚠️ ТЕ ЖЕ ПРАВИЛА, ЧТО У ВЗЯТИЯ ЗАКАЗА, И ТАМ ЖЕ, ГДЕ ОНИ
+ * ПРОВЕРЯЮТСЯ: внутри транзакции, под `for update` — свободна ли
+ * задача и разрешена ли оператору пара «тариф × срок» (Р-155, Р-156).
+ * Администратору ограничений нет: `zapreshcheno = null`.
+ */
+export async function vzyatOtmenu(zakaz: number, staffId: number, zapreshcheno: Para[] | null): Promise<boolean> {
+  return vTranzakcii(async (c) => {
+    const r = await c.query<{ operator_id: string | null; done_at: Date | null; plan_id: string; period: number }>(
+      `select t.operator_id, t.done_at, o.plan_id, o.period
+         from sub_cancel t join shop_order o on o.id = t.order_id
+        where t.order_id = $1 for update of t`,
+      [zakaz],
+    );
+    const row = r.rows[0];
+    if (!row || row.done_at || row.operator_id) return false;
+    if (zapreshcheno && zapreshcheno.some((z) => z.planId === row.plan_id && z.period === Number(row.period)))
+      return false;
+    await c.query('update sub_cancel set operator_id = $2 where order_id = $1', [zakaz, staffId]);
+    return true;
+  });
+}
+
+/** Вернуть задачу в общую очередь — только держатель и только незакрытую. */
+export async function vernutOtmenu(zakaz: number, staffId: number): Promise<boolean> {
+  const r = await zapros(
+    `update sub_cancel set operator_id = null
+      where order_id = $1 and operator_id = $2 and done_at is null returning order_id`,
+    [zakaz, staffId],
+  );
+  return r.length > 0;
+}
+
+/**
+ * Шаг задачи: «Подписка отменена» на ТЕКУЩЕМ аккаунте.
+ *
+ * ⚠️ ТЕКУЩИЙ АККАУНТ СЧИТАЕТ ЗАПРОС, А НЕ ФОРМА: это первый слот без
+ * отметки. Номер из формы человек правит в браузере за секунду — то же
+ * правило, что у «Назад» обычного заказа (Р-145).
+ *
+ * ⚠️ ПОСЛЕДНЯЯ ОТМЕТКА ЗАКРЫВАЕТ ЗАДАЧУ В ТОЙ ЖЕ ТРАНЗАКЦИИ, и туда же
+ * ложится событие «отменил подписку»: состояния «все аккаунты отмечены,
+ * а задача открыта» и «задача закрыта без записи в журнале» не бывает
+ * по построению.
+ */
+export async function otmetitPodpiskuOtmenyonnoy(
+  zakaz: number,
+  staffId: number,
+): Promise<{ ok: boolean; zakryta?: boolean }> {
+  return vTranzakcii(async (c) => {
+    const t = await c.query('select 1 from sub_cancel where order_id = $1 and operator_id = $2 and done_at is null for update', [
+      zakaz,
+      staffId,
+    ]);
+    if (!t.rows.length) return { ok: false };
+    const sl = await c.query<{ id: string }>(
+      `update order_slot set sub_cancelled_at = now()
+        where id = (select id from order_slot where order_id = $1 and sub_cancelled_at is null order by idx limit 1)
+        returning id`,
+      [zakaz],
+    );
+    if (!sl.rows.length) return { ok: false };
+    const ostalos = await c.query('select 1 from order_slot where order_id = $1 and sub_cancelled_at is null limit 1', [
+      zakaz,
+    ]);
+    if (ostalos.rows.length) return { ok: true, zakryta: false };
+    await c.query('update sub_cancel set done_at = now(), done_by = $2 where order_id = $1', [zakaz, staffId]);
+    await zapisatSobytie(c, zakaz, staffId, 'podpiska_otmenena');
+    return { ok: true, zakryta: true };
+  });
+}
+
+/** «Назад» в задаче: снять самую позднюю отметку — как у обычного заказа. */
+export async function otmenaNazad(zakaz: number, staffId: number): Promise<boolean> {
+  const r = await zapros(
+    `update order_slot set sub_cancelled_at = null
+      where id = (
+        select s.id from order_slot s join sub_cancel t on t.order_id = s.order_id
+         where s.order_id = $1 and t.operator_id = $2 and t.done_at is null and s.sub_cancelled_at is not null
+         order by s.idx desc limit 1
+      )
+      returning id`,
+    [zakaz, staffId],
+  );
+  return r.length > 0;
 }

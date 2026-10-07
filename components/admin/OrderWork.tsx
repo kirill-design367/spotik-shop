@@ -2,7 +2,14 @@
 
 import { useActionState, useState } from 'react';
 import type { ZakazOperatoru, SlotOperatoru, Sobytie } from '@/lib/server/views';
-import { adminRelease, adminShag, adminTake, type OtvetA } from '@/lib/server/actions-admin';
+import {
+  adminOtmenaShag,
+  adminOtmenaVzyat,
+  adminRelease,
+  adminShag,
+  adminTake,
+  type OtvetA,
+} from '@/lib/server/actions-admin';
 import { slovar, sostoyanie, type Klyuch, type Perevod, type Yazyk } from '@/lib/admin/slova';
 import { imyaTarifaIz, srokKratkoDlyaSotrudnika, type ImenaTarifov } from '@/lib/plans';
 import { prichinaSotrudniku, prichinyDlya } from '@/lib/admin/prichiny';
@@ -140,9 +147,26 @@ export default function OrderWork({
         {/* ⚠️ ЗАКРЫТЫЙ ЗАКАЗ ГОВОРИТ ОБ ЭТОМ САМ. Шаги после закрытия
             остаются свёрнутыми, и без этой строки оператор видел бы
             страницу без единого следа того, что он только что сделал. */}
-        {zakryt ? <p className="ok">{z.status === 'done' ? t('z.done_note') : t('z.cancelled_note')}</p> : null}
+        {zakryt ? (
+          <p className="ok">
+            {z.status === 'done' ? t('z.done_note') : z.otmena ? t('sc.cancelled_note') : t('z.cancelled_note')}
+          </p>
+        ) : null}
         {z.secretsWiped ? <p className="hint">{t('z.wiped')}</p> : null}
       </div>
+
+      {/* ⚠️ АККАУНТЫ ЗАКРЫТОГО ЗАКАЗА — «ОТКРЫТЬ» ИЗ НЕДАВНО ЗАКРЫТЫХ
+          (сорок девятая итерация, пункт 8): «почты и пароли аккаунтов,
+          на которые заказ создан или продлён, дату окончания подписки
+          по каждому аккаунту». Блок рисуется, только если доступы
+          расшифрованы ТОМУ, КТО СМОТРИТ — решает сервер
+          (`dostupyVidny`), разметка ничего не прячет. */}
+      {(z.status === 'done' || z.otmena) && z.dostupyVidny ? <Akkaunty z={z} t={t} /> : null}
+
+      {/* ⚠️ ЗАДАЧА «ОТМЕНА ПОДПИСКИ» (пункт 9). Своё действие и своё
+          состояние: у заказа шаги уже пройдены, и сообщение на экране
+          одно по построению (закон 52). */}
+      {z.otmena ? <ZadachaOtmeny z={z} t={t} /> : null}
 
       {/* ⚠️ ИСТОРИЯ — ТОЛЬКО АДМИНИСТРАТОРУ, и решает это не разметка:
           исполнителю сервер список не отдаёт вовсе (`istoriya === null`,
@@ -216,6 +240,8 @@ function Istoriya({ spisok, t, en }: { spisok: Sobytie[]; t: Perevod; en: boolea
     vernul: 'h.vernul',
     vypolnil: 'h.vypolnil',
     otmenil: 'h.otmenil',
+    otmena_zaproshena: 'h.otmena_zaproshena',
+    podpiska_otmenena: 'h.podpiska_otmenena',
   };
   return (
     <div className="ad__card">
@@ -574,6 +600,154 @@ function ShagZaversheniya({
             <Glavnaya t={t} podpis={t('w.finish_btn')} idyot={idyot} hod={t('z.closing')} />
           </form>
           <Nazad z={z} t={t} shag={shag} idyot={idyot} />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * АККАУНТЫ ЗАКРЫТОГО ЗАКАЗА: почта, пароль и дата окончания по каждому.
+ *
+ * ⚠️ СТЁРТОЕ НАЗВАНО СЛОВАМИ, А НЕ ПРОПУЩЕНО — постановка: «Если они
+ * уже стёрты, вместо пароля — „стёрт через 7 дней после закрытия"».
+ * Почта стирается вместе с паролем (закон 35), и про неё сказано так же.
+ *
+ * ⚠️ ДАТА ОКОНЧАНИЯ — СВОЯ У ПРОДЛЕНИЯ, ОБЩАЯ У НОВОГО АККАУНТА.
+ * У продления её ввёл оператор из Spotify (Р-145); у нового аккаунта
+ * своей даты нет, и кончается он вместе с заказом (`expires_at`).
+ */
+function Akkaunty({ z, t }: { z: ZakazOperatoru; t: Perevod }) {
+  const styort = t('sc.wiped');
+  return (
+    <div className="ad__card">
+      <h3>{t('sc.accounts_h')}</h3>
+      <div className="ad__scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>{t('t.num')}</th>
+              <th>{t('t.email')}</th>
+              <th>{t('u.password')}</th>
+              <th>{t('w.ends')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {z.slots.map((s) => (
+              <tr key={s.id}>
+                <td className="tnum">{s.idx + 1}</td>
+                <td className="ad__secret">{s.clientLogin ?? s.outLogin ?? styort}</td>
+                <td className="ad__secret">{s.clientPassword ?? s.outPassword ?? styort}</td>
+                <td className="tnum">{s.endsAt ?? z.konchaetsya ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * ЗАДАЧА «ОТМЕНА ПОДПИСКИ» НА ЭКРАНЕ ЗАКАЗА.
+ *
+ * Постановка: «Оператор открывает задачу, видит почту и пароль,
+ * отменяет подписку в Spotify и отмечает „Подписка отменена"
+ * с подтверждением „Вы уверены?". Если на шаге „Назад" — как
+ * в обычных заказах».
+ *
+ * ⚠️ ШАГИ ТЕ ЖЕ, ЧТО У ОБЫЧНОГО ЗАКАЗА: по одному на аккаунт, виден
+ * только текущий, пройденные свёрнуты с галочкой, следующие недоступны,
+ * и «Назад» снимает самую позднюю отметку. Отдельного шага
+ * «Завершение» нет: последняя отметка и есть конец задачи — заводить
+ * ещё одну кнопку с тем же смыслом незачем.
+ */
+function ZadachaOtmeny({ z, t }: { z: ZakazOperatoru; t: Perevod }) {
+  const [otvet, shag, idyot] = useActionState<OtvetA, FormData>(adminOtmenaShag, {});
+  const o = z.otmena!;
+  const tekushchiy = z.slots.findIndex((s) => !s.podpiskaOtmenena);
+  const vsego = z.slots.length;
+
+  return (
+    <div className="ad__card">
+      <h3>{t('sc.task_h')}</h3>
+      {o.zakryta ? <p className="ok">{t('sc.task_done')}</p> : null}
+      {!o.zakryta && o.svobodna ? (
+        <>
+          <p className="hint">{t('sc.task_free')}</p>
+          <form action={adminOtmenaVzyat}>
+            <input type="hidden" name="order" value={z.id} />
+            <button type="submit" className="btn btn--sm">
+              {t('sc.take')}
+            </button>
+          </form>
+        </>
+      ) : null}
+      {!o.zakryta && !o.svobodna && !o.moya ? (
+        <p className="hint">{o.operatorEmail ? t('sc.task_of', { kto: o.operatorEmail }) : t('sc.task_other')}</p>
+      ) : null}
+
+      {/* Одно место для сообщения — выше шагов: состояние одно. */}
+      {otvet.error ? <p className="err">{t(otvet.error, otvet.polya)}</p> : null}
+      {otvet.ok ? <p className="ok">{t(otvet.ok, otvet.polya)}</p> : null}
+
+      {!o.zakryta && o.moya ? (
+        <>
+          <p className="hint">{t('sc.task_how')}</p>
+          {z.slots.map((s) => {
+            const proyden = s.podpiskaOtmenena;
+            const seychas = s.idx === tekushchiy;
+            return (
+              <div
+                key={s.id}
+                className="ad__shag"
+                data-sost={proyden ? 'proyden' : seychas ? 'seychas' : 'zhdyot'}
+              >
+                <h3>
+                  <span className="ad__shag-n" aria-hidden="true">
+                    {proyden ? '✓' : s.idx + 1}
+                  </span>
+                  <span>
+                    {t('w.step', { n: s.idx + 1, vsego })}
+                    {vsego > 1 ? ` · ${t('u.account', { n: s.idx + 1 })}` : ''}
+                  </span>
+                  {proyden ? <span className="ad__shag-p">{t('sc.step_done')}</span> : null}
+                </h3>
+                {!proyden && !seychas ? <p className="hint">{t('w.locked')}</p> : null}
+                {seychas ? (
+                  <>
+                    <dl className="ad__kv">
+                      <dt>{t('t.email')}</dt>
+                      <dd className="ad__secret">{s.clientLogin ?? s.outLogin ?? t('sc.wiped')}</dd>
+                      <dt>{t('u.password')}</dt>
+                      <dd className="ad__secret">{s.clientPassword ?? s.outPassword ?? t('sc.wiped')}</dd>
+                    </dl>
+                    <form action={shag}>
+                      <input type="hidden" name="order" value={z.id} />
+                      <input type="hidden" name="op" value="otmenena" />
+                      <Glavnaya t={t} podpis={t('sc.mark')} idyot={idyot} />
+                    </form>
+                    {s.idx > 0 ? (
+                      <form action={shag}>
+                        <input type="hidden" name="order" value={z.id} />
+                        <input type="hidden" name="op" value="nazad" />
+                        <button type="submit" className="btn btn--ghost btn--sm" disabled={idyot}>
+                          ← {t('w.back')}
+                        </button>
+                      </form>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
+            );
+          })}
+          <form action={shag}>
+            <input type="hidden" name="order" value={z.id} />
+            <input type="hidden" name="op" value="vernut" />
+            <button type="submit" className="btn btn--ghost btn--sm" disabled={idyot}>
+              {t('sc.release')}
+            </button>
+          </form>
         </>
       ) : null}
     </div>

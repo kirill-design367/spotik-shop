@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useState } from 'react';
 import type { StrokaOcheredi } from '@/lib/server/views';
-import { adminSetQueueRate, adminTake, type OtvetA } from '@/lib/server/actions-admin';
+import { adminOtmenaVzyat, adminSetQueueRate, adminTake, type OtvetA } from '@/lib/server/actions-admin';
 import { CHASTOTY_OCHEREDI } from '@/lib/admin/chastoty';
 import { slovar, type Yazyk } from '@/lib/admin/slova';
 import { imyaTarifaIz, srokKratkoDlyaSotrudnika, type ImenaTarifov } from '@/lib/plans';
@@ -141,7 +141,9 @@ export default function Queue({
           </thead>
           <tbody>
             {spisok.map((r) => (
-              <tr key={r.id} data-mine={r.moy ? '' : undefined}>
+              /* ⚠️ КЛЮЧ — ВИД ПЛЮС НОМЕР: у задачи «Отмена подписки»
+                 номер тот же, что у её заказа. */
+              <tr key={`${r.otmena ? 'o' : 'z'}${r.id}`} data-mine={r.moy ? '' : undefined}>
                 <td>
                   <a href={`/admin/orders/${r.id}/`}>{r.id}</a>
                 </td>
@@ -156,6 +158,11 @@ export default function Queue({
                       за ним не числится вовсе. Без пометки оператор
                       читает нулевую сумму как поломку. */}
                   {r.bySertificate ? <span className="ad__tag ad__tag--gift">{t('q.gift')}</span> : null}
+                  {/* ⚠️ ЗАДАЧА ПОДПИСАНА ПРЯМО В СТРОКЕ: это не новый заказ,
+                      а снятие подписки с выполненного (сорок девятая
+                      итерация), и перепутать их значило бы завести
+                      аккаунт, который надо закрыть. */}
+                  {r.otmena ? <span className="ad__tag ad__tag--otmena">{t('sc.tag')}</span> : null}
                 </td>
                 <td>{r.people}</td>
                 <td>{srokKratkoDlyaSotrudnika(r.period, y === 'en')}</td>
@@ -181,7 +188,7 @@ export default function Queue({
                 {admin ? <td>{r.operator ?? '—'}</td> : null}
                 <td>
                   {r.status === 'paid' ? (
-                    <form action={adminTake}>
+                    <form action={r.otmena ? adminOtmenaVzyat : adminTake}>
                       <input type="hidden" name="order" value={r.id} />
                       <button type="submit" className="btn btn--sm">{t('q.take')}</button>
                     </form>

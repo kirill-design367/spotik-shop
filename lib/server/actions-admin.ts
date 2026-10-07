@@ -20,11 +20,16 @@ import { revalidatePath } from 'next/cache';
 import { ktoSotrudnik, normPochta, poprositKod, proveritKod, vyyti, zavestiSessiyu } from './auth';
 import { bazaEst, zapros } from './db';
 import {
+  otmenaNazad,
   otmenitZakaz,
+  otmetitPodpiskuOtmenyonnoy,
   otmetitSlotGotovym,
   shagNazad,
+  vernutOtmenu,
   vernutVOchered,
+  vzyatOtmenu,
   vzyatZakaz,
+  zaprositOtmenuPodpiski,
   zapisatVydachu,
   zavershitZakaz,
 } from './orders';
@@ -43,9 +48,10 @@ import { odna } from './db';
 import { zadatNastroyku, SROK_SERTIFIKATA } from './settings';
 import { shifrGotov } from './crypto';
 import { katalogPolny } from './catalog';
-import { zakazDlyaAdminki } from './views';
+import { akkauntyDlyaOtmeny, zakazDlyaAdminki } from './views';
+import { imenaTarifov } from './imena';
 import { dostupSotrudnika, vsePary, zapretyPar } from './dostup';
-import { klyuchPary } from '@/lib/plans';
+import { imyaTarifaIz, klyuchPary, srokDlyaSotrudnika } from '@/lib/plans';
 import { CHASTOTY_OCHEREDI } from '@/lib/admin/chastoty';
 import { zapomnitYazyk } from './yazyk';
 import { ponyatYazyk, type Klyuch, type Podstanovki } from '@/lib/admin/slova';
@@ -322,6 +328,104 @@ export async function adminShag(_p: OtvetA, fd: FormData): Promise<OtvetA> {
   return { error: 'e.bad_step' };
 }
 
+/* ── ОТМЕНА ПОДПИСКИ У ВЫПОЛНЕННОГО ЗАКАЗА ─────────────────────────────
+   Сорок девятая итерация, пункт 9. Нажимает администратор, делает
+   оператор — и это две разные двери с разными проверками. */
+
+/**
+ * «Отменить» у выполненного заказа — ТОЛЬКО АДМИНИСТРАТОР.
+ *
+ * ⚠️ ПОДТВЕРЖДЕНИЕ СПРАШИВАЕТ СТРАНИЦА (свой блок «Вы уверены?»,
+ * а не `confirm()`, Р-145), а условия проверяет СЕРВЕР: заказ
+ * выполнен, это тариф, отмены ещё не было — внутри транзакции,
+ * под `for update` (`zaprositOtmenuPodpiski`).
+ *
+ * ⚠️ СООБЩЕНИЕ БОТУ — ПОСЛЕ ТРАНЗАКЦИИ: поход в сеть внутри неё
+ * держал бы соединение с базой, а при откате сообщение ушло бы
+ * о задаче, которой нет (то же правило, что у `posleOplaty`).
+ */
+export async function adminOtmenitVypolnenny(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+  const s = await ktoSotrudnik();
+  if (!s) return { error: 'e.session' };
+  if (s.role !== 'admin') return { error: 'o.only_admin' };
+  const zakaz = Number(fd.get('order') ?? 0);
+  const r = await zaprositOtmenuPodpiski(zakaz, s.id);
+  if (!r.ok) {
+    const slova: Record<typeof r.pochemu, Klyuch> = {
+      net_zakaza: 'o.no_order',
+      ne_vypolnen: 'e.not_done',
+      sertifikat: 'e.cert_no_sub',
+      uzhe: 'e.sub_already',
+    };
+    return { error: slova[r.pochemu] };
+  }
+  const z = await odna<{ plan_id: string; period: number }>('select plan_id, period from shop_order where id = $1', [
+    zakaz,
+  ]);
+  const komu = r.operatorId
+    ? ((await odna<{ email: string }>('select email from staff where id = $1', [r.operatorId]))?.email ?? null)
+    : null;
+  await soobshchitKomande({
+    vid: 'otmena_podpiski',
+    zakaz,
+    tarif: imyaTarifaIz(await imenaTarifov(), z?.plan_id ?? '', true),
+    srok: srokDlyaSotrudnika(z?.period ?? 0, true),
+    akkaunty: await akkauntyDlyaOtmeny(zakaz),
+    komu,
+  });
+  revalidatePath('/admin');
+  return komu ? { ok: 'k.sub_task_to', polya: { kto: komu } } : { ok: 'k.sub_task_general' };
+}
+
+/**
+ * Взять задачу «Отмена подписки» из общей очереди.
+ *
+ * ⚠️ ПАРА ПРОВЕРЯЕТСЯ ВНУТРИ ВЗЯТИЯ, а не здесь — как у заказа
+ * (`vzyatOtmenu`, Р-155). Не взял — ведём в карточку, и она сама
+ * скажет, что задача недоступна или уже у другого.
+ */
+export async function adminOtmenaVzyat(fd: FormData): Promise<void> {
+  const s = await ktoSotrudnik();
+  if (!s) redirect('/admin/login/');
+  const id = Number(fd.get('order') ?? 0);
+  const zapreshcheno = s.role === 'admin' ? null : await zapretyPar(s.id);
+  await vzyatOtmenu(id, s.id, zapreshcheno);
+  revalidatePath('/admin');
+  redirect(`/admin/orders/${id}/`);
+}
+
+/**
+ * ОДНО ДЕЙСТВИЕ НА ВСЕ ШАГИ ЗАДАЧИ — ровно как у заказа (закон 52):
+ * на экране задачи одно состояние и одно сообщение по построению.
+ * «Это ваша задача» проверяет каждая функция заказа сама — условием
+ * `operator_id = $2` в том же запросе, что и перемена.
+ */
+export async function adminOtmenaShag(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+  const s = await ktoSotrudnik();
+  if (!s) return { error: 'e.session' };
+  const zakaz = Number(fd.get('order') ?? 0);
+  const op = String(fd.get('op') ?? '');
+  if (op === 'otmenena') {
+    const r = await otmetitPodpiskuOtmenyonnoy(zakaz, s.id);
+    if (!r.ok) return { error: 'e.not_yours' };
+    revalidatePath('/admin');
+    return { ok: r.zakryta ? 'k.sub_done' : 'k.sub_marked' };
+  }
+  if (op === 'nazad') {
+    const ok = await otmenaNazad(zakaz, s.id);
+    if (!ok) return { error: 'e.no_back' };
+    revalidatePath(`/admin/orders/${zakaz}`);
+    return { ok: 'k.back' };
+  }
+  if (op === 'vernut') {
+    const ok = await vernutOtmenu(zakaz, s.id);
+    if (!ok) return { error: 'e.not_yours' };
+    revalidatePath('/admin');
+    return { ok: 'k.sub_released' };
+  }
+  return { error: 'e.bad_step' };
+}
+
 /**
  * Частота самообновления очереди.
  *
@@ -408,6 +512,34 @@ export async function adminToggleCell(_p: OtvetA, fd: FormData): Promise<OtvetA>
   }
   revalidatePath('/');
   return { ok: vklyuchit ? 'k.cell_on' : 'k.cell_off' };
+}
+
+/**
+ * Галочка «Египет» у пары тариф × срок (сорок девятая итерация).
+ *
+ * ⚠️ ГАЛОЧКА НЕ ЗАВИСИТ ОТ ЦЕНЫ И ОТ ТОГО, ПРОДАЁТСЯ ЛИ ПАРА. Ставить
+ * её можно и у пары без цены: Египет — свойство аккаунта, который
+ * заводится на эту пару, а не цены. Пока пара не продаётся, плашку
+ * просто негде показать.
+ *
+ * ⚠️ ЛЕНДИНГ СТАТИЧЕСКИЙ (закон 36), и без `revalidatePath('/')`
+ * плашка доехала бы до главной только через пять минут.
+ */
+export async function adminToggleEgipet(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+  const s = await ktoSotrudnik();
+  if (!s || s.role !== 'admin') return { error: 'o.only_admin' };
+  const plan = String(fd.get('plan') ?? '');
+  const period = Number(fd.get('period') ?? 0);
+  if (!vsePary().some((p) => p.planId === plan && p.period === period)) return { error: 'e.pick_plan' };
+  const vklyuchit = fd.get('egipet') === '1';
+  if (vklyuchit) {
+    await zapros('insert into plan_egypt (plan_id, period) values ($1, $2) on conflict do nothing', [plan, period]);
+  } else {
+    await zapros('delete from plan_egypt where plan_id = $1 and period = $2', [plan, period]);
+  }
+  revalidatePath('/');
+  revalidatePath('/admin/settings');
+  return { ok: vklyuchit ? 'k.egypt_on' : 'k.egypt_off' };
 }
 
 export async function adminSetPrice(_p: OtvetA, fd: FormData): Promise<OtvetA> {
@@ -578,6 +710,12 @@ export async function adminDisableStaff(fd: FormData): Promise<void> {
   if (id !== s.id) {
     await zapros('update staff set disabled = true where id = $1', [id]);
     await zapros('delete from session where staff_id = $1', [id]);
+    /* ⚠️ ЕГО НЕЗАКРЫТЫЕ ЗАДАЧИ «ОТМЕНА ПОДПИСКИ» УХОДЯТ В ОБЩУЮ
+       ОЧЕРЕДЬ (сорок девятая итерация). Постановка: «если оператора
+       больше нет — в общую очередь». Задача, приписанная отключённому,
+       иначе висела бы у него навсегда: войти и сделать её ему нечем,
+       а другим она не видна. */
+    await zapros('update sub_cancel set operator_id = null where operator_id = $1 and done_at is null', [id]);
   }
   revalidatePath('/admin/staff');
   redirect('/admin/staff/');

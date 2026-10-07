@@ -521,6 +521,94 @@ const S = {
   'ss.share': ['Доля', 'Share'],
   'ss.none': ['Пока пусто.', 'Nothing yet.'],
   'ss.hm': ['{h} ч {m} мин', '{h} h {m} min'],
+  /* ── Сорок девятая итерация: статистика ──────────────────────── */
+  'ss.my_done': ['Вы выполнили', 'You completed'],
+  'ss.my_done_note': [
+    'Заказы, выполненные вами за выбранный период, по времени выполнения.',
+    'Orders you completed in the selected period, by completion time.',
+  ],
+  'ss.by_plan_note': [
+    'Только выполненные заказы, по времени выполнения. Отменённые сюда не входят.',
+    'Completed orders only, by completion time. Cancelled orders are not counted.',
+  ],
+  'ss.by_plan_note_my': [
+    'Только ваши выполненные заказы, по времени выполнения.',
+    'Only your completed orders, by completion time.',
+  ],
+  'ss.sources_note': [
+    'Только выполненные заказы, по времени выполнения.',
+    'Completed orders only, by completion time.',
+  ],
+  'ss.show_cancels': ['Показать отмены', 'Show cancellations'],
+  'ss.period_note_my': [
+    'Числа ниже посчитаны за выбранный период. Одна дата в поле «С» и пустое «По» — это сутки этой даты.',
+    'The numbers below are counted over the selected period. A single date in “From” with “To” empty means that one day.',
+  ],
+
+  /* ── Сорок девятая итерация: Египет в «Ценах» ────────────────── */
+  'c.egypt': ['Египет', 'Egypt'],
+  'c.egypt_hint': [
+    'Галочка «Египет» — аккаунт на этой паре привязан к Египту: на главной и в оформлении под выбором встанет плашка про египетский VPN. Галочка не зависит от цены и от того, продаётся ли пара.',
+    'Egypt — the account for this plan and term is tied to Egypt: the site shows a note about an Egyptian VPN under the selection. The tick does not depend on the price or on whether the pair is on sale.',
+  ],
+  'c.on_sale': ['На сайте', 'On sale'],
+  'k.egypt_on': ['Египет отмечен.', 'Egypt is on.'],
+  'k.egypt_off': ['Египет снят.', 'Egypt is off.'],
+
+  /* ── Сорок девятая итерация: отмена подписки ─────────────────────
+     ⚠️ ПРЕФИКС `sc.` СВОЙ (subscription cancel): задача — другая
+     сущность, чем заказ, и её надписи с надписями заказа (`z.`)
+     сталкиваться не должны. */
+  'sc.cancel': ['Отменить', 'Cancel'],
+  'sc.sure': [
+    'Вы уверены? Заказ станет «Отменён», подписку снимет задача «Отмена подписки». Деньги клиенту не возвращаются, письма не будет.',
+    'Are you sure? The order becomes “Cancelled” and a “Subscription cancellation” task removes the subscription. No refund to the client, no email.',
+  ],
+  'sc.tag': ['Отмена подписки', 'Subscription cancellation'],
+  'sc.cancelled_note': [
+    'Заказ отменён после выполнения: подписку снимает задача «Отмена подписки». Деньги клиенту не возвращаются.',
+    'Order cancelled after completion: a “Subscription cancellation” task removes the subscription. No refund to the client.',
+  ],
+  'sc.wiped': ['стёрт через 7 дней после закрытия', 'wiped 7 days after closing'],
+  'sc.accounts_h': ['Аккаунты', 'Accounts'],
+  'sc.task_h': ['Отмена подписки', 'Subscription cancellation'],
+  'sc.task_done': ['Подписка отменена.', 'Subscription cancelled.'],
+  'sc.task_free': [
+    'Задача в общей очереди: возьмите её, чтобы увидеть почту и пароль.',
+    'The task is in the general queue: take it to see the email and password.',
+  ],
+  'sc.take': ['Взять задачу', 'Take this task'],
+  'sc.task_of': ['Задача у {kto}.', 'The task is with {kto}.'],
+  'sc.task_other': ['Задача у другого сотрудника.', 'The task is with another staff member.'],
+  'sc.task_how': [
+    'Войдите в Spotify с этими данными, отмените подписку и отметьте шаг. Деньги клиенту не возвращаются, письма ему не будет.',
+    'Sign in to Spotify with these details, cancel the subscription and mark the step. No refund to the client, no email to them.',
+  ],
+  'sc.step_done': ['подписка отменена', 'cancelled'],
+  'sc.mark': ['Подписка отменена', 'Subscription cancelled'],
+  'sc.release': ['Вернуть задачу в общую очередь', 'Put the task back in the general queue'],
+  'h.otmena_zaproshena': ['Отменил выполненный заказ', 'Cancelled the completed order'],
+  'h.podpiska_otmenena': ['Отменил подписку', 'Cancelled the subscription'],
+  'e.not_done': [
+    'Отменить подписку можно только у выполненного заказа.',
+    'Only a completed order can have its subscription cancelled.',
+  ],
+  'e.cert_no_sub': [
+    'У заказа на сертификат подписки нет — отменять нечего.',
+    'A certificate order has no subscription to cancel.',
+  ],
+  'e.sub_already': ['Подписку по этому заказу уже отменяют.', 'This order’s subscription is already being cancelled.'],
+  'k.sub_task_to': [
+    'Заказ отменён. Задача «Отмена подписки» ушла {kto}.',
+    'Order cancelled. The “Subscription cancellation” task went to {kto}.',
+  ],
+  'k.sub_task_general': [
+    'Заказ отменён. Задача «Отмена подписки» ушла в общую очередь.',
+    'Order cancelled. The “Subscription cancellation” task went to the general queue.',
+  ],
+  'k.sub_marked': ['Отмечено. Дальше — следующий аккаунт.', 'Marked. Next account.'],
+  'k.sub_done': ['Подписка отменена, задача закрыта.', 'Subscription cancelled, task closed.'],
+  'k.sub_released': ['Задача вернулась в общую очередь.', 'The task is back in the general queue.'],
 } as const satisfies Record<string, readonly [string, string]>;
 
 export type Klyuch = keyof typeof S;

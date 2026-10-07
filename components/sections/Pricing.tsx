@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import SectionHead from './SectionHead';
 import VyborTarifa, { type KartaTarifa } from '@/components/mid/VyborTarifa';
-import { DARIMYE, PERIODS, formatPrice, type PeriodKey } from '@/lib/plans';
+import { DARIMYE, EGIPET_PO_UMOLCHANIYU, PERIODS, formatPrice, type PeriodKey } from '@/lib/plans';
+import EgipetPlashka from '@/components/EgipetPlashka';
 
 /**
  * ⚠️ СОСТАВ ТАРИФОВ ПО-ПРЕЖНЕМУ В `lib/plans.ts`, А ЦЕНЫ ПРИХОДЯТ
@@ -46,6 +47,15 @@ export type SkidkiTarifov = Record<string, Partial<Record<PeriodKey, { bylo: num
 export type ImenaKart = Record<string, { name: string; short: string }>;
 
 /**
+ * Пары «тариф × срок» с привязкой к Египту (сорок девятая итерация).
+ *
+ * ⚠️ ПРИХОДЯТ СВЕРХУ, КАК ЦЕНЫ И ИМЕНА: их правит администратор
+ * галочкой «Египет», значит это данные. Пропа нет — работает
+ * умолчание постановки из `lib/plans.ts`.
+ */
+export type EgipetPary = { planId: string; period: number }[];
+
+/**
  * БЛОК ТАРИФОВ — КАРТЫ ПО ЧИСЛУ ВКЛЮЧЁННЫХ ТАРИФОВ.
  *
  * ⚠️ СЕТКИ 2×2 БОЛЬШЕ НЕТ, И СЕРТИФИКАТА В НЕЙ ТОЖЕ (тридцать шестая
@@ -73,10 +83,12 @@ export default function Pricing({
   ceny,
   skidki,
   imena,
+  egipet,
 }: {
   ceny?: CenyTarifov;
   skidki?: SkidkiTarifov;
   imena?: ImenaKart;
+  egipet?: EgipetPary;
 }) {
   /* ⚠️ ТАРИФ БЕЗ ЕДИНОЙ ЦЕНЫ В СЕТКУ НЕ ПОПАДАЕТ ВОВСЕ. Это и есть
      «тариф, скрытый на всех сроках, не показывается нигде»: выключают
@@ -113,6 +125,9 @@ export default function Pricing({
   /* Экономия относительно помесячной оплаты того же тарифа. */
   const mes = plan.ceny.find((c) => c.period === 1)?.rub;
   const save = cena && mes && period > 1 ? mes * period - cena.rub : 0;
+  /* Египетская плашка идёт за ВЫБРАННОЙ парой: сменили карту или
+     срок — плашка плавно встала или ушла. */
+  const egipetskaya = (egipet ?? EGIPET_PO_UMOLCHANIYU).some((e) => e.planId === plan.id && e.period === period);
 
   const rove = (e: React.KeyboardEvent, count: number, current: number, apply: (i: number) => void) => {
     const keys = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'];
@@ -207,12 +222,21 @@ export default function Pricing({
             за 459 ₽ за месяц». Карты без цены на экране теперь нет,
             значит и цена у кнопки всегда настоящая.
           */}
-          <a
-            className="btn btn--wide"
-            href={`/checkout/?plan=${plan.id}&period=${period}&mode=${acc}`}
-          >
-            Оформить за {formatPrice(cena?.rub ?? 0)} ₽
-          </a>
+          {/* ⚠️ ПЛАШКА ПРО ЕГИПЕТСКИЙ VPN — ПОД БЛОКОМ ВЫБОРА, сразу за
+              кнопкой (постановка сорок девятой итерации). Стоит
+              в разметке всегда, показ решает признак выбранной пары.
+              ⚠️ КНОПКА И ПЛАШКА В СВОЕЙ ОБЁРТКЕ: в сетке `.order`
+              закрытая плашка всё равно получала бы промежуток сетки —
+              12 px пустоты под кнопкой (Р-158). */}
+          <div className="order__knopka">
+            <a
+              className="btn btn--wide"
+              href={`/checkout/?plan=${plan.id}&period=${period}&mode=${acc}`}
+            >
+              Оформить за {formatPrice(cena?.rub ?? 0)} ₽
+            </a>
+            <EgipetPlashka pokaz={egipetskaya} />
+          </div>
 
           {/* ⚠️ СЕРТИФИКАТ УШЁЛ ИЗ СЕТКИ, И ЗДЕСЬ ОСТАЁТСЯ ОДНА СТРОКА
               К НЕМУ. Совсем убрать её нельзя: сертификат — это те же

@@ -6,6 +6,17 @@
  * ЭТОТ заказ взял (пароль от аккаунта клиента). Ни один другой
  * вызов открытого текста не получает — постановка двадцать седьмой
  * итерации.
+ *
+ * ⚠️ С СОРОК ДЕВЯТОЙ ИТЕРАЦИИ ЧИТАТЕЛЕЙ БОЛЬШЕ, И КАЖДЫЙ НАЗВАН
+ * ПОСТАНОВКОЙ (Р-160):
+ *   • АДМИНИСТРАТОР — у ВЫПОЛНЕННОГО заказа: «„Открыть" показывает
+ *     карточку заказа: почты и пароли аккаунтов…»;
+ *   • ДЕРЖАТЕЛЬ ЗАДАЧИ «ОТМЕНА ПОДПИСКИ», пока она открыта: «оператор
+ *     открывает задачу, видит почту и пароль»;
+ *   • СООБЩЕНИЕ БОТА об этой задаче: «почта и пароль аккаунта (пока
+ *     не стёрт)».
+ * Все три — здесь же, в этом файле, и стирание через семь дней после
+ * закрытия заказа для них то же самое (закон 35).
  */
 
 import { odna, zapros } from './db';
@@ -13,7 +24,7 @@ import { poprobovatRasshifrovat } from './crypto';
 import { dopisatAdres } from '@/lib/admin/prichiny';
 import { STATUS_SLOVAMI, type Rezhim, type Status } from './orders';
 import { katalog, naytiTarif, srokKratko } from './catalog';
-import { usloviyeVidimosti, type Dostup } from './dostup';
+import { usloviyeVidimosti, usloviyeVidimostiOtmeny, usloviyeVidimostiSZadachey, type Dostup } from './dostup';
 import { METKI } from './utm';
 
 export type SlotKlientu = {
@@ -57,6 +68,12 @@ export type ZakazKlientu = {
   /** Когда доступ заканчивается. Считается при закрытии заказа. */
   konchaetsya: Date | null;
   prichinaOtmeny: string | null;
+  /**
+   * Заказ отменён ПОСЛЕ выполнения — подписку сняли (сорок девятая
+   * итерация). Деньги не возвращаются, и строки «Деньги лежат
+   * на балансе» у такого заказа быть не должно.
+   */
+  otmenaPodpiski: boolean;
   sekretyStyorty: boolean;
   slots: SlotKlientu[];
 };
@@ -77,6 +94,7 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
     cancel_slot_idx: number | null;
     secrets_wiped_at: Date | null;
     expires_at: Date | null;
+    otmena_podpiski: boolean;
   }>(
     /* ⚠️ ОТМЕНЁННЫЕ САМИМ ПОКУПАТЕЛЕМ СЮДА НЕ ПОПАДАЮТ ВОВСЕ —
        постановка тридцать шестой итерации: «карточка плавно
@@ -84,7 +102,8 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
        Отменённые ОПЕРАТОРОМ остаются: там есть что сказать —
        причина и деньги на балансе. */
     `select id, kind, plan_id, period, status, total_kop, balance_kop, money_kop, source,
-            created_at, cancel_reason, cancel_slot_idx, secrets_wiped_at, expires_at
+            created_at, cancel_reason, cancel_slot_idx, secrets_wiped_at, expires_at,
+            exists (select 1 from sub_cancel t where t.order_id = shop_order.id) as otmena_podpiski
        from shop_order
       where user_id = $1 and not cancelled_by_client
       order by created_at desc limit 100`,
@@ -153,6 +172,7 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
         );
         return dopisatAdres(r.cancel_reason, pochta);
       })(),
+      otmenaPodpiski: r.otmena_podpiski,
       sekretyStyorty: Boolean(r.secrets_wiped_at),
       slots: svoi.map((s) => ({
         idx: s.idx,
@@ -271,6 +291,12 @@ export type StrokaOcheredi = {
    */
   moy: boolean;
   bySertificate: boolean;
+  /**
+   * Это не заказ, а задача «Отмена подписки» (сорок девятая итерация).
+   * Номер — номер того же заказа: задача одна на заказ и открывается
+   * его же карточкой. `paidAt` у неё — время, когда её поставили.
+   */
+  otmena: boolean;
 };
 
 /**
@@ -305,7 +331,7 @@ export async function ochered(d: Dostup): Promise<StrokaOcheredi[]> {
       limit 200`,
     v.params,
   );
-  return rows.map((r) => ({
+  const zakazy: StrokaOcheredi[] = rows.map((r) => ({
     id: Number(r.id),
     planId: r.plan_id,
     people: Number(r.slots),
@@ -316,7 +342,51 @@ export async function ochered(d: Dostup): Promise<StrokaOcheredi[]> {
     operator: d.admin ? r.operator : null,
     moy: r.operator_id !== null && Number(r.operator_id) === d.staffId,
     bySertificate: r.source === 'certificate',
+    otmena: false,
   }));
+
+  /* ⚠️ ЗАДАЧИ «ОТМЕНА ПОДПИСКИ» ИДУТ В ТУ ЖЕ ОЧЕРЕДЬ (сорок девятая
+     итерация): «попадает в очередь тому оператору, который выполнял
+     заказ… или в общую очередь». Видимость — то же правило, что
+     у заказа: своя всегда, свободная — при разрешённой паре. Статус
+     в строке — «свободна» или «взята», тем же словом, что у заказа:
+     `paid` и `in_work`, — чтобы очередь рисовала её теми же значками. */
+  const vt = usloviyeVidimostiOtmeny(d, 't', 'o', 1);
+  const zadachi = await zapros<{
+    id: string;
+    plan_id: string;
+    period: number;
+    created_at: Date;
+    operator: string | null;
+    operator_id: string | null;
+    slots: string;
+  }>(
+    `select o.id, o.plan_id, o.period, t.created_at, f.email as operator, t.operator_id,
+            (select count(*) from order_slot s where s.order_id = o.id)::text as slots
+       from sub_cancel t
+       join shop_order o on o.id = t.order_id
+       left join staff f on f.id = t.operator_id
+      where t.done_at is null${vt.uslovie}
+      order by t.created_at asc
+      limit 200`,
+    vt.params,
+  );
+  const otmeny: StrokaOcheredi[] = zadachi.map((r) => ({
+    id: Number(r.id),
+    planId: r.plan_id,
+    people: Number(r.slots),
+    period: r.period,
+    status: r.operator_id ? 'in_work' : 'paid',
+    paidAt: new Date(r.created_at).toISOString(),
+    createdAt: new Date(r.created_at).toISOString(),
+    operator: d.admin ? r.operator : null,
+    moy: r.operator_id !== null && Number(r.operator_id) === d.staffId,
+    bySertificate: false,
+    otmena: true,
+  }));
+  /* Отмена подписки стоит ПЕРВОЙ: пока она не сделана, Spotify
+     продолжает списывать за подписку, которую мы уже отменили. */
+  return [...otmeny, ...zakazy];
 }
 
 /**
@@ -334,7 +404,7 @@ export async function ochered(d: Dostup): Promise<StrokaOcheredi[]> {
  * в причине отмены, Р-151).
  */
 export type Sobytie = {
-  vid: 'vzyal' | 'vernul' | 'vypolnil' | 'otmenil';
+  vid: 'vzyal' | 'vernul' | 'vypolnil' | 'otmenil' | 'otmena_zaproshena' | 'podpiska_otmenena';
   /**
    * Почта сотрудника. `null` значит «сотрудника не было»: так
    * выглядит отмена САМИМ ПОКУПАТЕЛЕМ, и надпись к ней своя.
@@ -372,6 +442,22 @@ export type SlotOperatoru = {
   outLogin: string | null;
   outMailPass: string | null;
   outPassword: string | null;
+  /** Шаг задачи «Отмена подписки» на этом аккаунте пройден. */
+  podpiskaOtmenena: boolean;
+};
+
+/**
+ * Задача «Отмена подписки» у заказа (сорок девятая итерация).
+ *
+ * ⚠️ ПОЧТА ДЕРЖАТЕЛЯ — ТОЛЬКО АДМИНИСТРАТОРУ, как у заказа
+ * (Р-155): оператору приходит `null`, а «своя или чужая» решает
+ * признак `moya`, посчитанный сервером.
+ */
+export type OtmenaPodpiski = {
+  operatorEmail: string | null;
+  moya: boolean;
+  svobodna: boolean;
+  zakryta: boolean;
 };
 
 export type ZakazOperatoru = {
@@ -416,6 +502,19 @@ export type ZakazOperatoru = {
    */
   raschyotnayaData: string;
   /**
+   * Дата окончания доступа по заказу, «ГГГГ-ММ-ДД» (`expires_at`).
+   * У нового аккаунта своей даты нет, и окончание по нему — это она.
+   */
+  konchaetsya: string | null;
+  /** Задача «Отмена подписки». `null` — подписку не отменяли. */
+  otmena: OtmenaPodpiski | null;
+  /**
+   * Доступы в карточке расшифрованы ТОМУ, КТО СМОТРИТ: держателю
+   * заказа в работе, держателю открытой задачи или администратору
+   * у выполненного заказа (сорок девятая итерация, пункт 8).
+   */
+  dostupyVidny: boolean;
+  /**
    * Откуда пришёл заказ. Пары «имя — значение» в порядке `METKI`;
    * пустых меток тут нет вовсе, поэтому пустой список означает
    * «пришёл без меток».
@@ -450,7 +549,10 @@ export type ZakazOperatoru = {
 export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOperatoru | null> {
   const admin = d.admin;
   const staffId = d.staffId;
-  const v = usloviyeVidimosti(d, 'o', 2);
+  /* ⚠️ С СОРОК ДЕВЯТОЙ ИТЕРАЦИИ УСЛОВИЕ ЗНАЕТ И ПРО ЗАДАЧУ «ОТМЕНА
+     ПОДПИСКИ»: её держатель может не быть держателем заказа, и без
+     этого он не открыл бы свою же задачу (`dostup.ts`). */
+  const v = usloviyeVidimostiSZadachey(d, 'o', 2);
   const r = await odna<{
     id: string;
     plan_id: string;
@@ -471,8 +573,14 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
     utm_campaign: string | null;
     utm_term: string | null;
     utm_content: string | null;
+    expires_at: Date | null;
+    t_order: string | null;
+    t_operator_id: string | null;
+    t_operator_email: string | null;
+    t_done_at: Date | null;
   }>(
-    `select o.id, o.plan_id, o.period, o.status, o.source, u.email,
+    `select o.id, o.plan_id, o.period, o.status, o.source, u.email, o.expires_at,
+            t.order_id as t_order, t.operator_id as t_operator_id, tf.email as t_operator_email, t.done_at as t_done_at,
             o.operator_id, f.email as operator_email,
             o.total_kop, o.balance_kop, o.money_kop, o.cancel_reason, o.secrets_wiped_at,
             (now() + (o.period || ' months')::interval)::date as raschyot,
@@ -480,11 +588,37 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
        from shop_order o
        join app_user u on u.id = o.user_id
        left join staff f on f.id = o.operator_id
+       left join sub_cancel t on t.order_id = o.id
+       left join staff tf on tf.id = t.operator_id
       where o.id = $1${v.uslovie}`,
     [id, ...v.params],
   );
   if (!r) return null;
   const moy = r.operator_id !== null && Number(r.operator_id) === staffId;
+  const otmena: OtmenaPodpiski | null = r.t_order
+    ? {
+        operatorEmail: admin ? r.t_operator_email : null,
+        moya: r.t_operator_id !== null && Number(r.t_operator_id) === staffId,
+        svobodna: r.t_operator_id === null && !r.t_done_at,
+        zakryta: Boolean(r.t_done_at),
+      }
+    : null;
+  /* ⚠️ КОМУ РАСШИФРОВЫВАЕМ — ОДНА СТРОКА, И КАЖДОЕ «ИЛИ» В НЕЙ НАЗВАНО
+     ПОСТАНОВКОЙ:
+       • `moy` — оператор, у которого ЭТОТ заказ (закон 35, как было);
+       • держатель ОТКРЫТОЙ задачи «Отмена подписки» — «оператор
+         открывает задачу, видит почту и пароль» (пункт 9). Закрытая
+         задача читателем больше не делает: работа сделана;
+       • администратор у ВЫПОЛНЕННОГО заказа — «„Открыть" показывает
+         карточку заказа: почты и пароли аккаунтов» (пункт 8), — и
+         у заказа, отменённого после выполнения: это тот же заказ,
+         и подписку с него снимают по этим же данным.
+     Стёртое через семь дней не расшифровывается никому: шифротекста
+     к тому времени нет вовсе (закон 35). */
+  const vidit =
+    moy ||
+    Boolean(otmena && otmena.moya && !otmena.zakryta) ||
+    (admin && (r.status === 'done' || Boolean(otmena)));
   const slots = await zapros<{
     id: string;
     idx: number;
@@ -497,9 +631,10 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
     recovery_sent_at: Date | null;
     done_at: Date | null;
     ends_at: Date | null;
+    sub_cancelled_at: Date | null;
   }>(
     `select id, idx, mode, in_login_enc, in_password_enc, out_login_enc, out_mail_pass_enc,
-            out_password_enc, recovery_sent_at, done_at, ends_at
+            out_password_enc, recovery_sent_at, done_at, ends_at, sub_cancelled_at
        from order_slot where order_id = $1 order by idx`,
     [id],
   );
@@ -524,6 +659,9 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
     istoriya: admin ? await istoriyaZakaza(id) : null,
     secretsWiped: Boolean(r.secrets_wiped_at),
     raschyotnayaData: new Date(r.raschyot).toISOString().slice(0, 10),
+    konchaetsya: r.expires_at ? new Date(r.expires_at).toISOString().slice(0, 10) : null,
+    otmena,
+    dostupyVidny: vidit,
     slots: slots.map((s) => ({
       id: Number(s.id),
       idx: s.idx,
@@ -531,11 +669,12 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
       gotov: Boolean(s.done_at),
       recoverySent: Boolean(s.recovery_sent_at),
       endsAt: s.ends_at ? new Date(s.ends_at).toISOString().slice(0, 10) : null,
-      clientLogin: moy ? poprobovatRasshifrovat(s.in_login_enc) : null,
-      clientPassword: moy ? poprobovatRasshifrovat(s.in_password_enc) : null,
-      outLogin: moy ? poprobovatRasshifrovat(s.out_login_enc) : null,
-      outMailPass: moy ? poprobovatRasshifrovat(s.out_mail_pass_enc) : null,
-      outPassword: moy ? poprobovatRasshifrovat(s.out_password_enc) : null,
+      clientLogin: vidit ? poprobovatRasshifrovat(s.in_login_enc) : null,
+      clientPassword: vidit ? poprobovatRasshifrovat(s.in_password_enc) : null,
+      outLogin: vidit ? poprobovatRasshifrovat(s.out_login_enc) : null,
+      outMailPass: vidit ? poprobovatRasshifrovat(s.out_mail_pass_enc) : null,
+      outPassword: vidit ? poprobovatRasshifrovat(s.out_password_enc) : null,
+      podpiskaOtmenena: Boolean(s.sub_cancelled_at),
     })),
   };
 }
@@ -620,6 +759,14 @@ export type ZakrytyyZakaz = {
    * (пункт 6).
    */
   staff: string | null;
+  /**
+   * У выполненного заказа можно отменить подписку: он выполнен,
+   * это тариф (не сертификат) и отмены ещё не было. Решает сервер —
+   * кнопка «Отменить» рисуется по этому признаку.
+   */
+  otmenaMozhno: boolean;
+  /** Заказ отменён после выполнения — задачей «Отмена подписки». */
+  otmenaPodpiski: boolean;
 };
 
 /**
@@ -654,14 +801,25 @@ export async function zakrytye(d: Dostup, limit = 50): Promise<ZakrytyyZakaz[]> 
     plan_id: string;
     email: string;
     staff: string | null;
+    kind: 'plan' | 'certificate';
+    otmena: boolean;
   }>(
-    `select o.id, o.status, o.closed_at, o.plan_id, u.email, fs.email as staff
+    `select o.id, o.status, o.closed_at, o.plan_id, u.email, fs.email as staff, o.kind,
+            (t.order_id is not null) as otmena
        from shop_order o
        join app_user u on u.id = o.user_id
+       left join sub_cancel t on t.order_id = o.id
        left join lateral (
          select e.staff_id from order_event e
           where e.order_id = o.id
-            and e.vid = case o.status when 'done' then 'vypolnil' when 'cancelled' then 'otmenil' end
+            /* ⚠️ У ЗАКАЗА С ОТМЕНЁННОЙ ПОДПИСКОЙ «КТО ЗАКРЫЛ» — ТОТ,
+               КТО НАЖАЛ «ОТМЕНИТЬ»: события «отменил» у него нет,
+               у него свой глагол (миграция 015). */
+            and e.vid = case
+                          when o.status = 'done' then 'vypolnil'
+                          when t.order_id is not null then 'otmena_zaproshena'
+                          else 'otmenil'
+                        end
           order by e.created_at desc, e.id desc limit 1
        ) ev on true
        left join staff fs on fs.id = ev.staff_id
@@ -676,5 +834,37 @@ export async function zakrytye(d: Dostup, limit = 50): Promise<ZakrytyyZakaz[]> 
     planId: r.plan_id,
     client: r.email,
     staff: admin ? r.staff : null,
+    otmenaMozhno: r.status === 'done' && r.kind === 'plan' && !r.otmena,
+    otmenaPodpiski: r.otmena,
+  }));
+}
+
+/**
+ * Почты и пароли аккаунтов заказа — ДЛЯ СООБЩЕНИЯ БОТА об отмене
+ * подписки (сорок девятая итерация, пункт 9): «почта и пароль аккаунта
+ * (пока не стёрт)».
+ *
+ * ⚠️ ЭТО ЧИТАТЕЛЬ, НАЗВАННЫЙ ПОСТАНОВКОЙ, И ЗВАТЬ ЕГО МОЖНО ИЗ ОДНОГО
+ * МЕСТА — из действия администратора, который нажал «Отменить».
+ * Стёртое не возвращается: шифротекста нет, и в сообщении будет `null`
+ * («стёрт через 7 дней после закрытия»).
+ *
+ * ⚠️ БЕРЁТСЯ ТО, НА ЧТО ЗАКАЗ ОФОРМЛЕН: данные клиента, а у старых
+ * заказов (до тридцать четвёртой итерации) — то, что выдал оператор.
+ */
+export async function akkauntyDlyaOtmeny(zakaz: number): Promise<{ pochta: string | null; parol: string | null }[]> {
+  const rows = await zapros<{
+    in_login_enc: string | null;
+    in_password_enc: string | null;
+    out_login_enc: string | null;
+    out_password_enc: string | null;
+  }>(
+    `select in_login_enc, in_password_enc, out_login_enc, out_password_enc
+       from order_slot where order_id = $1 order by idx`,
+    [zakaz],
+  );
+  return rows.map((s) => ({
+    pochta: poprobovatRasshifrovat(s.in_login_enc) ?? poprobovatRasshifrovat(s.out_login_enc),
+    parol: poprobovatRasshifrovat(s.in_password_enc) ?? poprobovatRasshifrovat(s.out_password_enc),
   }));
 }

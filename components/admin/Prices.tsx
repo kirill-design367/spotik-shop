@@ -7,6 +7,7 @@ import {
   adminSetPlanName,
   adminSetPrice,
   adminToggleCell,
+  adminToggleEgipet,
   type OtvetA,
 } from '@/lib/server/actions-admin';
 import { slovar, type Klyuch, type Yazyk } from '@/lib/admin/slova';
@@ -24,6 +25,8 @@ export type Stroka = {
   skidkaDo: string;
   /** Продаётся ли эта пара на сайте. */
   prodayom: boolean;
+  /** Галочка «Египет»: аккаунт на этой паре привязан к Египту. */
+  egipet: boolean;
 };
 
 /**
@@ -58,6 +61,7 @@ export default function Prices({
   const [sk, setSkidka, busy3] = useActionState<OtvetA, FormData>(adminSetDiscount, {});
   const [gr, setYacheyka, busy4] = useActionState<OtvetA, FormData>(adminToggleCell, {});
   const [im, setImya, busy5] = useActionState<OtvetA, FormData>(adminSetPlanName, {});
+  const [eg, setEgipet, busy6] = useActionState<OtvetA, FormData>(adminToggleEgipet, {});
   const otkuda: Record<Stroka['iz'], Klyuch | null> = { baza: 'c.from_db', umolchanie: 'c.from_default', net: null };
 
   return (
@@ -156,8 +160,23 @@ export default function Prices({
       <p className="hint">{t('c.grid_hint')}</p>
       {gr.error ? <p className="err">{t(gr.error)}</p> : null}
       {gr.ok ? <p className="ok">{t(gr.ok, gr.polya)}</p> : null}
+      {/* ⚠️ СООБЩЕНИЯ ГАЛОЧКИ «ЕГИПЕТ» СТОЯТ ЗДЕСЬ ЖЕ, НАД ТОЙ ЖЕ
+          ТАБЛИЦЕЙ: галочка живёт в её строках, и ответ на нажатие
+          обязан быть там, куда человек смотрит. */}
+      {eg.error ? <p className="err">{t(eg.error)}</p> : null}
+      {eg.ok ? <p className="ok">{t(eg.ok, eg.polya)}</p> : null}
+      <p className="hint">{t('c.egypt_hint')}</p>
       <div className="ad__scroll">
         <table>
+          <thead>
+            <tr>
+              <th>{t('t.plan')}</th>
+              <th>{t('t.term')}</th>
+              <th>{t('c.on_sale')}</th>
+              <th />
+              <th>{t('c.egypt')}</th>
+            </tr>
+          </thead>
           <tbody>
             {rows.map((r) => (
               <tr key={`gr-${r.planId}-${r.period}`}>
@@ -172,6 +191,32 @@ export default function Prices({
                     <button type="submit" className="btn btn--ghost btn--sm" disabled={busy4}>
                       {r.prodayom ? t('c.off') : t('c.on')}
                     </button>
+                  </form>
+                </td>
+                <td>
+                  {/* ⚠️ ГАЛОЧКА ОТПРАВЛЯЕТ СЕБЯ САМА, без кнопки
+                      «Сохранить»: у неё два состояния, и третьего
+                      («отмечено, но не сохранено») заводить незачем.
+                      В форму едет ЖЕЛАЕМОЕ состояние самой галочки, а не
+                      «переключи»: снятая галочка поле не отправляет
+                      вовсе, и сервер читает это как «снять». Два
+                      нажатия подряд при медленной сети поэтому
+                      не разойдутся с тем, что видно на экране. */}
+                  <form action={setEgipet}>
+                    <input type="hidden" name="plan" value={r.planId} />
+                    <input type="hidden" name="period" value={r.period} />
+                    <label className="ad__check">
+                      <input
+                        type="checkbox"
+                        name="egipet"
+                        value="1"
+                        defaultChecked={r.egipet}
+                        disabled={busy6}
+                        aria-label={`${t('c.egypt')}: ${r.planName}, ${r.label}`}
+                        onChange={(e) => e.currentTarget.form?.requestSubmit()}
+                      />
+                      <span>{t('c.egypt')}</span>
+                    </label>
                   </form>
                 </td>
               </tr>
