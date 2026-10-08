@@ -481,15 +481,22 @@ const S = {
   'ss.orders': ['Заказов', 'Orders'],
   'ss.revenue': ['Выручка', 'Revenue'],
   'ss.revenue_note': [
-    'Выручка — это деньги, прошедшие через кассу. Оплаченное с баланса и заказы по сертификату сюда не входят: эти деньги уже посчитаны там, где их приняли.',
-    'Revenue is money that went through the payment provider. Balance payments and certificate orders are not counted here: that money was already counted where it came in.',
+    'Заказы, выполненные за выбранный период, по времени выполнения, — это итог таблицы «По тарифам и срокам» ниже. Заказ, у которого потом отменили подписку, считается: деньги остались у сервиса. Выручка — это деньги, прошедшие через кассу: оплаченное с баланса и заказы по сертификату сюда не входят, эти деньги уже посчитаны там, где их приняли.',
+    'Orders completed in the selected period, by completion time — the total of the “By plan and term” table below. An order whose subscription was cancelled later still counts: the money stayed with the service. Revenue is money that went through the payment provider: balance payments and certificate orders are not counted here, that money was already counted where it came in.',
   ],
+  /* ⚠️ ВЕРХНЯЯ КАРТОЧКА СЧИТАЕТ ВЫПОЛНЕННЫЕ (пятидесятая итерация,
+     вопрос 106), и надпись у неё своя: общее «Заказов» осталось
+     заголовком столбцов в таблицах. */
+  'ss.orders_done': ['Выполнено заказов', 'Orders completed'],
+  /* Срок внутри тарифа в разбивке по сотрудникам: «1 мес — 12 шт».
+     По-английски «шт» не говорят — там число стоит само. */
+  'ss.srok_n': ['{srok} — {n} шт', '{srok} — {n}'],
   'ss.queue': ['Сейчас в очереди', 'In queue now'],
   'ss.queue_note': ['Оплаченные и взятые в работу.', 'Paid and in progress.'],
   'ss.avg': ['Среднее время выполнения', 'Average completion time'],
   'ss.avg_note': [
-    'От оплаты до закрытия, по выполненным заказам за 30 суток.',
-    'From payment to completion, over finished orders of the last 30 days.',
+    'От оплаты до выполнения, по заказам, выполненным за выбранный период.',
+    'From payment to completion, over orders completed in the selected period.',
   ],
   'ss.avg_none': ['Выполненных заказов ещё не было.', 'No finished orders yet.'],
   'ss.by_plan': ['По тарифам и срокам', 'By plan and term'],
@@ -509,8 +516,8 @@ const S = {
   'ss.cancelled_n': ['Отменил', 'Orders cancelled'],
   'ss.cancelled_plans': ['Отменил по тарифам', 'Cancelled by plan'],
   'ss.by_staff_note': [
-    'Считаются события за выбранный период: время берётся по самому выполнению или отмене, а не по оплате заказа. Заказы, отменённые самим покупателем, сюда не входят — сотрудника у них нет.',
-    'Counts events within the selected period: the time taken is that of the completion or the cancellation itself, not of the payment. Orders cancelled by the buyer are not counted here — they have no staff member.',
+    'Считаются события за выбранный период: время берётся по самому выполнению или отмене, а не по оплате заказа. В скобках у тарифа — сколько из них на какой срок. Заказы, отменённые самим покупателем, сюда не входят — сотрудника у них нет.',
+    'Counts events within the selected period: the time taken is that of the completion or the cancellation itself, not of the payment. In brackets after a plan — how many of them were for which term. Orders cancelled by the buyer are not counted here — they have no staff member.',
   ],
   'ss.certs': ['Сертификаты', 'Certificates'],
   'ss.certs_bought': ['Куплено', 'Bought'],
@@ -528,16 +535,16 @@ const S = {
     'Orders you completed in the selected period, by completion time.',
   ],
   'ss.by_plan_note': [
-    'Только выполненные заказы, по времени выполнения. Отменённые сюда не входят.',
-    'Completed orders only, by completion time. Cancelled orders are not counted.',
+    'Только выполненные заказы, по времени выполнения. Отменённые до выполнения сюда не входят; заказ, у которого потом отменили подписку, входит — деньги остались у сервиса.',
+    'Completed orders only, by completion time. Orders cancelled before completion are not counted; an order whose subscription was cancelled later is — the money stayed with the service.',
   ],
   'ss.by_plan_note_my': [
     'Только ваши выполненные заказы, по времени выполнения.',
     'Only your completed orders, by completion time.',
   ],
   'ss.sources_note': [
-    'Только выполненные заказы, по времени выполнения.',
-    'Completed orders only, by completion time.',
+    'Только выполненные заказы, по времени выполнения, — те же, что в таблице «По тарифам и срокам».',
+    'Completed orders only, by completion time — the same ones as in the “By plan and term” table.',
   ],
   'ss.show_cancels': ['Показать отмены', 'Show cancellations'],
   'ss.period_note_my': [

@@ -46,7 +46,7 @@ import { poprobovatRasshifrovat, shifrGotov, zashifrovat } from './crypto';
 import { env } from './env';
 import { log, pochtaVZhurnal } from './log';
 import { rubli } from './money';
-import { poslatVChat, telegramNastroen } from './telegram';
+import { ispravitVChate, nomerSoobshcheniya, poslatVChat, telegramNastroen, udalitIzChata, type Itog } from './telegram';
 
 export type SobytieKomande =
   | { vid: 'zakaz_oplachen'; zakaz: number; tarif: string; srok: string; mest: number; podarok: boolean }
@@ -162,6 +162,50 @@ function tekstDlyaChata(s: SobytieKomande): string | null {
 }
 
 /**
+ * ТО ЖЕ СООБЩЕНИЕ ОБ ОТМЕНЕ ПОДПИСКИ, НО БЕЗ ПОЧТ И ПАРОЛЕЙ.
+ *
+ * ⚠️ ИМ БОТ ПРАВИТ СВОЁ СООБЩЕНИЕ, ЕСЛИ TELEGRAM НЕ ДАСТ ЕГО УДАЛИТЬ
+ * (Р-161). Собирается тем же `tekstDlyaChata`, а не своей копией
+ * шаблона: две копии одного сообщения разошлись бы на первой правке
+ * надписей. Почта уходит вместе с паролем — на сайте через семь
+ * дней стираются обе (закон 35).
+ *
+ * `null` — секретов в сообщении нет вовсе (их стёрли раньше, чем
+ * нажали «Отменить»), и убирать его незачем.
+ */
+function tekstBezSekretov(s: SobytieKomande): string | null {
+  if (s.vid !== 'otmena_podpiski') return null;
+  if (!s.akkaunty.some((a) => a.pochta !== null || a.parol !== null)) return null;
+  return tekstDlyaChata({ ...s, akkaunty: s.akkaunty.map(() => ({ pochta: null, parol: null })) });
+}
+
+/**
+ * Запомнить ушедшее сообщение с паролем, чтобы убрать его в срок.
+ *
+ * ⚠️ НОМЕР НЕ РАЗОБРАЛСЯ — ЭТО СТРОКА В ЖУРНАЛЕ С ПОМЕТКОЙ ОШИБКИ,
+ * а не тишина: сообщение с паролем, которое бот не сможет убрать,
+ * должно быть видно — убирать его тогда придётся руками.
+ */
+async function zapomnitSoobshchenie(zakaz: number, itog: Itog, tekstBez: string): Promise<void> {
+  const nomer = nomerSoobshcheniya(itog);
+  if (nomer === null || !env.telegramChat) {
+    log.error('сообщение с паролем ушло, но номер его не разобрался — убрать его бот не сможет', { order: zakaz });
+    return;
+  }
+  try {
+    await zapros(
+      `insert into tg_s_parolem (order_id, chat_id, message_id, tekst_bez) values ($1, $2, $3, $4)`,
+      [zakaz, env.telegramChat, nomer, tekstBez],
+    );
+  } catch (e) {
+    log.error('сообщение с паролем не запомнилось — убрать его бот не сможет', {
+      order: zakaz,
+      text: String((e as Error).message),
+    });
+  }
+}
+
+/**
  * Строка в журнал: без адресов целиком.
  *
  * ⚠️ ТЕКСТ ОБРАЩЕНИЯ В ЖУРНАЛ НЕ ПИШЕТСЯ. Его написал человек,
@@ -191,7 +235,12 @@ function vZhurnal(s: SobytieKomande): void {
   log.info(`команде: ${vid}`, polya);
 }
 
-async function vOchered(vid: string, tekst: string, pochemu: string): Promise<void> {
+async function vOchered(
+  vid: string,
+  tekst: string,
+  pochemu: string,
+  dlyaUborki: { zakaz: number; tekstBez: string } | null = null,
+): Promise<void> {
   if (!bazaEst()) return;
   /* ⚠️ ТЕКСТ С ЧУЖИМ ПАРОЛЕМ ЛОЖИТСЯ В ОЧЕРЕДЬ ШИФРОТЕКСТОМ. Очередь —
      это таблица в базе и в ночной копии, а пароли от аккаунтов Spotify
@@ -206,9 +255,9 @@ async function vOchered(vid: string, tekst: string, pochemu: string): Promise<vo
   }
   try {
     await zapros(
-      `insert into notify_outbox (vid, tekst, popytok, poslednyaya_oshibka, sleduyushchaya_v)
-       values ($1, $2, 1, $3, now() + interval '1 minute')`,
-      [vid, tekst, pochemu.slice(0, 500)],
+      `insert into notify_outbox (vid, tekst, popytok, poslednyaya_oshibka, sleduyushchaya_v, order_id, tekst_bez)
+       values ($1, $2, 1, $3, now() + interval '1 minute', $4, $5)`,
+      [vid, tekst, pochemu.slice(0, 500), dlyaUborki?.zakaz ?? null, dlyaUborki?.tekstBez ?? null],
     );
   } catch (e) {
     log.error('уведомление не легло в очередь', { text: String((e as Error).message) });
@@ -223,9 +272,12 @@ export async function soobshchitKomande(s: SobytieKomande): Promise<void> {
     // Пока токена нет — только журнал, как письма до настройки SMTP.
     return;
   }
+  const tekstBez = tekstBezSekretov(s);
+  const dlyaUborki = tekstBez !== null && s.vid === 'otmena_podpiski' ? { zakaz: s.zakaz, tekstBez } : null;
   const itog = await poslatVChat(tekst);
   if (itog.ok) {
     log.info('уведомление ушло в Telegram', { vid: s.vid, adres: itog.adres });
+    if (dlyaUborki && bazaEst()) await zapomnitSoobshchenie(dlyaUborki.zakaz, itog, dlyaUborki.tekstBez);
     return;
   }
   log.warn('Telegram не ответил, уведомление в очереди', {
@@ -233,7 +285,7 @@ export async function soobshchitKomande(s: SobytieKomande): Promise<void> {
     adres: itog.adres,
     text: itog.pochemu.slice(0, 200),
   });
-  await vOchered(s.vid, tekst, itog.pochemu);
+  await vOchered(s.vid, tekst, itog.pochemu, dlyaUborki);
 }
 
 /**
@@ -250,7 +302,14 @@ export async function soobshchitKomande(s: SobytieKomande): Promise<void> {
 export async function razgrestiOchered(): Promise<void> {
   if (!bazaEst() || !telegramNastroen()) return;
   try {
-    const stroki = await zapros<{ id: string; vid: string; tekst: string; popytok: number }>(
+    const stroki = await zapros<{
+      id: string;
+      vid: string;
+      tekst: string;
+      popytok: number;
+      order_id: string | null;
+      tekst_bez: string | null;
+    }>(
       `update notify_outbox
           set sleduyushchaya_v = now() + interval '5 minutes'
         where id in (
@@ -258,7 +317,7 @@ export async function razgrestiOchered(): Promise<void> {
            where sent_at is null and popytok < $1 and sleduyushchaya_v <= now()
            order by id limit 20 for update skip locked
         )
-      returning id, vid, tekst, popytok`,
+      returning id, vid, tekst, popytok, order_id, tekst_bez`,
       [POPYTOK],
     );
     for (const r of stroki) {
@@ -286,6 +345,9 @@ export async function razgrestiOchered(): Promise<void> {
           [Number(r.id), sParolem],
         );
         log.info('отложенное уведомление ушло', { vid: r.vid, popytok: r.popytok + 1, adres: itog.adres });
+        if (sParolem && r.order_id !== null && r.tekst_bez) {
+          await zapomnitSoobshchenie(Number(r.order_id), itog, r.tekst_bez);
+        }
         continue;
       }
       /* Отступ растёт вдвое с каждой попыткой и упирается в час:
@@ -317,4 +379,100 @@ export function zavestiOchered(): void {
   if (g.__spotikNotify) return;
   g.__spotikNotify = setInterval(() => void razgrestiOchered(), MINUTA);
   g.__spotikNotify.unref?.();
+}
+
+/** Сколько раз пробуем убрать сообщение (раз в час), прежде чем бросить. */
+const POPYTOK_UBRAT = 48;
+
+/**
+ * УБРАТЬ ИЗ ЧАТА СООБЩЕНИЯ С ПАРОЛЕМ, ЧЬЙ СРОК ПРИШЁЛ.
+ *
+ * ⚠️ СРОК — ТОТ ЖЕ, ЧТО У ПАРОЛЯ НА САЙТЕ, И БЕРЁТСЯ ОН ОТТУДА ЖЕ:
+ * сообщение убирается, когда у его заказа стёрты секреты
+ * (`secrets_wiped_at`). Постановка пятидесятой итерации: «через
+ * 7 дней, в тот же срок, когда стирается пароль на сайте». Считать
+ * свои семь дней от отправки значило бы завести второй срок,
+ * и он разошёлся бы с первым ровно на те дни, что прошли между
+ * выполнением заказа и нажатием «Отменить». Зовёт это уборка —
+ * тем же часовым ходом, СРАЗУ после стирания (`upkeep.ts`).
+ *
+ * ⚠️ СНАЧАЛА УДАЛИТЬ, ПОТОМ — ПРАВКА. Bot API не даёт удалять
+ * сообщения старше 48 часов, а между отправкой и стиранием бывает
+ * до семи дней. Отказал Telegram в удалении — бот переписывает
+ * сообщение: почты и пароли вычеркнуты, остальное то же. Пароль
+ * из чата уходит в срок в обоих случаях; разница только в том,
+ * осталась ли в ленте строка «отмена подписки по заказу N» (Р-161).
+ *
+ * ⚠️ И ПРИЧИНА ОТКАЗА ПИШЕТСЯ В ЖУРНАЛ: «удалить не дали, исправили»
+ * обязано быть наблюдением, а не догадкой — по нему видно, хватает ли
+ * боту прав и упирается ли он в 48 часов.
+ */
+export async function ubratSoobshcheniyaSParolem(): Promise<void> {
+  if (!bazaEst() || !env.telegramToken) return;
+  try {
+    const stroki = await zapros<{
+      id: string;
+      order_id: string;
+      chat_id: string;
+      message_id: string;
+      tekst_bez: string;
+      popytok: number;
+    }>(
+      `select t.id, t.order_id, t.chat_id, t.message_id, t.tekst_bez, t.popytok
+         from tg_s_parolem t
+         join shop_order o on o.id = t.order_id
+        where t.ubrano_at is null and o.secrets_wiped_at is not null and t.popytok < $1
+        order by t.id
+        limit 50`,
+      [POPYTOK_UBRAT],
+    );
+    /* ⚠️ ОТМЕТКА «УБРАНО» СТАВИТСЯ ТОЛЬКО НА НЕУБРАННУЮ СТРОКУ. Во время
+       выкладки живых приложений на минуту два, и уборка второго могла бы
+       получить «не найдено» на уже удалённое первым и переписать
+       «удалено» на «уже нет». */
+    for (const r of stroki) {
+      const id = Number(r.id);
+      const soobshchenie = Number(r.message_id);
+      const ud = await udalitIzChata(r.chat_id, soobshchenie);
+      if (ud.ok) {
+        await zapros(`update tg_s_parolem set ubrano_at = now(), kak = 'udaleno', oshibka = null where id = $1 and ubrano_at is null`, [id]);
+        log.info('сообщение с паролем удалено из чата', { order: Number(r.order_id), adres: ud.adres });
+        continue;
+      }
+      /* Сообщения в чате уже нет — его удалили руками. Убирать нечего,
+         и править тоже: правка ответила бы той же «не найдено». */
+      if (/message to delete not found/i.test(ud.pochemu)) {
+        await zapros(`update tg_s_parolem set ubrano_at = now(), kak = 'uzhe_net', oshibka = $2 where id = $1 and ubrano_at is null`, [
+          id,
+          ud.pochemu.slice(0, 300),
+        ]);
+        log.info('сообщения с паролем в чате уже нет', { order: Number(r.order_id) });
+        continue;
+      }
+      const pr = await ispravitVChate(r.chat_id, soobshchenie, r.tekst_bez);
+      if (pr.ok) {
+        await zapros(`update tg_s_parolem set ubrano_at = now(), kak = 'ispravleno', oshibka = $2 where id = $1 and ubrano_at is null`, [
+          id,
+          ud.pochemu.slice(0, 300),
+        ]);
+        log.warn('удалить сообщение с паролем Telegram не дал — почты и пароли из него вычеркнуты правкой', {
+          order: Number(r.order_id),
+          text: ud.pochemu.slice(0, 200),
+        });
+        continue;
+      }
+      await zapros(`update tg_s_parolem set popytok = popytok + 1, oshibka = $2 where id = $1`, [
+        id,
+        `удалить: ${ud.pochemu.slice(0, 200)} · править: ${pr.pochemu.slice(0, 200)}`,
+      ]);
+      if (r.popytok + 1 >= POPYTOK_UBRAT) {
+        log.error('сообщение с паролем не удаётся ни удалить, ни исправить — убрать его надо руками', {
+          order: Number(r.order_id),
+          text: ud.pochemu.slice(0, 200),
+        });
+      }
+    }
+  } catch (e) {
+    log.error('сообщения с паролем не убрались', { text: String((e as Error).message) });
+  }
 }

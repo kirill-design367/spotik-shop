@@ -22,7 +22,11 @@
 import { request, type RequestOptions } from 'node:https';
 import { env } from './env';
 
-export type Itog = { ok: true; adres: string } | { ok: false; pochemu: string; adres: string };
+/* ⚠️ У УДАЧИ ЕСТЬ ОТВЕТ, И ОН НУЖЕН С ПЯТИДЕСЯТОЙ ИТЕРАЦИИ: у
+   `sendMessage` там номер сообщения, а без него бот не может потом
+   удалить своё сообщение с паролем (Р-161). Разбирается он
+   осторожно: Bot API обещает JSON, но сеть обещает только байты. */
+export type Itog = { ok: true; adres: string; rezultat: unknown } | { ok: false; pochemu: string; adres: string };
 
 export function telegramNastroen(): boolean {
   return Boolean(env.telegramToken && env.telegramChat);
@@ -60,7 +64,13 @@ function vyzov(metod: string, telo: Record<string, unknown>): Promise<Itog> {
         res.on('data', (k) => (telo2 += k));
         res.on('end', () => {
           if (res.statusCode === 200) {
-            gotovo({ ok: true, adres });
+            let rezultat: unknown = null;
+            try {
+              rezultat = (JSON.parse(telo2) as { result?: unknown }).result ?? null;
+            } catch {
+              rezultat = null;
+            }
+            gotovo({ ok: true, adres, rezultat });
             return;
           }
           /* Ответ Bot API может нести описание ошибки; берём его
@@ -80,6 +90,41 @@ export async function poslatVChat(tekst: string): Promise<Itog> {
   if (!telegramNastroen()) return { ok: false, pochemu: 'токен или чат не заданы', adres: '—' };
   return vyzov('sendMessage', {
     chat_id: env.telegramChat,
+    text: tekst,
+    disable_web_page_preview: true,
+  });
+}
+
+/** Номер ушедшего сообщения из ответа `sendMessage`; `null` — разобрать не вышло. */
+export function nomerSoobshcheniya(itog: Itog): number | null {
+  if (!itog.ok) return null;
+  const n = (itog.rezultat as { message_id?: unknown } | null)?.message_id;
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Удалить своё сообщение.
+ *
+ * ⚠️ BOT API НЕ ДАЁТ УДАЛЯТЬ СООБЩЕНИЯ СТАРШЕ 48 ЧАСОВ — это первое
+ * ограничение в описании `deleteMessage`, и оно стоит над всеми
+ * правами. Поэтому отказ здесь — не беда, а законный исход, и у него
+ * есть запасной путь (`ispravitVChate`, Р-161).
+ */
+export async function udalitIzChata(chat: string, soobshchenie: number): Promise<Itog> {
+  if (!env.telegramToken) return { ok: false, pochemu: 'токен не задан', adres: '—' };
+  return vyzov('deleteMessage', { chat_id: chat, message_id: soobshchenie });
+}
+
+/**
+ * Переписать своё сообщение — запасной путь, когда удалить нельзя.
+ * Свои сообщения бот правит без срока: ограничение в 48 часов у правки
+ * касается только чужих деловых сообщений.
+ */
+export async function ispravitVChate(chat: string, soobshchenie: number, tekst: string): Promise<Itog> {
+  if (!env.telegramToken) return { ok: false, pochemu: 'токен не задан', adres: '—' };
+  return vyzov('editMessageText', {
+    chat_id: chat,
+    message_id: soobshchenie,
     text: tekst,
     disable_web_page_preview: true,
   });

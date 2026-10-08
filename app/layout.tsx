@@ -9,14 +9,19 @@ import { siteFontFaces, SITE, BASE_PATH as BASE } from '@/lib/fontface';
 
 export const metadata: Metadata = {
   title: 'Spotik Shop — доступ к Spotify Premium из России',
+  /* ⚠️ «БЕЗ VPN» ИЗ ОПИСАНИЯ СНЯТО ПЯТИДЕСЯТОЙ ИТЕРАЦИЕЙ (вопрос 104):
+     с сорок девятой на экране этой фразы нет нигде, а на парах
+     с Египтом VPN как раз может понадобиться (Р-158). Описание для
+     поисковиков и превью ссылки — тот же обещающий текст, только
+     виден он раньше страницы. */
   description:
-    'Оформление доступа к Spotify Premium из России. Без VPN, оплата русской картой или через СБП. Тарифы на 1, 3, 6 и 12 месяцев.',
+    'Оформление доступа к Spotify Premium из России. Оплата русской картой или через СБП. Тарифы на 1, 3, 6 и 12 месяцев.',
   applicationName: 'Spotik Shop',
   authors: [{ name: 'Spotik Shop' }],
   robots: { index: true, follow: true },
   openGraph: {
     title: 'Spotik Shop — доступ к Spotify Premium из России',
-    description: 'Без VPN. Оплата русской картой или через СБП.',
+    description: 'Оплата русской картой или через СБП.',
     locale: 'ru_RU',
     type: 'website',
   },

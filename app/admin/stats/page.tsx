@@ -3,7 +3,7 @@ import UtmGen from '@/components/admin/UtmGen';
 import { env } from '@/lib/server/env';
 import { ktoSotrudnik } from '@/lib/server/auth';
 import { bazaEst } from '@/lib/server/db';
-import { BYSTRYE, ponyatPeriod, svodka } from '@/lib/server/stats';
+import { BYSTRYE, ponyatPeriod, svodka, type TarifSotrudnika } from '@/lib/server/stats';
 import { rubli } from '@/lib/server/money';
 import { yazykSotrudnika } from '@/lib/server/yazyk';
 import { slovar, type Klyuch } from '@/lib/admin/slova';
@@ -79,6 +79,24 @@ export default async function AdminStats({
   const imyaPerioda: Record<string, Klyuch> = { day: 'ss.day', week: 'ss.week', month: 'ss.month' };
   const vremya = (min: number) => t('ss.hm', { h: Math.floor(min / 60), m: min % 60 });
   const vybran = period.vid === 'daty' ? '' : period.vid;
+  const en = y === 'en';
+  /* ⚠️ РАЗБИВКА ПО ТАРИФАМ И СРОКАМ — ОДНО МЕСТО НА ОБЕ КОЛОНКИ
+     (пятидесятая итерация): «Индивидуальный — 14 (1 мес — 12 шт,
+     3 мес — 2 шт) · На двоих — 3 (1 мес — 3 шт)», и «тот же формат —
+     в колонке „Отменил по тарифам"». Собери её дважды — и колонки
+     разошлись бы видом на первой же правке.
+     Название тарифа и срок — надписи, в английской админке они
+     английские (закон 40, Р-139); «шт» тоже надпись и живёт
+     в словаре. */
+  const razbivka = (spisok: TarifSotrudnika[]) =>
+    spisok
+      .map(
+        (x) =>
+          `${imyaTarifaIz(imena, x.planId, en)} — ${x.zakazov} (${x.sroki
+            .map((r) => t('ss.srok_n', { srok: srokKratkoDlyaSotrudnika(r.period, en), n: r.zakazov }))
+            .join(', ')})`,
+      )
+      .join(' · ');
 
   return (
     <>
@@ -134,7 +152,11 @@ export default async function AdminStats({
         <>
           <div className="ad__card">
             <dl className="ad__kv">
-              <dt>{t('ss.orders')}</dt>
+              {/* ⚠️ ВЫПОЛНЕННЫЕ ПО ДАТЕ ВЫПОЛНЕНИЯ, А НЕ ОПЛАЧЕННЫЕ
+                  (пятидесятая итерация, вопрос 106), и надпись говорит
+                  это сама: «Заказов» рядом с таблицей выполненных
+                  читалось бы как другое число. */}
+              <dt>{t('ss.orders_done')}</dt>
               <dd className="tnum">{d.obshchee.zakazov}</dd>
               <dt>{t('ss.revenue')}</dt>
               <dd className="tnum">{rubli(d.obshchee.vyruchkaKop)}</dd>
@@ -262,17 +284,9 @@ export default async function AdminStats({
                       <td className="tnum">{r.zakazov}</td>
                       {/* Названия тарифов — надписи, и в английской
                           админке они английские (закон 40). */}
-                      <td>
-                        {r.tarify
-                          .map((x) => `${imyaTarifaIz(imena, x.planId, y === 'en')} — ${x.zakazov}`)
-                          .join(' · ')}
-                      </td>
+                      <td>{razbivka(r.tarify)}</td>
                       <td className="tnum ss-otm">{r.otmen}</td>
-                      <td className="ss-otm">
-                        {r.tarifyOtmen
-                          .map((x) => `${imyaTarifaIz(imena, x.planId, y === 'en')} — ${x.zakazov}`)
-                          .join(' · ')}
-                      </td>
+                      <td className="ss-otm">{razbivka(r.tarifyOtmen)}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -24,6 +24,7 @@
 import { bazaEst, zapros } from './db';
 import { log } from './log';
 import { napomnitObOkonchanii } from './napominaniya';
+import { ubratSoobshcheniyaSParolem } from './notify';
 
 const CHAS = 3_600_000;
 
@@ -68,9 +69,18 @@ export async function ubrat(): Promise<void> {
     // и через неделю отменять подписку по нему уже поздно — задача
     // в очереди и карточка заказа говорят то же самое.
     await zapros(`delete from notify_outbox where vid = 'otmena_podpiski' and created_at < now() - interval '7 days'`);
+    // Убранные из чата сообщения помнить незачем дольше, чем ушедшие
+    // уведомления: паролей в строке нет, а разбор беды идёт по журналу.
+    await zapros(`delete from tg_s_parolem where ubrano_at is not null and ubrano_at < now() - interval '14 days'`);
   } catch (e) {
     log.error('уборка не прошла', { text: String((e as Error).message) });
   }
+  /* ⚠️ СООБЩЕНИЯ С ПАРОЛЕМ УХОДЯТ ИЗ ЧАТА В ЭТОТ ЖЕ ЧАС, СРАЗУ ПОСЛЕ
+     СТИРАНИЯ (пятидесятая итерация, Р-161): срок у них тот же, что
+     у пароля на сайте, и решает его тот же `secrets_wiped_at`. Своё
+     `try` — упавший Telegram не должен отменять ни стирание выше,
+     ни напоминания ниже. */
+  await ubratSoobshcheniyaSParolem();
   /* ⚠️ НАПОМИНАНИЯ ЕДУТ НА ТОМ ЖЕ БУДИЛЬНИКЕ, а не на своём —
      прямое требование постановки, и оно разумно: заводить второй
      таймер ради письма, которое уходит раз в три месяца на заказ,

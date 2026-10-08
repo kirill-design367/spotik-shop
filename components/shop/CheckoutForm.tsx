@@ -10,6 +10,7 @@ import { parolNeGoditsya, pochtaNeVerna, PRAVILO_PAROLYA } from '@/lib/proverka'
 import { CHASY_SLOVAMI } from '@/lib/chasy';
 import { useUhodNaOplatu } from './uhod';
 import EgipetPlashka from '@/components/EgipetPlashka';
+import { VPN_OPLATA_TEKST } from '@/lib/plans';
 
 export type SrokVybor = {
   period: number;
@@ -445,10 +446,7 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
             панели, углы скруглены общим токеном, красного и значка
             тревоги нет вовсе — это подсказка, а не ошибка. */}
         {kOplate > 0 ? (
-          <p className="panel__note panel__note--plate">
-            Если у вас включён VPN, выключите его на время оплаты — банк может не
-            пропустить платёж.
-          </p>
+          <p className="panel__note panel__note--plate">{VPN_OPLATA_TEKST}</p>
         ) : null}
 
         <button type="submit" className="btn btn--wide" disabled={idyot || uhodim || cena <= 0}>

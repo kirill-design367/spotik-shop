@@ -491,9 +491,16 @@ console.log('── СТАТИСТИКА: ПЕРИОД, ДОСТУП ИСПОЛ�
 {
   await admin.goto(`http://localhost:${PORT}/admin/stats/`, { waitUntil: 'networkidle' });
   const svod = (await admin.textContent('body')) ?? '';
+  /* ⚠️ С ПЯТИДЕСЯТОЙ ИТЕРАЦИИ ВЕРХНЯЯ КАРТОЧКА СЧИТАЕТ ВЫПОЛНЕННЫЕ
+     ПО ДАТЕ ВЫПОЛНЕНИЯ (вопрос 106), и заказ с отменённой подпиской
+     в ней есть (вопрос 107). Запрос ниже — свой, отдельный от
+     страницы (Р-47): «выполнен» здесь значит `done` или строку
+     в `sub_cancel`, ровно как сказано в решении. */
   const vyr = await p2.query(
     `select coalesce(sum(money_kop), 0)::text as kop, count(*)::text as n
-       from shop_order where paid_at is not null and paid_at > now() - interval '1 day'`,
+       from shop_order o
+      where (o.status = 'done' or exists (select 1 from sub_cancel t where t.order_id = o.id))
+        and o.closed_at > now() - interval '1 day'`,
   );
   const rub = (Number(vyr.rows[0].kop) / 100).toLocaleString('ru-RU').replace(/\u00a0/g, ' ');
   chk('раздел открылся', /Статистика/.test(svod));
@@ -513,8 +520,9 @@ console.log('── СТАТИСТИКА: ПЕРИОД, ДОСТУП ИСПОЛ�
   const segodnya = (await p2.query('select current_date::text as d')).rows[0].d;
   const zaDen = await p2.query(
     `select count(*)::text as n, coalesce(sum(money_kop), 0)::text as kop
-       from shop_order
-      where paid_at is not null and paid_at >= $1::date and paid_at < ($1::date + 1)`,
+       from shop_order o
+      where (o.status = 'done' or exists (select 1 from sub_cancel t where t.order_id = o.id))
+        and o.closed_at >= $1::date and o.closed_at < ($1::date + 1)`,
     [segodnya],
   );
   await admin.goto(`http://localhost:${PORT}/admin/stats/?ot=${segodnya}`, { waitUntil: 'networkidle' });
@@ -976,7 +984,9 @@ console.log('── ПОДСКАЗКА ПРО VPN ──');
      ⚠️ ТАРИФ ВЗЯТ ЗАВЕДОМО ДОРОЖЕ БАЛАНСА: при полной оплате
      с баланса банка в деле нет вовсе, и подсказки там быть
      не должно — это отступление названо в Р-108. */
-  const VPN = /Если у вас включён VPN, выключите его на время оплаты/;
+  /* ⚠️ ТЕКСТ — С ПЯТИДЕСЯТОЙ ИТЕРАЦИИ (вопрос 108): «На время оплаты
+     выключите VPN». Проверки ниже прежние, сменилась только строка. */
+  const VPN = /На время оплаты выключите VPN/;
   await klient.goto(`http://localhost:${PORT}/checkout/?plan=duo&period=12`, { waitUntil: 'networkidle' });
   const tk = ((await klient.textContent('body')) ?? '').replace(/\s+/g, ' ');
   chk('подсказка про VPN стоит в оформлении', VPN.test(tk));
@@ -1000,7 +1010,7 @@ console.log('── ПОДСКАЗКА ПРО VPN ──');
      сравнивал 0.23 с 33 и падал на исправной плашке. Холст приводит
      любую запись к одному виду. */
   const plashka = await klient.evaluate(() => {
-    const p = [...document.querySelectorAll('p')].find((e) => /включён VPN/.test(e.textContent ?? ''));
+    const p = [...document.querySelectorAll('p')].find((e) => /выключите VPN/.test(e.textContent ?? ''));
     if (!p) return null;
     const cv = document.createElement('canvas');
     cv.width = 1;
@@ -1041,7 +1051,7 @@ console.log('── ПОДСКАЗКА ПРО VPN ──');
   const tf = ((await klient.textContent('body')) ?? '').replace(/\s+/g, ' ');
   chk('и на странице неудачной оплаты, рядом с возвратом', VPN.test(tf) && /В личный кабинет/.test(tf));
   const plashka2 = await klient.evaluate(() => {
-    const p = [...document.querySelectorAll('p')].find((e) => /включён VPN/.test(e.textContent ?? ''));
+    const p = [...document.querySelectorAll('p')].find((e) => /выключите VPN/.test(e.textContent ?? ''));
     if (!p) return null;
     const cv = document.createElement('canvas');
     cv.width = 1;
@@ -2616,9 +2626,11 @@ console.log('── ИСТОРИЯ РАБОТЫ: ДВА СОТРУДНИКА, П
       Number(strokaAdmin[3]) === otmenilPoBaze.rows[0].n,
     strokaAdmin ? `${strokaAdmin[3]} против ${otmenilPoBaze.rows[0].n}` : 'строки нет');
 
-  /** Сумма чисел в разбивке вида «Имя — 2 · Имя — 1». */
+  /** Сумма чисел в разбивке вида «Имя — 2 (1 мес — 2 шт) · Имя — 1 (3 мес — 1 шт)».
+   *  ⚠️ С ПЯТИДЕСЯТОЙ ИТЕРАЦИИ У ТАРИФА В СКОБКАХ ИДУТ СРОКИ, и число
+   *  тарифа — ПЕРВОЕ после тире, а не последнее в куске. */
   const summaRazbivki = (t) =>
-    (t ?? '').split('·').reduce((a, x) => a + Number((x.match(/—\s*(\d+)\s*$/) ?? [])[1] ?? 0), 0);
+    (t ?? '').split('·').reduce((a, x) => a + Number((x.match(/^[^—]*—\s*(\d+)/) ?? [])[1] ?? 0), 0);
   chk('разбивка отмен по тарифам сходится с самим числом',
     Boolean(strokaAdmin) && /Индивидуальный — \d+/.test(strokaAdmin[4] ?? '') &&
       summaRazbivki(strokaAdmin[4]) === Number(strokaAdmin[3]),

@@ -1,5 +1,6 @@
 import '../../shop.css';
 import type { Metadata } from 'next';
+import { VPN_OPLATA_TEKST } from '@/lib/plans';
 
 export const metadata: Metadata = { title: 'Оплата не прошла — Spotik Shop', robots: { index: false, follow: false } };
 
@@ -16,10 +17,7 @@ export default function PayFail() {
           человек уже на неё наткнулся. См. CheckoutForm. Подложка
           здесь берётся от `--surface`: плашка лежит прямо на фоне
           страницы, а не внутри панели. */}
-      <p className="panel__note panel__note--plate">
-        Если у вас включён VPN, выключите его на время оплаты — банк может не
-        пропустить платёж.
-      </p>
+      <p className="panel__note panel__note--plate">{VPN_OPLATA_TEKST}</p>
       {/* Та же пара кнопок, что на успешной странице: вернуться
           на сайт со страницы оплаты нечем, кроме этой ссылки. */}
       <div className="page__knopki">

@@ -46,6 +46,27 @@ export type StrokaTarifa = { planId: string; period: number; zakazov: number; vy
 export type StrokaIstochnika = { istochnik: string | null; zakazov: number; dolya: number };
 
 /**
+ * Тариф в разбивке по сотруднику — С РАЗБИВКОЙ ПО СРОКАМ ВНУТРИ.
+ *
+ * ⚠️ ПОСТАНОВКА ПЯТИДЕСЯТОЙ ИТЕРАЦИИ: «По колонке „Выполнил
+ * по тарифам" Лев считает зарплату, поэтому внутри каждого тарифа
+ * нужна разбивка по срокам». Сроки идут СЫРЫМ числом месяцев,
+ * а словами их делает страница — она знает язык (Р-139).
+ *
+ * ⚠️ ЧИСЛО У ТАРИФА — СУММА ЕГО СРОКОВ, И СКЛАДЫВАЕТСЯ ОНО ЗДЕСЬ ЖЕ,
+ * а не отдельным запросом: два запроса прочли бы журнал в разные
+ * мгновения, и «Индивидуальный — 14» разошлось бы с «12 + 2» на
+ * границе периода. По этой строке считают деньги, и расхождение
+ * в ней было бы самым дорогим на всём экране.
+ */
+export type TarifSotrudnika = {
+  planId: string;
+  zakazov: number;
+  /** По срокам, от короткого к длинному: 1, 3, 6, 12. */
+  sroki: { period: number; zakazov: number }[];
+};
+
+/**
  * СКОЛЬКО СДЕЛАЛ КАЖДЫЙ СОТРУДНИК за выбранный период.
  *
  * ⚠️ СЧИТАЮТСЯ СОБЫТИЯ ЖУРНАЛА, А НЕ ЗАКАЗЫ ПО `operator_id`.
@@ -72,12 +93,12 @@ export type StrokaIstochnika = { istochnik: string | null; zakazov: number; doly
 export type StrokaSotrudnika = {
   email: string;
   zakazov: number;
-  /** Разбивка ВЫПОЛНЕННЫХ по тарифам; `planId` сырой — переводит страница. */
-  tarify: { planId: string; zakazov: number }[];
+  /** Разбивка ВЫПОЛНЕННЫХ по тарифам и срокам; `planId` сырой — переводит страница. */
+  tarify: TarifSotrudnika[];
   /** Сколько заказов сотрудник ОТМЕНИЛ за тот же период. */
   otmen: number;
-  /** Разбивка ОТМЕНЁННЫХ по тарифам; `planId` сырой — переводит страница. */
-  tarifyOtmen: { planId: string; zakazov: number }[];
+  /** Разбивка ОТМЕНЁННЫХ по тарифам и срокам — в том же виде. */
+  tarifyOtmen: TarifSotrudnika[];
 };
 
 export type BystryPeriod = 'day' | 'week' | 'month';
@@ -102,7 +123,14 @@ export const BYSTRYE: { kluch: BystryPeriod; sql: string }[] = [
  * заказа (Р-148) и у выручки (Р-155).
  */
 export type Obshchee = {
-  /** Оплаченные заказы за период (по дате оплаты) — как было. */
+  /**
+   * ВЫПОЛНЕННЫЕ заказы за период, по дате выполнения, и выручка
+   * с них (пятидесятая итерация, вопрос 106). Прежде здесь стояли
+   * ОПЛАЧЕННЫЕ по дате оплаты, и сумма таблицы ниже расходилась
+   * с карточкой законно, но непонятно. Теперь обе величины
+   * складываются из той же разбивки, что и таблица тарифов, и
+   * разойтись им нечем.
+   */
   zakazov: number;
   vyruchkaKop: number;
   vOcheredi: number;
@@ -182,6 +210,30 @@ function granicy(
 }
 
 /**
+ * ЧТО СЧИТАЕТСЯ ВЫПОЛНЕННЫМ ЗАКАЗОМ В СТАТИСТИКЕ — ОДНО УСЛОВИЕ
+ * НА ВЕСЬ ЭКРАН.
+ *
+ * ⚠️ ЗАКАЗ С ОТМЕНЁННОЙ ПОДПИСКОЙ ЗДЕСЬ СЧИТАЕТСЯ, И ЭТО РЕШЕНИЕ
+ * ЗАКАЗЧИКА (пятидесятая итерация, вопрос 107): «Заказ с отменённой
+ * подпиской считай в выручке: деньги остались у сервиса». У такого
+ * заказа статус `cancelled` (Р-160), но он был выполнен: задача
+ * «Отмена подписки» заводится ТОЛЬКО у выполненного, а `closed_at`
+ * при отмене не трогается — то есть дата выполнения у него та же,
+ * что была. Узнаётся он по строке `sub_cancel`, а не по статусу:
+ * `cancelled` без неё — это отмена ДО выполнения, с деньгами
+ * на балансе, и её здесь быть не должно.
+ *
+ * ⚠️ ОДНА СТРОКА НА ТРИ ЗАПРОСА — таблицу тарифов (она же верхняя
+ * карточка), источники и среднее время. Разнеси её по трём — и на
+ * четвёртой правке одна из таблиц снова молча перестанет видеть
+ * отменённые подписки. Блок «По сотрудникам» их видел и раньше:
+ * он считает по журналу, а событие «выполнил» у такого заказа
+ * никуда не делось.
+ */
+const VYPOLNEN = `(o.status = 'done' or exists (select 1 from sub_cancel sc where sc.order_id = o.id))
+        and o.closed_at is not null`;
+
+/**
  * Сводка за период.
  *
  * `kto` — кто спрашивает: администратор видит весь сервис, оператор —
@@ -206,9 +258,9 @@ export async function svodka(p: Period, kto: { admin: boolean; staffId: number }
      у которых сотрудника нет вовсе: код выдаёт сервер, и событие
      «выполнил» у них не пишется.
 
-     ⚠️ ЗАКАЗ С ОТМЕНЁННОЙ ПОДПИСКОЙ СЮДА НЕ ПОПАДАЕТ: он помечен
-     «Отменён» (пункт 9), и статус его `cancelled`, хотя деньги
-     остались у нас. Это названо в отчёте как вопрос заказчику.
+     ⚠️ ЗАКАЗ С ОТМЕНЁННОЙ ПОДПИСКОЙ СЮДА ПОПАДАЕТ с пятидесятой
+     итерации — решение заказчика: «деньги остались у сервиса».
+     Условие одно на весь экран — `VYPOLNEN` выше.
 
      ⚠️ У ОПЕРАТОРА — ТОЛЬКО ЕГО ВЫПОЛНЕННЫЕ, И ОТБОР ИДЁТ ПО ЖУРНАЛУ:
      «по почте, с которой он вошёл» — это номер сотрудника в событии
@@ -232,7 +284,7 @@ export async function svodka(p: Period, kto: { admin: boolean; staffId: number }
       admin ? ', coalesce(sum(o.money_kop), 0)::text as kop' : ', null as kop'
     }
        from shop_order o
-      where o.status = 'done' and o.closed_at is not null and ${gz.uslovie}${svoi.uslovie}
+      where ${VYPOLNEN} and ${gz.uslovie}${svoi.uslovie}
       group by o.plan_id, o.period
       order by count(*) desc, o.plan_id, o.period`,
     [...gz.params, ...svoi.params],
@@ -252,13 +304,13 @@ export async function svodka(p: Period, kto: { admin: boolean; staffId: number }
     return { obshchee: null, vypolneno, tarify, poSotrudnikam: null, istochniki: null };
   }
 
-  const g = granicy(p);
-  const itog = await odna<{ n: string; kop: string }>(
-    `select count(*)::text as n, coalesce(sum(money_kop), 0)::text as kop
-       from shop_order
-      where paid_at is not null and ${g.uslovie}`,
-    g.params,
-  );
+  /* ⚠️ ВЕРХНЯЯ КАРТОЧКА — ЭТО ИТОГ ТАБЛИЦЫ ТАРИФОВ, А НЕ СВОЙ ЗАПРОС
+     (пятидесятая итерация, вопрос 106): «Верхнюю карточку „Заказов /
+     Выручка" переведи на выполненные заказы по дате выполнения, как
+     таблицу ниже». Отдельный запрос с тем же условием считал бы то же
+     множество в другое мгновение и разошёлся бы с таблицей на границе
+     периода; сумма разбивки не может с ней разойтись по построению. */
+  const vyruchkaKop = tarify.reduce((a, r) => a + (r.vyruchkaKop ?? 0), 0);
 
   const och = await odna<{ n: string }>(
     `select count(*)::text as n from shop_order where status in ('paid', 'in_work')`,
@@ -269,11 +321,11 @@ export async function svodka(p: Period, kto: { admin: boolean; staffId: number }
      а подставлять «сейчас» значило бы считать незаконченную работу
      законченной. Период здесь берётся по ЗАКРЫТИЮ: вопрос «сколько
      мы делали заказы за эти дни», а не «когда их оплатили». */
-  const gc = granicy(p, 'closed_at');
+  const gc = granicy(p, 'o.closed_at');
   const sr = await odna<{ min: string | null }>(
-    `select round(avg(extract(epoch from (closed_at - paid_at)) / 60))::text as min
-       from shop_order
-      where status = 'done' and paid_at is not null and closed_at is not null and ${gc.uslovie}`,
+    `select round(avg(extract(epoch from (o.closed_at - o.paid_at)) / 60))::text as min
+       from shop_order o
+      where ${VYPOLNEN} and o.paid_at is not null and ${gc.uslovie}`,
     gc.params,
   );
 
@@ -298,7 +350,7 @@ export async function svodka(p: Period, kto: { admin: boolean; staffId: number }
   const ist = await zapros<{ utm_source: string | null; n: string }>(
     `select o.utm_source, count(*)::text as n
        from shop_order o
-      where o.status = 'done' and o.closed_at is not null and ${gz.uslovie}
+      where ${VYPOLNEN} and ${gz.uslovie}
       group by o.utm_source
       order by count(*) desc`,
     gz.params,
@@ -325,28 +377,49 @@ export async function svodka(p: Period, kto: { admin: boolean; staffId: number }
      свои глаголы в журнале — `otmena_zaproshena` и `podpiska_otmenena`,
      — а «Отменил» здесь значит отмену ДО выполнения, с деньгами
      на балансе. */
-  const rows = await zapros<{ email: string; plan_id: string; vid: string; n: string }>(
-    `select f.email, o.plan_id, e.vid, count(*)::text as n
+  /* ⚠️ СРОК ЕДЕТ В ГРУППИРОВКУ ТЕМ ЖЕ ЗАПРОСОМ (пятидесятая
+     итерация): разбивка по срокам и число у тарифа складываются
+     из одних и тех же строк ниже, и разойтись им нечем. */
+  const rows = await zapros<{ email: string; plan_id: string; period: number; vid: string; n: string }>(
+    `select f.email, o.plan_id, o.period, e.vid, count(*)::text as n
        from order_event e
        join staff f on f.id = e.staff_id
        join shop_order o on o.id = e.order_id
       where e.vid in ('vypolnil', 'otmenil') and ${gs.uslovie}
-      group by f.email, o.plan_id, e.vid
-      order by f.email, count(*) desc, o.plan_id`,
+      group by f.email, o.plan_id, o.period, e.vid`,
     gs.params,
   );
   const po = new Map<string, StrokaSotrudnika>();
+  const dobavit = (spisok: TarifSotrudnika[], planId: string, period: number, n: number) => {
+    let t = spisok.find((x) => x.planId === planId);
+    if (!t) {
+      t = { planId, zakazov: 0, sroki: [] };
+      spisok.push(t);
+    }
+    t.zakazov += n;
+    t.sroki.push({ period, zakazov: n });
+  };
   for (const r of rows) {
     const n = Number(r.n);
     const est = po.get(r.email) ?? { email: r.email, zakazov: 0, tarify: [], otmen: 0, tarifyOtmen: [] };
     if (r.vid === 'otmenil') {
       est.otmen += n;
-      est.tarifyOtmen.push({ planId: r.plan_id, zakazov: n });
+      dobavit(est.tarifyOtmen, r.plan_id, Number(r.period), n);
     } else {
       est.zakazov += n;
-      est.tarify.push({ planId: r.plan_id, zakazov: n });
+      dobavit(est.tarify, r.plan_id, Number(r.period), n);
     }
     po.set(r.email, est);
+  }
+  /* Порядок: тарифы — от большего числа к меньшему (как было), сроки
+     внутри — от короткого к длинному, как в постановке: «1 мес —
+     12 шт, 3 мес — 2 шт». Сортируется здесь, а не в запросе: порядок
+     тарифов зависит от СУММЫ сроков, а её запрос не знает. */
+  for (const s of po.values()) {
+    for (const spisok of [s.tarify, s.tarifyOtmen]) {
+      spisok.sort((a, b) => b.zakazov - a.zakazov || a.planId.localeCompare(b.planId));
+      for (const t of spisok) t.sroki.sort((a, b) => a.period - b.period);
+    }
   }
   /* ⚠️ ПОРЯДОК ДЕРЖИТСЯ ВЫПОЛНЕННЫМИ, А НЕ СУММОЙ СОБЫТИЙ: таблица
      отвечает на вопрос «сколько сделал каждый». */
@@ -356,8 +429,8 @@ export async function svodka(p: Period, kto: { admin: boolean; staffId: number }
 
   return {
     obshchee: {
-      zakazov: Number(itog?.n ?? 0),
-      vyruchkaKop: Number(itog?.kop ?? 0),
+      zakazov: vypolneno,
+      vyruchkaKop,
       vOcheredi: Number(och?.n ?? 0),
       srednyayaMinut: sr?.min == null ? null : Number(sr.min),
       sertifikatovKupleno: Number(sert?.kupleno ?? 0),
