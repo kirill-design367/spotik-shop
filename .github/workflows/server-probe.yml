@@ -573,6 +573,36 @@ jobs:
               esac
             done
 
+            # ⚠️ КОНТРОЛЬ: «НЕ ДОТЯНУЛИСЬ ДО ЯНДЕКСА» — ЕЩЁ НЕ ДИАГНОЗ.
+            # Тот же отказ даёт и хостинг, закрывший исходящий порт, —
+            # поэтому рядом спрашиваются другой порт Яндекса и чужие
+            # почтовые узлы. Отказывают все — дело в нас; один Яндекс —
+            # в Яндексе. То же правило, что у домена (вопрос 88).
+            echo
+            echo "-- контроль: другой порт Яндекса и чужие почтовые узлы --"
+            proba() {
+              for fam in 4 6; do
+                t0=$(date +%s%N)
+                if [ "$4" = yavny ]; then
+                  o=$( (sleep 3; printf 'QUIT\r\n') | timeout 15 openssl s_client -"$fam" -connect "$2:$3" -servername "$2" -quiet 2>"$d/k" | head -1)
+                else
+                  o=$( (sleep 3; printf 'QUIT\r\n') | timeout 15 openssl s_client -"$fam" -starttls smtp -connect "$2:$3" -servername "$2" -quiet 2>"$d/k" | head -1)
+                fi
+                ms=$(( ($(date +%s%N) - t0) / 1000000 ))
+                k=$(printf '%s' "$o" | cut -c1-3)
+                case "$k" in
+                  2[0-9][0-9]) echo "  $1, IPv$fam: TLS поднят, ответ $k" ;;
+                  '') echo "  $1, IPv$fam: НЕТ за ${ms} мс — $(grep -o -m1 -E 'Connection refused|Connection timed out|No route to host|Network is unreachable|Name or service not known|no address|gethostbyname failure|Name does not resolve' "$d/k" || echo 'обрыв без причины')" ;;
+                  *) echo "  $1, IPv$fam: ответ «$k»" ;;
+                esac
+              done
+            }
+            proba "Яндекс, порт 587 (STARTTLS)" "$SH" 587 starttls
+            proba "Яндекс .com, порт 465" smtp.yandex.com 465 yavny
+            proba "Mail.ru, порт 465" smtp.mail.ru 465 yavny
+            proba "Gmail, порт 465" smtp.gmail.com 465 yavny
+            proba "Gmail, порт 587 (STARTTLS)" smtp.gmail.com 587 starttls
+
             echo
             echo "-- пускает ли узел нашим логином (тот же nodemailer, только verify) --"
             NM=/srv/spotik/current/node_modules/nodemailer
@@ -603,8 +633,18 @@ jobs:
             (err) => console.log(`СБОЙ за ${Date.now() - t0} мс · вид ${err.code || '—'} · код ${err.responseCode || 0} · шаг ${err.command || '—'} · ${String(err.response || err.message || err).replace(/\s+/g, ' ').slice(0, 220)}`),
           );
           JS
+              # Тот же логин на порту 587 со STARTTLS: если Яндекс закрыл
+              # только 465, переезд — это смена двух секретов, а не ящика.
+              grep -v -E '^SMTP_(PORT|SECURE)=' "$d/smtp.env" > "$d/smtp587.env"
+              printf 'SMTP_PORT=587\nSMTP_SECURE=0\n' >> "$d/smtp587.env"
+              itog587=$(timeout 60 node "$d/verify.js" "$NM" "$d/smtp587.env" 2>&1 | tail -1)
+              echo "на порту 587 (STARTTLS): $itog587"
+              case "$itog587" in
+                OK*) echo "::notice::почта: на порту 587 со STARTTLS узел пускает нашим логином" ;;
+                *)   echo "::warning::почта: и на порту 587 узел не пускает — ${itog587}" ;;
+              esac
               itog=$(timeout 60 node "$d/verify.js" "$NM" "$d/smtp.env" 2>&1 | tail -1)
-              echo "$itog"
+              echo "на рабочем порту: $itog"
               case "$itog" in
                 OK*) echo "::notice::почта: узел пускает нашим логином (соединение, TLS, AUTH) — ${itog#OK }" ;;
                 *)   echo "::error::почта: узел НЕ пускает — ${itog}" ;;
