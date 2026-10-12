@@ -3,6 +3,7 @@
 import { useActionState } from 'react';
 import { deystviePrositKod, deystvieVoyti, type Otvet } from '@/lib/server/actions-client';
 import { BEZ_ZAPISI } from '@/lib/metrika';
+import PochtaPlashka from '@/components/PochtaPlashka';
 
 /**
  * Вход по коду на почту. Паролей нет вовсе.
@@ -31,6 +32,10 @@ export default function LoginBox({ next, zagolovok }: { next: string; zagolovok?
 
       {!kodZaproshen ? (
         <form action={prositKod}>
+          {/* ⚠️ ТАБЛИЧКА ПРО ПОЧТУ — НАД ПОЛЕМ, только на шаге ввода
+              почты (Р-165): на шаге кода почта уже введена, и там
+              стоит своя строка про «Спам». */}
+          <PochtaPlashka />
           <label className="field">
             <span className="field__label">Почта</span>
             <input type="email" name="email" required autoComplete="email" className={BEZ_ZAPISI} defaultValue={email} placeholder="you@example.com" />

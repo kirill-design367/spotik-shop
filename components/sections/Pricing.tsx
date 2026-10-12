@@ -5,6 +5,7 @@ import SectionHead from './SectionHead';
 import VyborTarifa, { type KartaTarifa } from '@/components/mid/VyborTarifa';
 import { DARIMYE, EGIPET_PO_UMOLCHANIYU, PERIODS, formatPrice, type PeriodKey } from '@/lib/plans';
 import EgipetPlashka from '@/components/EgipetPlashka';
+import PochtaPlashka from '@/components/PochtaPlashka';
 
 /**
  * ⚠️ СОСТАВ ТАРИФОВ ПО-ПРЕЖНЕМУ В `lib/plans.ts`, А ЦЕНЫ ПРИХОДЯТ
@@ -236,6 +237,11 @@ export default function Pricing({
               Оформить за {formatPrice(cena?.rub ?? 0)} ₽
             </a>
             <EgipetPlashka pokaz={egipetskaya} />
+            {/* ⚠️ ТАБЛИЧКА ПРО ПОЧТУ — ПОСЛЕ ЕГИПЕТСКОЙ, а не перед
+                кнопкой: египетская появляется и уходит, и стой табличка
+                выше неё, кнопка ездила бы вниз-вверх при смене срока
+                (Р-165). */}
+            <PochtaPlashka />
           </div>
 
           {/* ⚠️ СЕРТИФИКАТ УШЁЛ ИЗ СЕТКИ, И ЗДЕСЬ ОСТАЁТСЯ ОДНА СТРОКА

@@ -2445,7 +2445,8 @@
 }
 .egipet[data-on] { grid-template-rows: 1fr; opacity: 1; }
 .egipet__nutro { min-height: 0; overflow: hidden; }
-.plashka-egipet {
+.plashka-egipet,
+.plashka-pochta {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -2459,13 +2460,23 @@
   line-height: 1.45;
   text-align: left;
 }
-.plashka-egipet svg { flex: none; color: var(--green); }
+.plashka-egipet svg,
+.plashka-pochta svg { flex: none; color: var(--green); }
+/* ── ТАБЛИЧКА ПРО ПОЧТУ (Р-165) ─────────────────────────────────────────
+   Тот же вид, что у египетской, — общим правилом выше, а не копией.
+   Показывается всегда, поэтому схлопывающейся обёртки у неё нет;
+   текст — абзацем, чтобы у знака и текста было одно выравнивание
+   по первой строке на узком экране. */
+.plashka-pochta { align-items: flex-start; }
+.plashka-pochta p { margin: 0; }
+.plashka-pochta svg { margin-top: -1px; }
 /* На главной плашка стоит под кнопкой, по центру, шириной с плашки
    выбора аккаунта. Обёртка растянута на колонку `.order`, иначе
    проценты ширины кнопки и плашки считались бы от неё самой. */
 .order__knopka { justify-self: stretch; display: grid; justify-items: center; }
 .order .egipet { width: min(100%, 420px); }
 .order .plashka-egipet { margin-top: 12px; }
+.order .plashka-pochta { width: min(100%, 420px); margin-top: 12px; }
 @media (prefers-reduced-motion: reduce) {
   .egipet { transition: none; }
 }

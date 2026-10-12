@@ -1178,10 +1178,12 @@ console.log('── СКРУГЛЁННЫЕ УГЛЫ В РАЗДЕЛЕ, И ЛЕН
          на лендинге не завелось.
          ⚠️ `.plashka-egipet` ДОБАВЛЕНА В СОРОК ДЕВЯТОЙ ПОСТАНОВКОЙ:
          «визуально — как плашка про рабочее время», а та живёт
-         на `--ui-r` раздела. Это исключение названо в Р-158. */
+         на `--ui-r` раздела. Это исключение названо в Р-158.
+         ⚠️ `.plashka-pochta` — ТАБЛИЧКА ПРО ПОЧТУ (пятьдесят первая,
+         Р-165): тот же вид общим правилом, тот же `--ui-r`. */
       if (
         el.closest(
-          '.btn, .seg, .seg__btn, .opt, .card, .cards__glow, .burger, .menu, .rstep__wave, .route__node, .pd__knopka, .plashka-egipet',
+          '.btn, .seg, .seg__btn, .opt, .card, .cards__glow, .burger, .menu, .rstep__wave, .route__node, .pd__knopka, .plashka-egipet, .plashka-pochta',
         )
       )
         continue;
