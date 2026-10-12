@@ -82,6 +82,35 @@ export const env = {
     return flag('SMTP_SECURE', false);
   },
 
+  /* ⚠️ ЗАПАСНОЙ ЯЩИК У ДРУГОГО ПОЧТОВОГО СЕРВИСА, И ЭТО ЕГО СМЫСЛ.
+     11 октября 2026 года почтовый узел Яндекса перестал принимать
+     соединения с нашего сервера на всех портах, и вход на сайт
+     закрылся для всех, кто не вошёл раньше: код входа ходит только
+     письмом (Р-164). Второй ящик у того же Яндекса упал бы вместе
+     с первым. Пустой SMTP_RESERVE_HOST значит «запасного нет». */
+  get smtpReserveHost() {
+    return str('SMTP_RESERVE_HOST');
+  },
+  get smtpReservePort() {
+    return chislo('SMTP_RESERVE_PORT', 465);
+  },
+  get smtpReserveUser() {
+    return str('SMTP_RESERVE_USER');
+  },
+  get smtpReservePass() {
+    return str('SMTP_RESERVE_PASS');
+  },
+  get smtpReserveFrom() {
+    // Почтовые сервисы пускают в «От кого» только тот ящик, которым
+    // вошли: без своего SMTP_RESERVE_FROM письмо идёт от него же.
+    const user = str('SMTP_RESERVE_USER');
+    return str('SMTP_RESERVE_FROM', user ? `Spotik Shop <${user}>` : '');
+  },
+  get smtpReserveSecure() {
+    // 465 — неявный TLS у всех крупных почтовых сервисов.
+    return flag('SMTP_RESERVE_SECURE', chislo('SMTP_RESERVE_PORT', 465) === 465);
+  },
+
   /* ── Робокасса ─────────────────────────────────────────────── */
   get rkLogin() {
     return str('ROBOKASSA_LOGIN');

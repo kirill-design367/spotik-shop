@@ -92,6 +92,26 @@ jobs:
           curl -sSk -o /dev/null -w '  https://АДРЕС/ -> %{http_code}\n' --max-time 20 \
             -H 'Host: spotik.shop' "https://${{ secrets.SSH_HOST }}/" || echo "  по адресу https не ответил"
 
+      # ⚠️ ВТОРОЙ КОНТРОЛЬ ПОЧТЫ — С РАННЕРА, ТО ЕСТЬ НЕ ИЗ РОССИИ.
+      # С нашего сервера Яндекс может отказывать по двум разным причинам:
+      # лежит сам узел — или он не пускает именно нас (наш адрес, сеть
+      # хостинга). Раннер стоит в чужой сети, и его ответ их различает.
+      - name: Почта Яндекса с раннера
+        if: always()
+        run: |
+          for port in 465 587; do
+            if [ "$port" = 465 ]; then
+              o=$( (sleep 3; printf 'QUIT\r\n') | timeout 15 openssl s_client -connect smtp.yandex.ru:$port -servername smtp.yandex.ru -quiet 2>/tmp/ys | head -1)
+            else
+              o=$( (sleep 3; printf 'QUIT\r\n') | timeout 15 openssl s_client -starttls smtp -connect smtp.yandex.ru:$port -servername smtp.yandex.ru -quiet 2>/tmp/ys | head -1)
+            fi
+            k=$(printf '%s' "$o" | cut -c1-3)
+            case "$k" in
+              2[0-9][0-9]) echo "Яндекс, порт $port, с раннера: TLS поднят, ответ $k" ;;
+              *) echo "Яндекс, порт $port, с раннера: НЕТ — $(grep -o -m1 -E 'Connection refused|Connection timed out|No route to host|Network is unreachable' /tmp/ys || echo 'обрыв без причины')" ;;
+            esac
+          done
+
       - name: Положить ключ
         env:
           KEY: ${{ secrets.SSH_KEY }}
@@ -649,19 +669,42 @@ jobs:
                 OK*) echo "::notice::почта: узел пускает нашим логином (соединение, TLS, AUTH) — ${itog#OK }" ;;
                 *)   echo "::error::почта: узел НЕ пускает — ${itog}" ;;
               esac
+              # ⚠️ ЗАПАСНОЙ ЯЩИК (Р-164) ПРОВЕРЯЕТСЯ ТЕМ ЖЕ verify, а не
+              # верой: он нужен ровно в тот день, когда основной лежит,
+              # и узнать, что он тоже не пускает, в этот день поздно.
+              RH=$(sed -n 's/^SMTP_RESERVE_HOST=//p' "$d/smtp.env" | head -1)
+              if [ -n "$RH" ]; then
+                RP=$(sed -n 's/^SMTP_RESERVE_PORT=//p' "$d/smtp.env" | head -1); RP=${RP:-465}
+                RS=$(sed -n 's/^SMTP_RESERVE_SECURE=//p' "$d/smtp.env" | head -1)
+                [ -n "$RS" ] || { [ "$RP" = 465 ] && RS=1 || RS=0; }
+                {
+                  printf 'SMTP_HOST=%s\nSMTP_PORT=%s\nSMTP_SECURE=%s\n' "$RH" "$RP" "$RS"
+                  sed -n 's/^SMTP_RESERVE_USER=/SMTP_USER=/p; s/^SMTP_RESERVE_PASS=/SMTP_PASS=/p' "$d/smtp.env"
+                } > "$d/zapas.env"
+                itogz=$(timeout 60 node "$d/verify.js" "$NM" "$d/zapas.env" 2>&1 | tail -1)
+                echo "запасной ящик: $itogz"
+                case "$itogz" in
+                  OK*) echo "::notice::почта: ЗАПАСНОЙ ящик пускает нашим логином — ${itogz#OK }" ;;
+                  *)   echo "::error::почта: запасной ящик НЕ пускает — ${itogz}" ;;
+                esac
+              else
+                echo "::warning::запасного почтового ящика нет: упадёт основной — закроется вход на сайт (Р-164)"
+              fi
             fi
           fi
 
           echo
           echo "-- журнал службы: коды входа и письма за 7 суток (время UTC) --"
           sudo journalctl -u spotik --since '-7 days' --no-pager -o cat 2>/dev/null \
-            | grep -E 'код входа выдан|письмо отправлено|письмо не ушло|ПИСЬМО \(SMTP не настроен' > "$d/j" || true
-          echo "по дням: кодов выдано · писем ушло · писем не ушло"
-          awk '{ den = substr($1, 1, 10); dni[den] = 1
-                 if ($0 ~ /код входа выдан/) k[den]++
-                 else if ($0 ~ /письмо отправлено/) ok[den]++
-                 else if ($0 ~ /письмо не ушло/) net[den]++ }
-               END { for (x in dni) printf "  %s  %4d · %4d · %4d\n", x, k[x], ok[x], net[x] }' "$d/j" | sort
+            | grep -E 'код входа выдан|код входа не доставлен|письмо отправлено|письмо не ушло|ПИСЬМО \(SMTP не настроен|почтовый ящик не отвечает|ящик снова принимает' > "$d/j" || true
+          echo "по дням: кодов запрошено · писем ушло (из них запасным) · писем не ушло"
+          awk '{ den = substr($1, 1, 10)
+                 if ($0 ~ /код входа (выдан|не доставлен)/) { k[den]++; dni[den] = 1 }
+                 else if ($0 ~ /письмо отправлено/) { ok[den]++; dni[den] = 1; if ($0 ~ /yashchik="запасной"/) z[den]++ }
+                 else if ($0 ~ /письмо не ушло/) { net[den]++; dni[den] = 1 } }
+               END { for (x in dni) printf "  %s  %4d · %4d (%d) · %4d\n", x, k[x], ok[x], z[x], net[x] }' "$d/j" | sort
+          echo "переключения ящиков:"
+          grep -E 'почтовый ящик не отвечает|ящик снова принимает' "$d/j" | tail -10 | cut -c1-200 | sed 's/^/  /' || true
           echo "почему не ушло (вид · код · шаг), раз:"
           grep 'письмо не ушло' "$d/j" \
             | sed -nE 's/.* vid="([^"]*)" kod=([0-9]+) shag="([^"]*)".*/\1 · \2 · \3/p' \

@@ -735,6 +735,12 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
           SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
+          SMTP_RESERVE_HOST: ${{ secrets.SMTP_RESERVE_HOST }}
+          SMTP_RESERVE_PORT: ${{ secrets.SMTP_RESERVE_PORT }}
+          SMTP_RESERVE_USER: ${{ secrets.SMTP_RESERVE_USER }}
+          SMTP_RESERVE_PASS: ${{ secrets.SMTP_RESERVE_PASS }}
+          SMTP_RESERVE_FROM: ${{ secrets.SMTP_RESERVE_FROM }}
+          SMTP_RESERVE_SECURE: ${{ secrets.SMTP_RESERVE_SECURE }}
           ROBOKASSA_LOGIN: ${{ secrets.ROBOKASSA_LOGIN }}
           ROBOKASSA_PASS1: ${{ secrets.ROBOKASSA_PASS1 }}
           ROBOKASSA_PASS2: ${{ secrets.ROBOKASSA_PASS2 }}
@@ -757,6 +763,11 @@ jobs:
           secure = os.environ.get('SMTP_SECURE', '').strip()
           if not secure and port:
               secure = '1' if port == '465' else '0'
+          # Запасной ящик (Р-164) — то же правило: 465 значит неявный TLS.
+          rport = os.environ.get('SMTP_RESERVE_PORT', '').strip()
+          rsecure = os.environ.get('SMTP_RESERVE_SECURE', '').strip()
+          if not rsecure and rport:
+              rsecure = '1' if rport == '465' else '0'
 
           # ⚠️ АЛГОРИТМ ХЕША ПРОВЕРЯЕМ ЗДЕСЬ, А НЕ НА СЕРВЕРЕ.
           # Приложение неизвестное значение молча заменяет на md5
@@ -783,6 +794,12 @@ jobs:
               ('SMTP_PASS', os.environ.get('SMTP_PASS', '')),
               ('SMTP_FROM', os.environ.get('SMTP_FROM', '').strip()),
               ('SMTP_SECURE', secure),
+              ('SMTP_RESERVE_HOST', os.environ.get('SMTP_RESERVE_HOST', '').strip()),
+              ('SMTP_RESERVE_PORT', rport),
+              ('SMTP_RESERVE_USER', os.environ.get('SMTP_RESERVE_USER', '').strip()),
+              ('SMTP_RESERVE_PASS', os.environ.get('SMTP_RESERVE_PASS', '')),
+              ('SMTP_RESERVE_FROM', os.environ.get('SMTP_RESERVE_FROM', '').strip()),
+              ('SMTP_RESERVE_SECURE', rsecure),
               ('ROBOKASSA_LOGIN', os.environ.get('ROBOKASSA_LOGIN', '').strip()),
               ('ROBOKASSA_PASS1', os.environ.get('ROBOKASSA_PASS1', '')),
               ('ROBOKASSA_PASS2', os.environ.get('ROBOKASSA_PASS2', '')),
@@ -950,6 +967,35 @@ jobs:
               echo "порт $shost:${sport:-465} с сервера открыт"
             else
               echo "порт $shost:${sport:-465} с сервера НЕ ОТКРЫТ — письма не уйдут"
+            fi
+          fi
+
+          # ⚠️ ЗАПАСНОЙ ЯЩИК (Р-164) — ТЕ ЖЕ ВЫВОДЫ, А НЕ ЗНАЧЕНИЯ.
+          # У чужих почтовых сервисов «От кого» обязан совпасть с ящиком
+          # входа так же, как у Яндекса; пустой SMTP_RESERVE_FROM приложение
+          # само собирает из логина, и тогда расходиться нечему.
+          rhost=$(znach SMTP_RESERVE_HOST)
+          if [ -z "$rhost" ]; then
+            echo "запасной ящик: НЕ задан — упадёт основной, и вход на сайт закроется (Р-164)"
+          else
+            for n in SMTP_RESERVE_HOST SMTP_RESERVE_PORT SMTP_RESERVE_USER SMTP_RESERVE_PASS SMTP_RESERVE_FROM SMTP_RESERVE_SECURE; do
+              echo "$n: $(est "$n")"
+            done
+            rport=$(znach SMTP_RESERVE_PORT); rpolz=$(znach SMTP_RESERVE_USER); rot=$(znach SMTP_RESERVE_FROM)
+            if [ -n "$rot" ]; then
+              radres=$(printf '%s' "$rot" | sed -n 's/.*<\(.*\)>.*/\1/p'); [ -n "$radres" ] || radres="$rot"
+              if [ "$(printf '%s' "$radres" | tr 'A-Z' 'a-z')" = "$(printf '%s' "$rpolz" | tr 'A-Z' 'a-z')" ]; then
+                echo "запасной: адрес в SMTP_RESERVE_FROM и SMTP_RESERVE_USER совпадают"
+              else
+                echo "запасной: адрес в SMTP_RESERVE_FROM и SMTP_RESERVE_USER РАСХОДЯТСЯ — почтовый сервис отвергнет письмо на шаге MAIL FROM"
+              fi
+            else
+              echo "запасной: SMTP_RESERVE_FROM пуст — письма пойдут от самого ящика входа"
+            fi
+            if timeout 10 bash -c "cat < /dev/null > /dev/tcp/$rhost/${rport:-465}" 2>/dev/null; then
+              echo "запасной: порт ${rport:-465} с сервера открыт"
+            else
+              echo "запасной: порт ${rport:-465} с сервера НЕ ОТКРЫТ — запасной ящик не поможет"
             fi
           fi
 

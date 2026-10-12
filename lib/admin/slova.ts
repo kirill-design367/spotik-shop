@@ -388,6 +388,14 @@ const S = {
   'e.not_staff': ['Этого адреса нет в списке сотрудников.', 'This address is not on the staff list.'],
   'e.often': ['Код только что отправлен. Попробуйте через минуту.', 'A code was just sent. Try again in a minute.'],
   'e.send_fail': ['Код отправить не вышло.', 'Could not send the code.'],
+  'e.mail_down': [
+    'Письмо с кодом не ушло: почта сейчас не отвечает. Попробуйте через пару минут.',
+    'The code email did not go out: mail is not responding right now. Try again in a couple of minutes.',
+  ],
+  'e.mail_addr': [
+    'Почта не приняла этот адрес. Проверьте, нет ли в нём опечатки.',
+    'Mail did not accept this address. Check it for a typo.',
+  ],
   'e.no_code': ['Для этого адреса кода нет. Запросите новый.', 'No code for this address. Request a new one.'],
   'e.wrong_code': ['Неверный код.', 'Wrong code.'],
   'e.attempts': ['Слишком много попыток. Запросите новый код.', 'Too many attempts. Request a new code.'],

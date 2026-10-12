@@ -108,7 +108,7 @@ export async function sotrudnikPoPochte(email: string): Promise<Sotrudnik | null
 
 export type OtvetNaKod =
   | { ok: true; testovyRezhim: boolean }
-  | { ok: false; pochemu: 'chasto' | 'ne_pochta' | 'ne_sotrudnik' | 'net_bazy' };
+  | { ok: false; pochemu: 'chasto' | 'ne_pochta' | 'ne_sotrudnik' | 'net_bazy' | 'pochta' | 'adres' };
 
 export async function poprositKod(vvodEmail: string, oblast: Oblast): Promise<OtvetNaKod> {
   const email = normPochta(vvodEmail);
@@ -139,13 +139,14 @@ export async function poprositKod(vvodEmail: string, oblast: Oblast): Promise<Ot
   }
 
   const kod = novyKodVhoda();
-  await zapros(
+  const zapis = await odna<{ id: string }>(
     `insert into login_code (email, scope, code_hash, expires_at)
-     values ($1, $2, $3, now() + ($4 || ' minutes')::interval)`,
+     values ($1, $2, $3, now() + ($4 || ' minutes')::interval)
+     returning id`,
     [email, oblast, otpechatok(kod), String(ZHIZN_KODA_MIN)],
   );
 
-  await otpravit({
+  const itog = await otpravit({
     komu: email,
     tema: oblast === 'staff' ? 'Spotik Shop — код входа в админку' : 'Spotik Shop — код входа',
     telo:
@@ -153,6 +154,21 @@ export async function poprositKod(vvodEmail: string, oblast: Oblast): Promise<Ot
       `Он действует ${ZHIZN_KODA_MIN} минут и годится для одного входа.\n` +
       `Если вход запрашивали не вы — просто не вводите код, ничего не произойдёт.\n`,
   });
+  /* ⚠️ НЕ УШЛО — ТАК И ГОВОРИМ, А КОД СНИМАЕМ. Прежде страница
+     переходила к вводу кода при любом исходе, и человек ждал письма,
+     которого не будет (11–12 октября 2026 года — девятнадцать раз
+     подряд, Р-164). Строка кода удаляется: войти ею всё равно нельзя,
+     а в лимит «раз в минуту, пять в час» она засчиталась бы, и
+     повторная попытка после починки почты упёрлась бы в него. Письма
+     при этом не ушло ни одного, так что лимит, который бережёт чужой
+     ящик от бомбёжки, тут защищать нечего. */
+  if (itog !== 'ushlo') {
+    if (zapis) await zapros('delete from login_code where id = $1', [zapis.id]);
+    log.warn('код входа не доставлен — строка кода снята', { to: pochtaVZhurnal(email), scope: oblast, itog });
+    // Отверг сам адрес — значит, скорее всего, опечатка, и «попробуйте
+    // через пару минут» было бы неправдой.
+    return { ok: false, pochemu: itog === 'adres' ? 'adres' : 'pochta' };
+  }
   log.info('код входа выдан', { to: pochtaVZhurnal(email), scope: oblast });
   return { ok: true, testovyRezhim: !env.smtpHost };
 }

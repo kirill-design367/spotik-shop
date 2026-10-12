@@ -85,6 +85,8 @@ export async function adminAskCode(_p: OtvetA, fd: FormData): Promise<OtvetA> {
       ne_sotrudnik: 'e.not_staff',
       chasto: 'e.often',
       net_bazy: 'o.no_db',
+      pochta: 'e.mail_down',
+      adres: 'e.mail_addr',
     };
     return { error: slova[r.pochemu] ?? 'e.send_fail', email };
   }
