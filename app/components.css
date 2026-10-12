@@ -2470,6 +2470,19 @@
 .plashka-pochta { align-items: flex-start; }
 .plashka-pochta p { margin: 0; }
 .plashka-pochta svg { margin-top: -1px; }
+/* Ссылка на поддержку в Telegram — единственная в табличке. Текст
+   плашки белый, поэтому ссылку отличает акцент и подчёркивание:
+   `--green` на её подложке даёт 5.7:1. На наведении — белый, то есть
+   меняется только цвет. */
+.plashka-pochta a {
+  color: var(--green);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .plashka-pochta a:hover { color: #fff; }
+}
 /* На главной плашка стоит под кнопкой, по центру, шириной с плашки
    выбора аккаунта. Обёртка растянута на колонку `.order`, иначе
    проценты ширины кнопки и плашки считались бы от неё самой. */
