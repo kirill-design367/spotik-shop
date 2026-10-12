@@ -496,6 +496,159 @@ jobs:
           SQL
           REMOTE
 
+      # ⚠️ ПОЧТА И ВХОД — СВОИМ ШАГОМ И ПРИ ЛЮБОМ ИСХОДЕ ПРЕЖНИХ.
+      # Вход на сайт держится на одном письме с кодом, и если почта
+      # молчит, сайт закрыт для всех, кто не вошёл раньше. Шаг отвечает
+      # на три вопроса порознь: дотягивается ли сервер до почтового
+      # узла (DNS, TCP, TLS — по IPv4 и IPv6 отдельно), пускает ли
+      # узел нашим логином (тот же nodemailer, что у службы, и ТОЛЬКО
+      # `verify()`: соединение, TLS и AUTH, письмо не уходит), и что
+      # за неделю на самом деле было с кодами входа — по журналу
+      # и по базе.
+      #
+      # ⚠️ УЗЕЛ, ПОРТ И ЛОГИН — СЕКРЕТЫ, И GITHUB ЗАМЕНИТ ИХ ЗВЁЗДОЧКАМИ.
+      # Поэтому печатаются ВЫВОДЫ («узел Яндекса», «порт неявного TLS»),
+      # а не значения. Пароль в командную строку не попадает: узел
+      # с логином и паролем едут в node ФАЙЛОМ с правами 600.
+      - name: Почта и вход
+        if: always()
+        env:
+          HOST: ${{ secrets.SSH_HOST }}
+          USER_NAME: ${{ secrets.SSH_USER }}
+        run: |
+          ssh -i ~/.ssh/id_deploy \
+              -o StrictHostKeyChecking=accept-new \
+              -o ConnectTimeout=20 \
+              -o BatchMode=yes \
+              "$USER_NAME@$HOST" 'bash -se' <<'REMOTE' \
+            | sed -E 's/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/…@…/g'
+          set -u
+          pid=$(systemctl show -p MainPID --value spotik 2>/dev/null || echo 0)
+          if [ "${pid:-0}" = 0 ]; then echo "::error::служба spotik не запущена"; exit 0; fi
+          echo "служба поднята: $(systemctl show -p ActiveEnterTimestamp --value spotik 2>/dev/null)"
+          okr() { tr '\0' '\n' < "/proc/$pid/environ"; }
+          umask 077
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          okr | grep -E '^SMTP_' > "$d/smtp.env" || true
+          SH=$(sed -n 's/^SMTP_HOST=//p' "$d/smtp.env" | head -1)
+          SP=$(sed -n 's/^SMTP_PORT=//p' "$d/smtp.env" | head -1); SP=${SP:-587}
+          SS=$(sed -n 's/^SMTP_SECURE=//p' "$d/smtp.env" | head -1)
+          echo
+          echo "-- почта у живой службы --"
+          if [ -z "$SH" ]; then
+            echo "::warning::SMTP_HOST у службы не задан — коды входа уходят в журнал, а не на почту"
+          else
+            case "$SH" in
+              smtp.yandex.ru|smtp.yandex.com) echo "узел: Яндекс 360" ;;
+              *) echo "узел: НЕ Яндекс" ;;
+            esac
+            case "$SS" in 1|true|yes|da|on|TRUE|True) TLS=yavny ;; *) TLS=starttls ;; esac
+            [ "$TLS" = yavny ] && echo "режим: неявный TLS с первого байта" || echo "режим: STARTTLS"
+            for n in SMTP_USER SMTP_PASS SMTP_FROM; do
+              grep -q "^$n=." "$d/smtp.env" && echo "$n: задан" || echo "$n: НЕ задан"
+            done
+            if grep -q '^SMTP_RESERVE_HOST=.' "$d/smtp.env"; then echo "запасной ящик (SMTP_RESERVE_*): задан"
+            else echo "запасной ящик (SMTP_RESERVE_*): нет"; fi
+
+            echo
+            echo "-- дотягивается ли сервер до узла --"
+            v4=$(getent ahostsv4 "$SH" 2>/dev/null | awk '{print $1}' | sort -u | paste -sd, -)
+            v6=$(getent ahostsv6 "$SH" 2>/dev/null | awk '$1 ~ /:/ {print $1}' | sort -u | paste -sd, -)
+            echo "адреса IPv4: ${v4:-НЕТ}"
+            echo "адреса IPv6: ${v6:-НЕТ}"
+            for fam in 4 6; do
+              t0=$(date +%s%N)
+              if [ "$TLS" = yavny ]; then
+                otv=$( (sleep 3; printf 'QUIT\r\n') | timeout 20 openssl s_client -"$fam" -connect "$SH:$SP" -servername "$SH" -quiet 2>"$d/ssl$fam" | head -1)
+              else
+                otv=$( (sleep 3; printf 'QUIT\r\n') | timeout 20 openssl s_client -"$fam" -starttls smtp -connect "$SH:$SP" -servername "$SH" -quiet 2>"$d/ssl$fam" | head -1)
+              fi
+              ms=$(( ($(date +%s%N) - t0) / 1000000 ))
+              kod=$(printf '%s' "$otv" | cut -c1-3)
+              case "$kod" in
+                2[0-9][0-9]) echo "по IPv$fam: TLS поднят, узел ответил $kod (вместе с паузой 3 с — ${ms} мс)" ;;
+                '') echo "по IPv$fam: ответа НЕТ за ${ms} мс — $(tr '\n' ' ' < "$d/ssl$fam" | cut -c1-160)" ;;
+                *) echo "по IPv$fam: узел ответил «$kod» за ${ms} мс" ;;
+              esac
+            done
+
+            echo
+            echo "-- пускает ли узел нашим логином (тот же nodemailer, только verify) --"
+            NM=/srv/spotik/current/node_modules/nodemailer
+            if [ ! -d "$NM" ]; then
+              echo "nodemailer в релизе не найден: $NM"
+            else
+              cat > "$d/verify.js" <<'JS'
+          const fs = require('fs');
+          const [nm, fail] = process.argv.slice(2);
+          const e = {};
+          for (const s of fs.readFileSync(fail, 'utf8').split('\n')) {
+            const i = s.indexOf('=');
+            if (i > 0) e[s.slice(0, i)] = s.slice(i + 1);
+          }
+          const secure = ['1', 'true', 'yes', 'da', 'on'].includes(String(e.SMTP_SECURE || '').toLowerCase());
+          const t = require(nm).createTransport({
+            host: e.SMTP_HOST,
+            port: Number(e.SMTP_PORT) || 587,
+            secure,
+            auth: e.SMTP_USER ? { user: e.SMTP_USER, pass: e.SMTP_PASS } : undefined,
+            connectionTimeout: 15000,
+            greetingTimeout: 15000,
+            socketTimeout: 20000,
+          });
+          const t0 = Date.now();
+          t.verify().then(
+            () => console.log(`OK за ${Date.now() - t0} мс`),
+            (err) => console.log(`СБОЙ за ${Date.now() - t0} мс · вид ${err.code || '—'} · код ${err.responseCode || 0} · шаг ${err.command || '—'} · ${String(err.response || err.message || err).replace(/\s+/g, ' ').slice(0, 220)}`),
+          );
+          JS
+              itog=$(timeout 60 node "$d/verify.js" "$NM" "$d/smtp.env" 2>&1 | tail -1)
+              echo "$itog"
+              case "$itog" in
+                OK*) echo "::notice::почта: узел пускает нашим логином (соединение, TLS, AUTH) — ${itog#OK }" ;;
+                *)   echo "::error::почта: узел НЕ пускает — ${itog}" ;;
+              esac
+            fi
+          fi
+
+          echo
+          echo "-- журнал службы: коды входа и письма за 7 суток (время UTC) --"
+          sudo journalctl -u spotik --since '-7 days' --no-pager -o cat 2>/dev/null \
+            | grep -E 'код входа выдан|письмо отправлено|письмо не ушло|ПИСЬМО \(SMTP не настроен' > "$d/j" || true
+          echo "по дням: кодов выдано · писем ушло · писем не ушло"
+          awk '{ den = substr($1, 1, 10); dni[den] = 1
+                 if ($0 ~ /код входа выдан/) k[den]++
+                 else if ($0 ~ /письмо отправлено/) ok[den]++
+                 else if ($0 ~ /письмо не ушло/) net[den]++ }
+               END { for (x in dni) printf "  %s  %4d · %4d · %4d\n", x, k[x], ok[x], net[x] }' "$d/j" | sort
+          echo "почему не ушло (вид · код · шаг), раз:"
+          grep 'письмо не ушло' "$d/j" \
+            | sed -nE 's/.* vid="([^"]*)" kod=([0-9]+) shag="([^"]*)".*/\1 · \2 · \3/p' \
+            | sort | uniq -c | sort -rn | sed 's/^/  /' || true
+          echo "последние 25 строк про письма:"
+          grep -E 'письмо отправлено|письмо не ушло' "$d/j" | tail -25 \
+            | sed -E 's/ subject="[^"]*"//; s/ (ot|vhod|uzel)="[^"]*"//g' | cut -c1-260 | sed 's/^/  /'
+          posl=$(grep -E 'письмо отправлено|письмо не ушло' "$d/j" | tail -1)
+          case "$posl" in
+            *'письмо отправлено'*) echo "::notice::последнее письмо УШЛО: ${posl%% *}" ;;
+            *'письмо не ушло'*) echo "::error::последнее письмо НЕ ушло: $(printf '%s' "$posl" | sed -E 's/ subject="[^"]*"//; s/ (ot|vhod|uzel)="[^"]*"//g' | cut -c1-300)" ;;
+            *) echo "::warning::за 7 суток в журнале нет ни одного письма" ;;
+          esac
+
+          echo
+          echo "-- база: коды входа (хранятся двое суток) и сессии по дням, время московское --"
+          sudo -u postgres psql -qAF '|' -P border=2 spotik <<'SQL'
+          select scope, to_char(created_at at time zone 'Europe/Moscow', 'MM-DD') as den,
+                 count(*) as kodov, count(used_at) as voshli_po_kodu
+            from login_code group by 1, 2 order by 2, 1;
+          select scope, to_char(created_at at time zone 'Europe/Moscow', 'MM-DD') as den,
+                 count(*) as novyh_sessiy
+            from session where created_at > now() - interval '10 days'
+           group by 1, 2 order by 2, 1;
+          SQL
+          REMOTE
+
       # Разбор одной беды: «оплата прошла, а уведомление не пришло».
       # Шаг НИЧЕГО не меняет — только читает базу и журнал службы.
       #
@@ -503,6 +656,7 @@ jobs:
       # репозитория виден всем, а в тексте уведомления «заказ
       # выполнен» стоит адрес сотрудника.
       - name: Разбор оплаты и уведомлений
+        if: always()
         env:
           HOST: ${{ secrets.SSH_HOST }}
           USER_NAME: ${{ secrets.SSH_USER }}
