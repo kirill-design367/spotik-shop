@@ -4,6 +4,8 @@ import { useActionState, useState } from 'react';
 import { adminAddStaff, adminDisableStaff, adminSetStaffPlans, type OtvetA } from '@/lib/server/actions-admin';
 import { slovar, type Yazyk } from '@/lib/admin/slova';
 import { imyaTarifaIz, klyuchPary, srokKratkoDlyaSotrudnika, type ImenaTarifov } from '@/lib/plans';
+import { nadpis } from '@/components/admin/nadpis';
+import Bukvalno from '@/components/Bukvalno';
 
 export type Chelovek = {
   id: number;
@@ -77,7 +79,7 @@ export default function Staff({
           адресом на любом языке. */}
       {a.ok ? (
         <p className="ok">
-          {t(a.ok, { ...a.polya, role: rol(String(a.polya?.role ?? '')) })}
+          {nadpis(t, a.ok, { ...a.polya, role: rol(String(a.polya?.role ?? '')) })}
         </p>
       ) : null}
 
@@ -115,7 +117,7 @@ export default function Staff({
             {list.map((c) => (
               <tr key={c.id}>
                 <td>
-                  {c.email}
+                  <Bukvalno>{c.email}</Bukvalno>
                   {c.me ? t('f.you') : ''}
                 </td>
                 <td>{rol(c.role)}</td>
@@ -141,7 +143,7 @@ export default function Staff({
         <h3>{t('f.plans')}</h3>
         <p className="hint">{t('f.plans_hint')}</p>
         {p.error ? <p className="err">{t(p.error)}</p> : null}
-        {p.ok ? <p className="ok">{t(p.ok, p.polya)}</p> : null}
+        {p.ok ? <p className="ok">{nadpis(t, p.ok, p.polya)}</p> : null}
 
         {/* ⚠️ ПРЕДУПРЕЖДЕНИЕ СТОИТ РЯДОМ С ГАЛОЧКАМИ, А НЕ В ЦЕНАХ:
             снимают их здесь, и здесь же видно, что снято слишком
@@ -239,7 +241,7 @@ function KartaOperatora({
   return (
     <div className="ad__op">
       <div className="ad__op-kto">
-        {c.email}
+        <Bukvalno>{c.email}</Bukvalno>
         {c.disabled ? <span className="ad__tag">{t('f.disabled')}</span> : null}
       </div>
 
@@ -295,7 +297,9 @@ function KartaOperatora({
                         onChange={() => perekluchitSrok(id, s)}
                         /* Подпись уезжает и в имя для экранного
                            диктора: рядом с галочкой она видна глазом,
-                           а ему — только отсюда. */
+                           а ему — только отсюда. В ней почта, поэтому
+                           переводчику браузера она закрыта (Р-166). */
+                        translate="no"
                         aria-label={
                           `${c.email} · ${imya(id)} · ${srok(s)}` +
                           (vProdazhe ? '' : ` · ${t('f.not_sold')}`)

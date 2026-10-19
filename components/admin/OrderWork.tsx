@@ -14,6 +14,8 @@ import { slovar, sostoyanie, type Klyuch, type Perevod, type Yazyk } from '@/lib
 import { imyaTarifaIz, srokKratkoDlyaSotrudnika, type ImenaTarifov } from '@/lib/plans';
 import { prichinaSotrudniku, prichinyDlya } from '@/lib/admin/prichiny';
 import { poMoskve } from '@/lib/admin/vremya';
+import { NE_PEREVODIT, iliNadpis } from '@/components/Bukvalno';
+import { nadpis } from '@/components/admin/nadpis';
 
 /**
  * Рабочий экран оператора: ЗАКАЗ РАЗБИТ НА ШАГИ.
@@ -73,7 +75,7 @@ export default function OrderWork({
             {z.bySertificate ? <span className="ad__tag ad__tag--gift">{t('q.gift')}</span> : null}
           </dd>
           <dt>{t('t.client')}</dt>
-          <dd>{z.clientEmail}</dd>
+          <dd {...NE_PEREVODIT}>{z.clientEmail}</dd>
           <dt>{t('t.state')}</dt>
           <dd>
             {sostoyanie(t, z.status)}
@@ -83,7 +85,13 @@ export default function OrderWork({
                 пункт 2). Прежде здесь стояла почта в обоих случаях,
                 и на своём же заказе оператор читал собственный адрес
                 подписью «взял …». */}
-            {moy ? ` · ${t('q.yours')}` : z.operatorEmail ? ` · ${t('z.taken_by', { kto: z.operatorEmail })}` : ''}
+            {moy ? (
+              ` · ${t('q.yours')}`
+            ) : z.operatorEmail ? (
+              <> · {nadpis(t, 'z.taken_by', { kto: z.operatorEmail })}</>
+            ) : (
+              ''
+            )}
           </dd>
           {/* ⚠️ ДЕНЬГИ ВИДНЫ ТОЛЬКО АДМИНИСТРАТОРУ с сорок второй
               итерации (постановка). Строки нет не потому, что она
@@ -111,7 +119,7 @@ export default function OrderWork({
           {z.utm.length ? (
             <>
               <dt>{t('z.utm')}</dt>
-              <dd className="ad__utm">
+              <dd className="ad__utm notranslate" translate="no">
                 {z.utm.map((m) => (
                   <span key={m.imya}>
                     {m.imya}={m.znachenie}
@@ -177,8 +185,8 @@ export default function OrderWork({
 
       {/* ⚠️ ОДНО МЕСТО ДЛЯ СООБЩЕНИЯ, И ОНО ЗДЕСЬ — ВЫШЕ ШАГОВ.
           Двух сообщений не бывает по построению: состояние одно. */}
-      {moy && otvet.error ? <p className="err">{t(otvet.error, otvet.polya)}</p> : null}
-      {moy && otvet.ok ? <p className="ok">{t(otvet.ok, otvet.polya)}</p> : null}
+      {moy && otvet.error ? <p className="err">{nadpis(t, otvet.error, otvet.polya)}</p> : null}
+      {moy && otvet.ok ? <p className="ok">{nadpis(t, otvet.ok, otvet.polya)}</p> : null}
 
       {/* ⚠️ У ОТМЕНЁННОГО ЗАКАЗА ШАГОВ НЕТ ВОВСЕ, и это не экономия
           места. Шаг «Завершение» помечался пройденным по признаку
@@ -265,7 +273,7 @@ function Istoriya({ spisok, t, en }: { spisok: Sobytie[]; t: Perevod; en: boolea
                     <td>{t(imya[e.vid])}</td>
                     {/* ⚠️ ПУСТАЯ ПОЧТА ЗНАЧИТ «СОТРУДНИКА НЕ БЫЛО»,
                         и так выглядит отмена самим покупателем. */}
-                    <td>{e.email ?? <span className="hint">{t('h.klient')}</span>}</td>
+                    <td>{iliNadpis(e.email, <span className="hint">{t('h.klient')}</span>)}</td>
                     <td className="tnum">{poMoskve(e.kogda, en)}</td>
                   </tr>
                 ))}
@@ -461,9 +469,9 @@ function ShagAkkaunta({
           {!staryy ? (
             <dl className="ad__kv">
               <dt>{t('t.email')}</dt>
-              <dd className="ad__secret">{s.clientLogin ?? t('u.wiped')}</dd>
+              <dd className="ad__secret">{iliNadpis(s.clientLogin, t('u.wiped'))}</dd>
               <dt>{t('u.password')}</dt>
-              <dd className="ad__secret">{s.clientPassword ?? t('u.wiped')}</dd>
+              <dd className="ad__secret">{iliNadpis(s.clientPassword, t('u.wiped'))}</dd>
             </dl>
           ) : null}
 
@@ -636,8 +644,8 @@ function Akkaunty({ z, t }: { z: ZakazOperatoru; t: Perevod }) {
             {z.slots.map((s) => (
               <tr key={s.id}>
                 <td className="tnum">{s.idx + 1}</td>
-                <td className="ad__secret">{s.clientLogin ?? s.outLogin ?? styort}</td>
-                <td className="ad__secret">{s.clientPassword ?? s.outPassword ?? styort}</td>
+                <td className="ad__secret">{iliNadpis(s.clientLogin ?? s.outLogin, styort)}</td>
+                <td className="ad__secret">{iliNadpis(s.clientPassword ?? s.outPassword, styort)}</td>
                 <td className="tnum">{s.endsAt ?? z.konchaetsya ?? '—'}</td>
               </tr>
             ))}
@@ -684,12 +692,16 @@ function ZadachaOtmeny({ z, t }: { z: ZakazOperatoru; t: Perevod }) {
         </>
       ) : null}
       {!o.zakryta && !o.svobodna && !o.moya ? (
-        <p className="hint">{o.operatorEmail ? t('sc.task_of', { kto: o.operatorEmail }) : t('sc.task_other')}</p>
+        <p className="hint">
+          {o.operatorEmail
+            ? nadpis(t, 'sc.task_of', { kto: o.operatorEmail })
+            : t('sc.task_other')}
+        </p>
       ) : null}
 
       {/* Одно место для сообщения — выше шагов: состояние одно. */}
-      {otvet.error ? <p className="err">{t(otvet.error, otvet.polya)}</p> : null}
-      {otvet.ok ? <p className="ok">{t(otvet.ok, otvet.polya)}</p> : null}
+      {otvet.error ? <p className="err">{nadpis(t, otvet.error, otvet.polya)}</p> : null}
+      {otvet.ok ? <p className="ok">{nadpis(t, otvet.ok, otvet.polya)}</p> : null}
 
       {!o.zakryta && o.moya ? (
         <>
@@ -718,9 +730,9 @@ function ZadachaOtmeny({ z, t }: { z: ZakazOperatoru; t: Perevod }) {
                   <>
                     <dl className="ad__kv">
                       <dt>{t('t.email')}</dt>
-                      <dd className="ad__secret">{s.clientLogin ?? s.outLogin ?? t('sc.wiped')}</dd>
+                      <dd className="ad__secret">{iliNadpis(s.clientLogin ?? s.outLogin, t('sc.wiped'))}</dd>
                       <dt>{t('u.password')}</dt>
-                      <dd className="ad__secret">{s.clientPassword ?? s.outPassword ?? t('sc.wiped')}</dd>
+                      <dd className="ad__secret">{iliNadpis(s.clientPassword ?? s.outPassword, t('sc.wiped'))}</dd>
                     </dl>
                     <form action={shag}>
                       <input type="hidden" name="order" value={z.id} />

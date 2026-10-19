@@ -142,7 +142,10 @@ export default function Podderzhka() {
             ) : (
               <p className="panel__note">
                 Форма не загрузилась. Напишите нам на{' '}
-                <a href="mailto:lev.menashe@yandex.ru">lev.menashe@yandex.ru</a>.
+                <a href="mailto:lev.menashe@yandex.ru" translate="no" className="notranslate">
+                  lev.menashe@yandex.ru
+                </a>
+                .
               </p>
             )}
           </div>

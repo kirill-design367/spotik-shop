@@ -4,6 +4,7 @@ import { useActionState, useEffect, useRef, useState } from 'react';
 import { deystvieKtoYa, deystvieObrashchenie, type Otvet } from '@/lib/server/actions-client';
 import { svyazNeVerna } from '@/lib/proverka';
 import { BEZ_ZAPISI } from '@/lib/metrika';
+import { sAdresami } from '@/components/Bukvalno';
 
 /**
  * Форма обращения. Два поля, как в постановке: описание проблемы
@@ -133,7 +134,7 @@ export default function PodderzhkaForma({
           aria-invalid={beda.svyaz ? true : undefined}
         />
         {beda.svyaz ? (
-          <p className="field__beda">{beda.svyaz}</p>
+          <p className="field__beda">{sAdresami(beda.svyaz)}</p>
         ) : (
           <p className="field__hint">
             {svoya ? 'Подставлена почта вашего аккаунта — её можно заменить' : 'Напишем туда, куда удобнее'}

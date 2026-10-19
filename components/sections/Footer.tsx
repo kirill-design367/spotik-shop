@@ -179,7 +179,10 @@ export default function Footer() {
               {REKVIZITY.map(([k, v, ssylka], n) => (
                 <div key={k} className="req__para">
                   <dt>{k}</dt>
-                  <dd className={k === 'ИНН' || k === 'ОГРНИП' || k === 'Телефон' ? 'tnum' : undefined}>
+                  <dd
+                    className={k === 'ИНН' || k === 'ОГРНИП' || k === 'Телефон' ? 'tnum notranslate' : 'notranslate'}
+                    translate="no"
+                  >
                     {ssylka ? (
                       <a href={ssylka}>
                         <Sobiraemaya tekst={v} ot={n * 37} />

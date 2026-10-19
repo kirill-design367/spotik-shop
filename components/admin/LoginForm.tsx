@@ -3,6 +3,7 @@
 import { useActionState } from 'react';
 import { adminAskCode, adminLogin, type OtvetA } from '@/lib/server/actions-admin';
 import { slovar, type Yazyk } from '@/lib/admin/slova';
+import { nadpis } from '@/components/admin/nadpis';
 
 /**
  * Вход сотрудника: почта и одноразовый код. Механизм тот же, что
@@ -38,7 +39,7 @@ export default function LoginForm({ y }: { y: Yazyk }) {
         <form action={login} className="ad__form">
           <input type="hidden" name="email" value={email} />
           <label>
-            {t('in.code_to', { email })}
+            {nadpis(t, 'in.code_to', { email })}
             <input type="text" name="code" required inputMode="numeric" maxLength={6} autoComplete="one-time-code" />
           </label>
           <div className="ad__actions">

@@ -3,6 +3,7 @@
 import { useActionState, useState } from 'react';
 import { adminOtmenitVypolnenny, type OtvetA } from '@/lib/server/actions-admin';
 import { slovar, type Yazyk } from '@/lib/admin/slova';
+import { nadpis } from '@/components/admin/nadpis';
 
 /**
  * «Отменить» у выполненного заказа в «Недавно закрытых».
@@ -29,13 +30,13 @@ export default function OtmenaVypolnennogo({ zakaz, y, mozhno }: { zakaz: number
   const [sprosili, setSprosili] = useState(false);
   const [otvet, otmenit, idyot] = useActionState<OtvetA, FormData>(adminOtmenitVypolnenny, {});
 
-  if (otvet.ok) return <span className="ok">{t(otvet.ok, otvet.polya)}</span>;
+  if (otvet.ok) return <span className="ok">{nadpis(t, otvet.ok, otvet.polya)}</span>;
   if (!mozhno) return null;
 
   return (
     <form action={otmenit} className="ad__otmena-v">
       <input type="hidden" name="order" value={zakaz} />
-      {otvet.error ? <span className="err">{t(otvet.error, otvet.polya)}</span> : null}
+      {otvet.error ? <span className="err">{nadpis(t, otvet.error, otvet.polya)}</span> : null}
       {!sprosili ? (
         <button type="button" className="btn btn--ghost btn--sm" onClick={() => setSprosili(true)}>
           {t('sc.cancel')}

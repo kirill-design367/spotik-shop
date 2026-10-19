@@ -21,7 +21,6 @@
 
 import { odna, zapros } from './db';
 import { poprobovatRasshifrovat } from './crypto';
-import { dopisatAdres } from '@/lib/admin/prichiny';
 import { STATUS_SLOVAMI, type Rezhim, type Status } from './orders';
 import { katalog, naytiTarif, srokKratko } from './catalog';
 import { usloviyeVidimosti, usloviyeVidimostiOtmeny, usloviyeVidimostiSZadachey, type Dostup } from './dostup';
@@ -67,7 +66,13 @@ export type ZakazKlientu = {
   sozdan: Date;
   /** Когда доступ заканчивается. Считается при закрытии заказа. */
   konchaetsya: Date | null;
-  prichinaOtmeny: string | null;
+  /**
+   * Причина отмены и адрес аккаунта, к которому она относится, — ВРОЗЬ.
+   * Склеивает их `dopisatAdres` при отрисовке: адрес встаёт отдельным
+   * узлом под `translate="no"`, иначе переводчик браузера переписал
+   * бы его вместе с фразой (Р-166).
+   */
+  prichinaOtmeny: { tekst: string; adres: string | null } | null;
   /**
    * Заказ отменён ПОСЛЕ выполнения — подписку сняли (сорок девятая
    * итерация). Деньги не возвращаются, и строки «Деньги лежат
@@ -165,12 +170,12 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
          Шифротекст стёрт — остаётся причина без адреса: мы к этому
          времени его и правда забыли. */
       prichinaOtmeny: (() => {
-        if (!r.cancel_reason) return r.cancel_reason;
-        if (r.cancel_slot_idx === null) return r.cancel_reason;
+        if (!r.cancel_reason) return null;
+        if (r.cancel_slot_idx === null) return { tekst: r.cancel_reason, adres: null };
         const pochta = poprobovatRasshifrovat(
           svoi.find((x) => x.idx === Number(r.cancel_slot_idx))?.in_login_enc ?? null,
         );
-        return dopisatAdres(r.cancel_reason, pochta);
+        return { tekst: r.cancel_reason, adres: pochta };
       })(),
       otmenaPodpiski: r.otmena_podpiski,
       sekretyStyorty: Boolean(r.secrets_wiped_at),

@@ -14,6 +14,8 @@ import { rubli } from '@/lib/server/money';
 import KnopkaOplaty from '@/components/shop/KnopkaOplaty';
 import { deystvieOtmenitSvoy, deystvieVyyti } from '@/lib/server/actions-client';
 import type { Status } from '@/lib/server/orders';
+import { NE_PEREVODIT, frazaSDannymi } from '@/components/Bukvalno';
+import { dopisatAdres } from '@/lib/admin/prichiny';
 
 export const metadata: Metadata = { title: 'Личный кабинет — Spotik Shop', robots: { index: false, follow: false } };
 export const dynamic = 'force-dynamic';
@@ -121,7 +123,9 @@ export default async function Cabinet({
           придут письма и по которому человек входит, и диктовать его
           по памяти он не обязан. */}
       <div className="cab__top">
-        <span className="cab__mail">{kto.email}</span>
+        <span className="cab__mail notranslate" translate="no">
+          {kto.email}
+        </span>
         <Kopirovat chto={kto.email} chego="почту" />
         <form action={deystvieVyyti}>
           <button type="submit" className="btn btn--ghost btn--sm">Выйти</button>
@@ -237,7 +241,9 @@ export default async function Cabinet({
                 {z.status === 'cancelled' && !z.otmenaPodpiski ? (
                   <>
                     {z.prichinaOtmeny ? (
-                      <p className="panel__note">Причина: {z.prichinaOtmeny}</p>
+                      <p className="panel__note">
+                        Причина: <Prichina p={z.prichinaOtmeny} />
+                      </p>
                     ) : null}
                     <p className="panel__note">
                       Деньги за заказ лежат на балансе — спишутся при следующем оформлении.
@@ -286,7 +292,7 @@ export default async function Cabinet({
                             {s.mode === 'new' ? 'Premium включён на почте' : 'Premium продлён на почте'}
                           </span>
                           <span className="cred__stroka">
-                            <b>{s.pochta}</b>
+                            <b {...NE_PEREVODIT}>{s.pochta}</b>
                             <Kopirovat chto={s.pochta!} chego="почту аккаунта" />
                           </span>
                         </div>
@@ -303,17 +309,17 @@ export default async function Cabinet({
                         <div key={s.idx} className="cred">
                           {z.slots.length > 1 ? <span className="cred__k">Аккаунт {s.idx + 1}</span> : null}
                           <span className="cred__k">Логин</span>
-                          <b>{s.login}</b>
+                          <b {...NE_PEREVODIT}>{s.login}</b>
                           {s.mailPass ? (
                             <>
                               <span className="cred__k">Пароль от почты</span>
-                              <b>{s.mailPass}</b>
+                              <b {...NE_PEREVODIT}>{s.mailPass}</b>
                             </>
                           ) : null}
                           {s.spotifyPass ? (
                             <>
                               <span className="cred__k">Пароль Spotify</span>
-                              <b>{s.spotifyPass}</b>
+                              <b {...NE_PEREVODIT}>{s.spotifyPass}</b>
                             </>
                           ) : null}
                         </div>
@@ -349,7 +355,9 @@ export default async function Cabinet({
         sert.map((s) => (
           <div key={s.id} className={s.ispolzovan ? 'cert cert--used' : 'cert'}>
             <span className="cert__stroka">
-              <span className="cert__code">{s.kod ?? `…${s.tail}`}</span>
+              <span className="cert__code notranslate" translate="no">
+                {s.kod ?? `…${s.tail}`}
+              </span>
               {s.kod && !s.ispolzovan ? <Kopirovat chto={s.kod} chego="код сертификата" /> : null}
             </span>
             <span className="cert__meta">
@@ -378,4 +386,17 @@ export default async function Cabinet({
       </div>
     </main>
   );
+}
+
+/**
+ * Причина отмены, а при причине про занятую почту — с адресом аккаунта.
+ *
+ * ⚠️ АДРЕС ИДЁТ ОТДЕЛЬНЫМ УЗЛОМ, А НЕ ХВОСТОМ СТРОКИ: переводчик
+ * браузера переводит фразу целиком и переписал бы почту вместе с ней,
+ * а человеку надо видеть именно ту почту, что он ввёл (Р-166, Р-151).
+ * Формат по-прежнему один — `dopisatAdres`, — и склеивает он метку.
+ */
+function Prichina({ p }: { p: { tekst: string; adres: string | null } }) {
+  if (p.adres === null) return <>{p.tekst}</>;
+  return <>{frazaSDannymi((m) => dopisatAdres(p.tekst, m.adres!), { adres: p.adres })}</>;
 }

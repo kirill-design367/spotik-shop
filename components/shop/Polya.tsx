@@ -2,6 +2,7 @@
 
 import { useId, useState } from 'react';
 import { BEZ_ZAPISI } from '@/lib/metrika';
+import { sAdresami } from '@/components/Bukvalno';
 
 /**
  * Поля данных аккаунта: почта и пароль.
@@ -92,7 +93,8 @@ export function Pole({
               <button
                 key={p}
                 type="button"
-                className="pochty__p"
+                className="pochty__p notranslate"
+                translate="no"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => {
                   menyat(p);
@@ -106,7 +108,7 @@ export function Pole({
         </div>
       ) : null}
       {beda ? (
-        <p className="field__beda" id={`${id}-p`}>{beda}</p>
+        <p className="field__beda" id={`${id}-p`}>{sAdresami(beda)}</p>
       ) : podskazka ? (
         <p className="field__hint" id={`${id}-p`}>{podskazka}</p>
       ) : null}
@@ -167,7 +169,7 @@ export function PoleParolya({
         </button>
       </div>
       {beda ? (
-        <p className="field__beda" id={`${id}-p`}>{beda}</p>
+        <p className="field__beda" id={`${id}-p`}>{sAdresami(beda)}</p>
       ) : podskazka ? (
         <p className="field__hint" id={`${id}-p`}>{podskazka}</p>
       ) : null}

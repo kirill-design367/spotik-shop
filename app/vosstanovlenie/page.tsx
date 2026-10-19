@@ -63,7 +63,9 @@ export default async function Vosstanovlenie({
             <h2 className="panel__h">Почта аккаунта Spotify</h2>
             {/* Почта стоит обычным выделяемым текстом: если буфер
                 в браузере закрыт, человек всё равно может её взять. */}
-            <p className="pochta-krupno">{r.pochta}</p>
+            <p className="pochta-krupno notranslate" translate="no">
+              {r.pochta}
+            </p>
             <KnopkaVSpotify pochta={r.pochta} />
             <p className="panel__note">Вставьте почту в поле и нажмите «Получить ссылку»</p>
           </div>

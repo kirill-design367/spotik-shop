@@ -92,7 +92,9 @@ export default function UtmGen({ y, adres }: { y: Yazyk; adres: string }) {
           </button>
         </div>
         <p className="hint">{t('g.direct_hint')}</p>
-        <p className="ad__utm" style={{ wordBreak: 'break-all' }}>{gotovo}</p>
+        <p className="ad__utm notranslate" translate="no" style={{ wordBreak: 'break-all' }}>
+          {gotovo}
+        </p>
         <div className="ad__actions">
           <button
             type="button"

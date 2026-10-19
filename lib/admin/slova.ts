@@ -631,6 +631,19 @@ export type Klyuch = keyof typeof S;
 /** Подстановки вида `{imya}`. Данные заказа приходят сюда как есть. */
 export type Podstanovki = Record<string, string | number>;
 
+/**
+ * Подстановки, которые несут ДАННЫЕ, а не надпись: почты.
+ *
+ * ⚠️ ПЕРЕВОДЧИК БРАУЗЕРА ПЕРЕВОДИТ ФРАЗУ ЦЕЛИКОМ, И ПОЧТУ ВНУТРИ ТОЖЕ:
+ * «взял {kto}» у помощника, открывшего русскую админку переводчиком,
+ * вышло бы с чужим адресом (Р-166). Поэтому фразу с такой подстановкой
+ * рисует `nadpis` из `components/admin/nadpis.ts`, и адрес встаёт
+ * отдельным узлом под `translate="no"`. Новая подстановка с почтой
+ * обязана называться одним из этих имён или попасть в этот список;
+ * числа, тариф, срок и роль — наши надписи, их переводить можно.
+ */
+export const PODSTANOVKI_DANNYE: readonly string[] = ['email', 'kto'];
+
 export type Perevod = (k: Klyuch, p?: Podstanovki) => string;
 
 export function slovar(y: Yazyk): Perevod {

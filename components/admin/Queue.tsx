@@ -7,6 +7,8 @@ import { CHASTOTY_OCHEREDI } from '@/lib/admin/chastoty';
 import { slovar, type Yazyk } from '@/lib/admin/slova';
 import { imyaTarifaIz, srokKratkoDlyaSotrudnika, type ImenaTarifov } from '@/lib/plans';
 import { poMoskve } from '@/lib/admin/vremya';
+import { nadpis } from '@/components/admin/nadpis';
+import { iliNadpis } from '@/components/Bukvalno';
 
 /**
  * Очередь заказов, которая обновляется сама.
@@ -177,7 +179,7 @@ export default function Queue({
                           и сличать было бы нечего. Ветка с чужой почтой
                           достаётся только администратору — оператору
                           такие строки не приходят. */}
-                      {r.moy ? t('q.yours') : t('q.taken', { kto: r.operator ?? '—' })}
+                      {r.moy ? t('q.yours') : nadpis(t, 'q.taken', { kto: r.operator ?? '—' })}
                     </span>
                   )}
                 </td>
@@ -185,7 +187,7 @@ export default function Queue({
                     из строки заказа: у заказа В РАБОТЕ это один и тот же
                     человек. У непринятого держателя нет вовсе, и клетка
                     честно пустая (постановка, пункт 6). */}
-                {admin ? <td>{r.operator ?? '—'}</td> : null}
+                {admin ? <td>{iliNadpis(r.operator, '—')}</td> : null}
                 <td>
                   {r.status === 'paid' ? (
                     <form action={r.otmena ? adminOtmenaVzyat : adminTake}>

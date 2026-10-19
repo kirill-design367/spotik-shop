@@ -4,6 +4,7 @@ import { useActionState } from 'react';
 import { deystviePrositKod, deystvieVoyti, type Otvet } from '@/lib/server/actions-client';
 import { BEZ_ZAPISI } from '@/lib/metrika';
 import PochtaPlashka from '@/components/PochtaPlashka';
+import Bukvalno from '@/components/Bukvalno';
 
 /**
  * Вход по коду на почту. Паролей нет вовсе.
@@ -66,7 +67,9 @@ export default function LoginBox({ next, zagolovok }: { next: string; zagolovok?
           <input type="hidden" name="email" value={email} />
           <input type="hidden" name="next" value={next} />
           <label className="field">
-            <span className="field__label">Код из письма на {email}</span>
+            <span className="field__label">
+              Код из письма на <Bukvalno>{email}</Bukvalno>
+            </span>
             <input
               type="text"
               name="code"

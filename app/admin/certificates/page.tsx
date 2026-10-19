@@ -6,6 +6,7 @@ import { yazykSotrudnika } from '@/lib/server/yazyk';
 import { slovar, type Klyuch } from '@/lib/admin/slova';
 import { imyaTarifaIz, srokKratkoDlyaSotrudnika } from '@/lib/plans';
 import { imenaTarifov } from '@/lib/server/imena';
+import Bukvalno, { iliNadpis } from '@/components/Bukvalno';
 
 export const dynamic = 'force-dynamic';
 
@@ -60,7 +61,9 @@ export default async function AdminCertificates() {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td>…{r.tail}</td>
+                  <td>
+                    …<Bukvalno>{r.tail}</Bukvalno>
+                  </td>
                   <td>
                     {imyaTarifaIz(imena, r.planId, y === 'en')} ·{' '}
                     {srokKratkoDlyaSotrudnika(r.period, y === 'en')}
@@ -78,10 +81,10 @@ export default async function AdminCertificates() {
                       {t(sostoyanie[r.status] ?? 's.valid')}
                     </span>
                   </td>
-                  <td>{r.buyer ?? '—'}</td>
+                  <td>{iliNadpis(r.buyer, '—')}</td>
                   <td>{den(r.boughtAt)}</td>
                   <td>{den(r.expiresAt)}</td>
-                  <td>{r.activatedBy ?? '—'}</td>
+                  <td>{iliNadpis(r.activatedBy, '—')}</td>
                   <td>{r.orderId ? <a href={`/admin/orders/${r.orderId}/`}>{r.orderId}</a> : '—'}</td>
                 </tr>
               ))}

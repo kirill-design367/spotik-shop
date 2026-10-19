@@ -9,6 +9,7 @@ import { yazykSotrudnika } from '@/lib/server/yazyk';
 import { slovar, type Klyuch } from '@/lib/admin/slova';
 import { imyaTarifaIz, srokKratkoDlyaSotrudnika } from '@/lib/plans';
 import { imenaTarifov } from '@/lib/server/imena';
+import { NE_PEREVODIT, iliNadpis } from '@/components/Bukvalno';
 
 export const dynamic = 'force-dynamic';
 
@@ -280,7 +281,7 @@ export default async function AdminStats({
                 <tbody>
                   {d.poSotrudnikam.map((r) => (
                     <tr key={r.email}>
-                      <td>{r.email}</td>
+                      <td {...NE_PEREVODIT}>{r.email}</td>
                       <td className="tnum">{r.zakazov}</td>
                       {/* Названия тарифов — надписи, и в английской
                           админке они английские (закон 40). */}
@@ -322,7 +323,7 @@ export default async function AdminStats({
                   <tr key={r.istochnik ?? '—'}>
                     {/* Значение метки — данные, и оно не переводится;
                         переводится только слово «без меток». */}
-                    <td>{r.istochnik ?? <span className="hint">{t('ss.source_direct')}</span>}</td>
+                    <td>{iliNadpis(r.istochnik, <span className="hint">{t('ss.source_direct')}</span>)}</td>
                     <td className="tnum">{r.zakazov}</td>
                     <td className="tnum">{r.dolya} %</td>
                   </tr>

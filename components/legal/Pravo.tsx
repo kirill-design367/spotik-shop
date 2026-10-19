@@ -1,4 +1,5 @@
 import { dokument, type ImyaDokumenta, type Kusok } from '@/lib/server/pravo';
+import { NE_PEREVODIT, sAdresami } from '@/components/Bukvalno';
 
 /**
  * Страница юридического документа. Одна на все четыре: оферту,
@@ -12,7 +13,7 @@ export function Pravo({ imya }: { imya: ImyaDokumenta }) {
       return (
         <ul key={i}>
           {k.punkty.map((p, j) => (
-            <li key={j}>{p}</li>
+            <li key={j}>{sAdresami(p)}</li>
           ))}
         </ul>
       );
@@ -23,13 +24,13 @@ export function Pravo({ imya }: { imya: ImyaDokumenta }) {
           {k.pary.map(([klyuch, znachenie]) => (
             <div key={klyuch}>
               <dt>{klyuch}</dt>
-              <dd>{znachenie}</dd>
+              <dd {...NE_PEREVODIT}>{znachenie}</dd>
             </div>
           ))}
         </dl>
       );
     }
-    return <p key={i}>{k.tekst}</p>;
+    return <p key={i}>{sAdresami(k.tekst)}</p>;
   };
 
   return (

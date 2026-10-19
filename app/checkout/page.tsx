@@ -9,6 +9,7 @@ import { katalog, naytiTarif, srokPolno } from '@/lib/server/catalog';
 import { balans, pochtyKlienta, pochtyZakaza } from '@/lib/server/views';
 import { bazaEst } from '@/lib/server/db';
 import { rabocheeVremya } from '@/lib/chasy';
+import Bukvalno from '@/components/Bukvalno';
 
 export const metadata: Metadata = { title: 'Оформление — Spotik Shop', robots: { index: false, follow: false } };
 /** Страница зависит от куки, поэтому статической быть не может. */
@@ -158,7 +159,7 @@ export default async function Checkout({
       {kto ? (
         <>
           <p className="cab__mail">
-            Информация о заказе придёт на {kto.email}. <a href="/cabinet/">Личный кабинет</a>
+            Информация о заказе придёт на <Bukvalno>{kto.email}</Bukvalno>. <a href="/cabinet/">Личный кабинет</a>
           </p>
           <CheckoutForm vvod={vvod} />
         </>

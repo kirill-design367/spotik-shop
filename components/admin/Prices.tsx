@@ -11,6 +11,8 @@ import {
   type OtvetA,
 } from '@/lib/server/actions-admin';
 import { slovar, type Klyuch, type Yazyk } from '@/lib/admin/slova';
+import { nadpis } from '@/components/admin/nadpis';
+import { NE_PEREVODIT } from '@/components/Bukvalno';
 
 export type Stroka = {
   planId: string;
@@ -69,7 +71,7 @@ export default function Prices({
       <h1>{t('c.h')}</h1>
       <p className="hint">{t('c.hint')}</p>
       {p.error ? <p className="err">{t(p.error)}</p> : null}
-      {p.ok ? <p className="ok">{t(p.ok, p.polya)}</p> : null}
+      {p.ok ? <p className="ok">{nadpis(t, p.ok, p.polya)}</p> : null}
 
       <div className="ad__scroll">
         <table>
@@ -112,7 +114,7 @@ export default function Prices({
       <h2>{t('c.discount_h')}</h2>
       <p className="hint">{t('c.discount_hint')}</p>
       {sk.error ? <p className="err">{t(sk.error)}</p> : null}
-      {sk.ok ? <p className="ok">{t(sk.ok, sk.polya)}</p> : null}
+      {sk.ok ? <p className="ok">{nadpis(t, sk.ok, sk.polya)}</p> : null}
       <div className="ad__scroll">
         <table>
           <thead>
@@ -159,12 +161,12 @@ export default function Prices({
       <h2>{t('c.grid_h')}</h2>
       <p className="hint">{t('c.grid_hint')}</p>
       {gr.error ? <p className="err">{t(gr.error)}</p> : null}
-      {gr.ok ? <p className="ok">{t(gr.ok, gr.polya)}</p> : null}
+      {gr.ok ? <p className="ok">{nadpis(t, gr.ok, gr.polya)}</p> : null}
       {/* ⚠️ СООБЩЕНИЯ ГАЛОЧКИ «ЕГИПЕТ» СТОЯТ ЗДЕСЬ ЖЕ, НАД ТОЙ ЖЕ
           ТАБЛИЦЕЙ: галочка живёт в её строках, и ответ на нажатие
           обязан быть там, куда человек смотрит. */}
       {eg.error ? <p className="err">{t(eg.error)}</p> : null}
-      {eg.ok ? <p className="ok">{t(eg.ok, eg.polya)}</p> : null}
+      {eg.ok ? <p className="ok">{nadpis(t, eg.ok, eg.polya)}</p> : null}
       <p className="hint">{t('c.egypt_hint')}</p>
       <div className="ad__scroll">
         <table>
@@ -239,7 +241,7 @@ export default function Prices({
       <h2>{t('c.names_h')}</h2>
       <p className="hint">{t('c.names_hint')}</p>
       {im.error ? <p className="err">{t(im.error)}</p> : null}
-      {im.ok ? <p className="ok">{t(im.ok, im.polya)}</p> : null}
+      {im.ok ? <p className="ok">{nadpis(t, im.ok, im.polya)}</p> : null}
       <div className="ad__scroll">
         <table>
           <thead>
@@ -254,7 +256,7 @@ export default function Prices({
           <tbody>
             {plany.map((pl) => (
               <tr key={`im-${pl.id}`}>
-                <td>{pl.id}</td>
+                <td {...NE_PEREVODIT}>{pl.id}</td>
                 <td colSpan={4}>
                   <form action={setImya} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <input type="hidden" name="plan" value={pl.id} />
@@ -279,7 +281,7 @@ export default function Prices({
       <h2>{t('c.cert_h')}</h2>
       <p className="hint">{t('c.cert_hint')}</p>
       {d.error ? <p className="err">{t(d.error)}</p> : null}
-      {d.ok ? <p className="ok">{t(d.ok, d.polya)}</p> : null}
+      {d.ok ? <p className="ok">{nadpis(t, d.ok, d.polya)}</p> : null}
       <form action={setDays} className="ad__form">
         <label>
           {t('c.days')}

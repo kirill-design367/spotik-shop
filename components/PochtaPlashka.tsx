@@ -1,4 +1,5 @@
 import { POCHTA_SSYLKA, POCHTA_TEKST } from '@/lib/plans';
+import { sAdresami } from '@/components/Bukvalno';
 
 /**
  * ТАБЛИЧКА ПРО ПОЧТУ (пятьдесят первая итерация, Р-165).
@@ -34,14 +35,14 @@ export default function PochtaPlashka() {
         <path d="M4 7.5l8 6 8-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
       {i < 0 ? (
-        <p>{POCHTA_TEKST}</p>
+        <p>{sAdresami(POCHTA_TEKST)}</p>
       ) : (
         <p>
-          {POCHTA_TEKST.slice(0, i)}
+          {sAdresami(POCHTA_TEKST.slice(0, i))}
           <a href={POCHTA_SSYLKA.adres} target="_blank" rel="noopener noreferrer">
             {POCHTA_SSYLKA.slovo}
           </a>
-          {POCHTA_TEKST.slice(i + POCHTA_SSYLKA.slovo.length)}
+          {sAdresami(POCHTA_TEKST.slice(i + POCHTA_SSYLKA.slovo.length))}
         </p>
       )}
     </aside>

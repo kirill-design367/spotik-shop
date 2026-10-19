@@ -5,6 +5,7 @@ import { adminLogout } from '@/lib/server/actions-admin';
 import { yazykSotrudnika } from '@/lib/server/yazyk';
 import { slovar } from '@/lib/admin/slova';
 import VyborYazyka from '@/components/admin/VyborYazyka';
+import Bukvalno from '@/components/Bukvalno';
 
 /**
  * ⚠️ ЗАГОЛОВОК ВКЛАДКИ ТОЖЕ НАДПИСЬ, И ОН ТОЖЕ ПЕРЕВОДИТСЯ. Статичный
@@ -52,7 +53,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               <a href="/">{t('nav.site')}</a>
             </nav>
             <span className="ad__who">
-              {s.email} · {s.role === 'admin' ? t('f.role_admin') : t('f.role_op')}
+              <Bukvalno>{s.email}</Bukvalno> · {s.role === 'admin' ? t('f.role_admin') : t('f.role_op')}
             </span>
             {/* ⚠️ ПЕРЕКЛЮЧАТЕЛЬ ВИДЕН ВСЕГДА — постановка, — поэтому
                 он стоит и до входа, ниже по разметке: там сотрудника

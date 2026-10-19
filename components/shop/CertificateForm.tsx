@@ -64,7 +64,9 @@ export default function CertificateForm({ voshyol }: { voshyol: boolean }) {
         <h2 className="panel__h">Код сертификата</h2>
         {proverka.oshibka ? <p className="err">{proverka.oshibka}</p> : null}
         <label className="field">
-          <span className="field__label">SPOTIK-XXXX-XXXX-XXXX</span>
+          <span className="field__label notranslate" translate="no">
+            SPOTIK-XXXX-XXXX-XXXX
+          </span>
           <input
             type="text"
             name="code"
@@ -75,6 +77,7 @@ export default function CertificateForm({ voshyol }: { voshyol: boolean }) {
             value={kod}
             onChange={(e) => setKod(e.target.value)}
             placeholder="SPOTIK-"
+            translate="no"
           />
         </label>
         <button type="submit" className="btn btn--wide" disabled={idyot1}>

@@ -15,6 +15,7 @@ import { slovar, sostoyanie } from '@/lib/admin/slova';
 import { imyaTarifaIz } from '@/lib/plans';
 import { imenaTarifov } from '@/lib/server/imena';
 import { poMoskve } from '@/lib/admin/vremya';
+import { NE_PEREVODIT, iliNadpis } from '@/components/Bukvalno';
 
 export const dynamic = 'force-dynamic';
 
@@ -91,7 +92,7 @@ export default async function AdminHome() {
                   <a href={`/admin/orders/${r.id}/`}>{r.id}</a>
                 </td>
                 <td>{imyaTarifaIz(imena, r.planId, y === 'en')}</td>
-                <td>{r.client}</td>
+                <td {...NE_PEREVODIT}>{r.client}</td>
                 <td>
                   {sostoyanie(t, r.status)}
                   {/* Отменён ПОСЛЕ выполнения — подпиской, а не возвратом
@@ -102,7 +103,7 @@ export default async function AdminHome() {
                     Пусто — значит сотрудника в этом событии не было:
                     так выглядит заказ, отменённый самим покупателем,
                     и старый заказ, о котором в базе ничего нет. */}
-                {admin ? <td>{r.staff ?? '—'}</td> : null}
+                {admin ? <td>{iliNadpis(r.staff, '—')}</td> : null}
                 <td className="tnum">{poMoskve(r.closedAt, en)}</td>
                 {/* ⚠️ «ОТКРЫТЬ» И «ОТМЕНИТЬ» — ТОЛЬКО АДМИНИСТРАТОРУ
                     (сорок девятая итерация, пункты 8 и 9: «в „Недавно
