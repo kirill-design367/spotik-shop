@@ -97,7 +97,11 @@ function ssylka(zakaz: number): string {
  * поэтому экранировать нечего и сломать сообщение подчёркиванием
  * в адресе нельзя.
  */
-function tekstDlyaChata(s: SobytieKomande): string | null {
+/** Чем названа почта или пароль, которых в сообщении нет. */
+const STYORT = 'wiped 7 days after the order closed';
+const UBRAN_IZ_CHATA = 'removed from this chat 7 days after the order closed';
+
+function tekstDlyaChata(s: SobytieKomande, netDannyh: string = STYORT): string | null {
   if (s.vid === 'zakaz_oplachen') {
     return [
       `New paid order #${s.zakaz}`,
@@ -118,8 +122,8 @@ function tekstDlyaChata(s: SobytieKomande): string | null {
     const stroki = s.akkaunty.flatMap((a, i) => {
       const kto = mnogo ? `Account ${i + 1}` : 'Account';
       return [
-        `${kto} email: ${a.pochta ?? 'wiped 7 days after the order closed'}`,
-        `${kto} password: ${a.parol ?? 'wiped 7 days after the order closed'}`,
+        `${kto} email: ${a.pochta ?? netDannyh}`,
+        `${kto} password: ${a.parol ?? netDannyh}`,
       ];
     });
     return [
@@ -167,8 +171,7 @@ function tekstDlyaChata(s: SobytieKomande): string | null {
  * ⚠️ ИМ БОТ ПРАВИТ СВОЁ СООБЩЕНИЕ, ЕСЛИ TELEGRAM НЕ ДАСТ ЕГО УДАЛИТЬ
  * (Р-161). Собирается тем же `tekstDlyaChata`, а не своей копией
  * шаблона: две копии одного сообщения разошлись бы на первой правке
- * надписей. Почта уходит вместе с паролем — на сайте через семь
- * дней стираются обе (закон 35).
+ * надписей. Почта уходит вместе с паролем: в чате они живут один срок.
  *
  * `null` — секретов в сообщении нет вовсе (их стёрли раньше, чем
  * нажали «Отменить»), и убирать его незачем.
@@ -176,7 +179,10 @@ function tekstDlyaChata(s: SobytieKomande): string | null {
 function tekstBezSekretov(s: SobytieKomande): string | null {
   if (s.vid !== 'otmena_podpiski') return null;
   if (!s.akkaunty.some((a) => a.pochta !== null || a.parol !== null)) return null;
-  return tekstDlyaChata({ ...s, akkaunty: s.akkaunty.map(() => ({ pochta: null, parol: null })) });
+  /* ⚠️ С ПЯТЬДЕСЯТ ТРЕТЬЕЙ ИТЕРАЦИИ НА САЙТЕ ДОСТУПЫ НЕ СТИРАЮТСЯ (Р-172),
+     и вычеркнутое названо тем, что с ним стало ЗДЕСЬ: убрано из чата.
+     Прежнее «wiped» говорило бы неправду про сайт. */
+  return tekstDlyaChata({ ...s, akkaunty: s.akkaunty.map(() => ({ pochta: null, parol: null })) }, UBRAN_IZ_CHATA);
 }
 
 /**
@@ -387,14 +393,15 @@ const POPYTOK_UBRAT = 48;
 /**
  * УБРАТЬ ИЗ ЧАТА СООБЩЕНИЯ С ПАРОЛЕМ, ЧЬЙ СРОК ПРИШЁЛ.
  *
- * ⚠️ СРОК — ТОТ ЖЕ, ЧТО У ПАРОЛЯ НА САЙТЕ, И БЕРЁТСЯ ОН ОТТУДА ЖЕ:
- * сообщение убирается, когда у его заказа стёрты секреты
- * (`secrets_wiped_at`). Постановка пятидесятой итерации: «через
- * 7 дней, в тот же срок, когда стирается пароль на сайте». Считать
- * свои семь дней от отправки значило бы завести второй срок,
- * и он разошёлся бы с первым ровно на те дни, что прошли между
- * выполнением заказа и нажатием «Отменить». Зовёт это уборка —
- * тем же часовым ходом, СРАЗУ после стирания (`upkeep.ts`).
+ * ⚠️ СРОК — СЕМЬ ДНЕЙ ОТ `closed_at` ЗАКАЗА, А НЕ ОТ ОТПРАВКИ. До
+ * пятьдесят третьей итерации сообщение убиралось, когда у заказа
+ * стирались секреты (`secrets_wiped_at`), а стирались они ровно через
+ * семь дней после `closed_at`. Стирание снято (Р-172), а удаление
+ * сообщений велено «оставить как есть» — значит срок обязан остаться
+ * тем же, и считается он теперь прямо от `closed_at`. Уже стёртые
+ * заказы этому условию удовлетворяют тоже. Считать свои семь дней
+ * от отправки значило бы сдвинуть срок на те дни, что прошли между
+ * выполнением заказа и нажатием «Отменить».
  *
  * ⚠️ СНАЧАЛА УДАЛИТЬ, ПОТОМ — ПРАВКА. Bot API не даёт удалять
  * сообщения старше 48 часов, а между отправкой и стиранием бывает
@@ -421,7 +428,9 @@ export async function ubratSoobshcheniyaSParolem(): Promise<void> {
       `select t.id, t.order_id, t.chat_id, t.message_id, t.tekst_bez, t.popytok
          from tg_s_parolem t
          join shop_order o on o.id = t.order_id
-        where t.ubrano_at is null and o.secrets_wiped_at is not null and t.popytok < $1
+        where t.ubrano_at is null
+          and o.closed_at is not null and o.closed_at < now() - interval '7 days'
+          and t.popytok < $1
         order by t.id
         limit 50`,
       [POPYTOK_UBRAT],

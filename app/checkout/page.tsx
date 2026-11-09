@@ -60,6 +60,9 @@ export default async function Checkout({
     kop: c.kop,
     label: srokPolno(c.period),
     egipet: c.egipet,
+    /* Старая цена едет только у пары со скидкой: по ней оформление
+       рисует плашку «−N%» и зачёркнутую цену (Р-170). */
+    bezSkidki: c.bezSkidki,
   }));
   /* ⚠️ БЕЗ ЯВНОГО СРОКА В АДРЕСЕ ОТКРЫВАЕТСЯ САМЫЙ КОРОТКИЙ, А НЕ САМЫЙ
      ДЛИННЫЙ. Раньше умолчанием был последний срок из списка, то есть
@@ -122,7 +125,13 @@ export default async function Checkout({
       /* Признак «Египет» едет с каждым сроком: плашка про египетский
          VPN обязана идти за ПАРОЙ, которую человек выбрал в «Изменить»,
          а не за той, с которой он пришёл. */
-      sroki: t.ceny.map((c) => ({ period: c.period, kop: c.kop, label: srokPolno(c.period), egipet: c.egipet })),
+      sroki: t.ceny.map((c) => ({
+        period: c.period,
+        kop: c.kop,
+        label: srokPolno(c.period),
+        egipet: c.egipet,
+        bezSkidki: c.bezSkidki,
+      })),
     }));
 
   const vvod: Vvod = {

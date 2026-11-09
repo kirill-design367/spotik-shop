@@ -2,7 +2,7 @@
 
 import { useActionState, useState } from 'react';
 import { Soglasie } from './Soglasie';
-import { deystvieOformit, type Otvet } from '@/lib/server/actions-client';
+import { deystvieOformit, deystvieProveritPromo, type Otvet } from '@/lib/server/actions-client';
 import { rubli } from '@/lib/server/money';
 import { cel, CELI } from '@/lib/metrika';
 import { Pole, PoleParolya } from './Polya';
@@ -10,7 +10,10 @@ import { parolNeGoditsya, pochtaNeVerna, PRAVILO_PAROLYA } from '@/lib/proverka'
 import { CHASY_SLOVAMI } from '@/lib/chasy';
 import { useUhodNaOplatu } from './uhod';
 import EgipetPlashka from '@/components/EgipetPlashka';
-import { VPN_OPLATA_TEKST } from '@/lib/plans';
+import { VPN_OPLATA_TEKST, procentSkidki } from '@/lib/plans';
+import { kodPromo, PREDEL_KODA, skidkaKop } from '@/lib/promokod';
+import CenaSoSkidkoy from './CenaSoSkidkoy';
+import Bukvalno from '@/components/Bukvalno';
 
 export type SrokVybor = {
   period: number;
@@ -18,6 +21,8 @@ export type SrokVybor = {
   label: string;
   /** Аккаунт на этой паре привязан к Египту (сорок девятая итерация). */
   egipet: boolean;
+  /** Цена до скидки тарифа — есть только у пары со скидкой (Р-170). */
+  bezSkidki?: number;
 };
 
 export type TarifVybor = {
@@ -119,6 +124,40 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
     setBedy((s) => Array.from({ length: n }, (_, i) => s[i] ?? { login: null, password: null }));
   };
   const [bedaSoglasiya, setBedaSoglasiya] = useState<string | null>(null);
+  /* ⚠️ ПРОМОКОД (Р-167). Поле, которое человек набирает, НЕ ИМЕЕТ ИМЕНИ
+     и в форму не уезжает: уезжает скрытое `promo` — код, который сервер
+     уже признал годным. Набрал и не нажал «Применить» — значит скидки
+     он не видел, и платить по ней было бы неожиданностью в обе стороны.
+     Сервер всё равно проверяет код ЗАНОВО при создании заказа и занимает
+     активацию в той же транзакции: проверка здесь — только чтобы новая
+     цена была видна ДО оплаты. */
+  const [promoVvod, setPromoVvod] = useState('');
+  const [promo, setPromo] = useState<{ kod: string; skidkaProc: number } | null>(null);
+  const [promoBeda, setPromoBeda] = useState<string | null>(null);
+  const [promoIdyot, setPromoIdyot] = useState(false);
+  const primenit = async () => {
+    const kod = kodPromo(promoVvod);
+    if (!kod) {
+      setPromoBeda('Введите промокод.');
+      return;
+    }
+    setPromoIdyot(true);
+    setPromoBeda(null);
+    try {
+      const o = await deystvieProveritPromo(kod);
+      if ('oshibka' in o) {
+        setPromo(null);
+        setPromoBeda(o.oshibka);
+      } else {
+        setPromo(o);
+        setPromoVvod(o.kod);
+      }
+    } catch {
+      setPromoBeda('Не получилось проверить промокод. Попробуйте ещё раз.');
+    } finally {
+      setPromoIdyot(false);
+    }
+  };
   const [otvet, oformit, idyot] = useActionState<Otvet, FormData>(deystvieOformit, {});
   /* ⚠️ НА РОБОКАССУ УХОДИТ БРАУЗЕР, А НЕ РОУТЕР NEXT. Прежде это
      делал `redirect()` внутри серверного действия, и нажатие «назад»
@@ -172,16 +211,21 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
     return vvod.pochtyPodskazki.filter((p) => !zanyaty.includes(p.toLowerCase()));
   };
 
-  const cena = sroki.find((s) => s.period === period)?.kop ?? 0;
-  const srokLabel = sroki.find((s) => s.period === period)?.label ?? '';
+  const vybrannyy = sroki.find((s) => s.period === period);
+  const cena = vybrannyy?.kop ?? 0;
+  const srokLabel = vybrannyy?.label ?? '';
   /* ⚠️ ПЛАШКА ИДЁТ ЗА ВЫБРАННОЙ ПАРОЙ, А НЕ ЗА ПРИШЕДШЕЙ С ГЛАВНОЙ:
      человек может сменить тариф и срок в «Изменить», и плашка обязана
      появиться или уйти вслед за этим. У сертификата её нет, как и у
      плашки часов: покупатель подарка аккаунт не заводит. */
   const egipet = !vvod.sertifikat && Boolean(sroki.find((s) => s.period === period)?.egipet);
   const imyaTarifa = vvod.sertifikat ? `Сертификат · ${tarif?.name ?? vvod.planName}` : (tarif?.name ?? vvod.planName);
-  const sBalansa = tratit ? Math.min(vvod.balansKop, cena) : 0;
-  const kOplate = cena - sBalansa;
+  /* ⚠️ ПРОМОКОД СЧИТАЕТСЯ ОТ ТЕКУЩЕЙ ЦЕНЫ, ТО ЕСТЬ УЖЕ СО СКИДКОЙ ТАРИФА,
+     и ДО баланса — той же `skidkaKop`, что и сервер (Р-167). */
+  const skidkaPromo = promo ? skidkaKop(cena, promo.skidkaProc) : 0;
+  const itogo = cena - skidkaPromo;
+  const sBalansa = tratit ? Math.min(vvod.balansKop, itogo) : 0;
+  const kOplate = itogo - sBalansa;
 
   return (
     /* ⚠️ ЦЕЛЬ ШЛЁТСЯ НА ОТПРАВКЕ ФОРМЫ, А НЕ ПОСЛЕ ОТВЕТА СЕРВЕРА:
@@ -230,7 +274,9 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
         <div className="vybor__stroka">
           <span className="vybor__t">{imyaTarifa}</span>
           <span className="vybor__s">{srokLabel}</span>
-          <span className="vybor__c tnum summa" key={cena}>{rubli(cena)}</span>
+          <span className="vybor__c">
+            <CenaSoSkidkoy kop={cena} bylo={vybrannyy?.bezSkidki} klass="tnum summa" kluch={cena} />
+          </span>
           <button
             type="button"
             className="vybor__izm"
@@ -271,6 +317,9 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
                   onClick={() => setPeriod(s.period)}
                 >
                   {s.label} · {rubli(s.kop)}
+                  {s.bezSkidki && s.bezSkidki > s.kop ? (
+                    <span className="skidka-plashka pick__skidka">−{procentSkidki(s.bezSkidki, s.kop)}%</span>
+                  ) : null}
                 </button>
               ))}
             </div>
@@ -376,10 +425,12 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
               </div>
             </div>
           ))}
+          {/* ⚠️ ОБЕЩАНИЯ «СТИРАЕТСЯ ЧЕРЕЗ СЕМЬ ДНЕЙ» БОЛЬШЕ НЕТ (Р-172):
+              доступы не стираются, и текст обязан говорить правду. */}
           <p className="panel__note">
             {rezhimy.includes('renew')
-              ? 'Пароль нужен, чтобы включить Premium на аккаунте. Он хранится зашифрованным, виден только исполнителю заказа и стирается через семь дней после его закрытия.'
-              : 'Аккаунт заведём мы — на указанную почту и с указанным паролем. Пароль хранится зашифрованным, виден только исполнителю заказа и стирается через семь дней после закрытия заказа.'}
+              ? 'Пароль нужен, чтобы включить Premium на аккаунте. Пароль хранится зашифрованным и виден только исполнителю заказа.'
+              : 'Аккаунт заведём мы — на указанную почту и с указанным паролем. Пароль хранится зашифрованным и виден только исполнителю заказа.'}
           </p>
         </div>
       ) : (
@@ -405,8 +456,79 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
               играет заново: число «пересчитывается с движением», как
               и просили. Без ключа узел тот же, анимация уже отыграла,
               и цифра менялась бы молча. */}
-          <span key={cena} className="tnum summa">{rubli(cena)}</span>
+          <CenaSoSkidkoy kop={cena} bylo={vybrannyy?.bezSkidki} klass="tnum summa" kluch={cena} />
         </p>
+
+        {/* ⚠️ ПОЛЕ ПРОМОКОДА БЕЗ ИМЕНИ, а `promo` — скрытое поле с уже
+            принятым кодом (см. состояние выше). Enter в поле применяет
+            код, а не отправляет заказ: человек, набравший код и нажавший
+            Enter, ждёт новой цены, а не перехода на оплату. */}
+        <input type="hidden" name="promo" value={promo?.kod ?? ''} />
+        <div className="field promo">
+          <label className="field__label" htmlFor="promo-vvod">
+            Промокод
+          </label>
+          {promo ? (
+            <div className="promo__est">
+              <span>
+                <Bukvalno className="promo__kod">{promo.kod}</Bukvalno> · −{promo.skidkaProc}%
+              </span>
+              <button
+                type="button"
+                className="vybor__izm"
+                onClick={() => {
+                  setPromo(null);
+                  setPromoBeda(null);
+                }}
+              >
+                Убрать
+              </button>
+            </div>
+          ) : (
+            <div className="promo__ryad">
+              <input
+                id="promo-vvod"
+                className="field__input promo__pole ym-disable-keys"
+                type="text"
+                inputMode="text"
+                autoComplete="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                translate="no"
+                maxLength={PREDEL_KODA + 8}
+                value={promoVvod}
+                aria-invalid={promoBeda ? true : undefined}
+                aria-describedby={promoBeda ? 'promo-beda' : undefined}
+                onChange={(e) => {
+                  setPromoVvod(e.target.value);
+                  setPromoBeda(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void primenit();
+                  }
+                }}
+              />
+              <button type="button" className="btn btn--ghost btn--sm" disabled={promoIdyot} onClick={() => void primenit()}>
+                {promoIdyot ? 'Проверяем…' : 'Применить'}
+              </button>
+            </div>
+          )}
+          {promoBeda ? (
+            <p className="field__beda" id="promo-beda" role="alert">
+              {promoBeda}
+            </p>
+          ) : null}
+        </div>
+        {promo && skidkaPromo > 0 ? (
+          <p className="sum">
+            <span>
+              Промокод <Bukvalno>{promo.kod}</Bukvalno> (−{promo.skidkaProc}%)
+            </span>
+            <span key={skidkaPromo} className="tnum summa">−{rubli(skidkaPromo)}</span>
+          </p>
+        ) : null}
         {vvod.balansKop > 0 ? (
           <>
             <label className="check">
@@ -449,7 +571,7 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
           <p className="panel__note panel__note--plate">{VPN_OPLATA_TEKST}</p>
         ) : null}
 
-        <button type="submit" className="btn btn--wide" disabled={idyot || uhodim || cena <= 0}>
+        <button type="submit" className="btn btn--wide" disabled={idyot || uhodim || promoIdyot || cena <= 0}>
           {idyot || uhodim
             ? uhodim
               ? 'Переходим к оплате…'

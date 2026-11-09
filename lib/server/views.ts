@@ -21,7 +21,7 @@
 
 import { odna, zapros } from './db';
 import { poprobovatRasshifrovat } from './crypto';
-import { STATUS_SLOVAMI, type Rezhim, type Status } from './orders';
+import { PRICHINA_POPOLNENIYA, STATUS_SLOVAMI, type Rezhim, type Status } from './orders';
 import { katalog, naytiTarif, srokKratko } from './catalog';
 import { usloviyeVidimosti, usloviyeVidimostiOtmeny, usloviyeVidimostiSZadachey, type Dostup } from './dostup';
 import { METKI } from './utm';
@@ -256,6 +256,60 @@ export async function balans(userId: number): Promise<number> {
   return Number(r?.balance_kop ?? 0);
 }
 
+/** Строка истории баланса — то, что видит клиент (Р-168). */
+export type DvizhenieBalansa = {
+  kogda: string;
+  deltaKop: number;
+  /** Человеческое название движения: без номера заказа (закон 48). */
+  chto: string;
+};
+
+/**
+ * ИСТОРИЯ БАЛАНСА в кабинете.
+ *
+ * ⚠️ ПРИЧИНА В `balance_move` — СЛОВО ДЛЯ ЖУРНАЛА, а клиенту нужна
+ * фраза, и номера заказа в ней быть не должно (закон 48): заказ
+ * называется тарифом и сроком, как везде в кабинете. Незнакомая
+ * причина показывается как есть — лучше честное служебное слово,
+ * чем пустая строка.
+ */
+export async function istoriyaBalansa(userId: number, skolko = 20): Promise<DvizhenieBalansa[]> {
+  const rows = await zapros<{
+    created_at: Date;
+    delta_kop: string;
+    reason: string;
+    plan_id: string | null;
+    period: number | null;
+    kind: 'plan' | 'certificate' | null;
+  }>(
+    `select m.created_at, m.delta_kop, m.reason, o.plan_id, o.period, o.kind
+       from balance_move m
+       left join shop_order o on o.id = m.order_id
+      where m.user_id = $1
+      order by m.created_at desc, m.id desc
+      limit $2`,
+    [userId, skolko],
+  );
+  if (!rows.length) return [];
+  const spisok = await katalog();
+  return rows.map((r) => {
+    const zakaz = r.plan_id
+      ? `${r.kind === 'certificate' ? 'сертификат, ' : ''}${naytiTarif(spisok, r.plan_id)?.name ?? r.plan_id}, ${srokKratko(r.period ?? 1)}`
+      : '';
+    const chto =
+      r.reason === PRICHINA_POPOLNENIYA
+        ? 'Пополнение баланса'
+        : r.reason === 'оплата заказа'
+          ? `Оплата заказа${zakaz ? ` — ${zakaz}` : ''}`
+          : r.reason === 'возврат за отменённый заказ'
+            ? `Возврат за отменённый заказ${zakaz ? ` — ${zakaz}` : ''}`
+            : r.reason === 'оплата по заказу, который уже не ждал денег'
+              ? `Оплата пришла после отмены заказа${zakaz ? ` — ${zakaz}` : ''}`
+              : r.reason;
+    return { kogda: new Date(r.created_at).toISOString(), deltaKop: Number(r.delta_kop), chto };
+  });
+}
+
 /* ── Админка ───────────────────────────────────────────────────── */
 
 /**
@@ -486,6 +540,13 @@ export type ZakazOperatoru = {
   totalKop: number | null;
   balanceKop: number | null;
   moneyKop: number | null;
+  /**
+   * Промокод заказа и скидка по нему (Р-167) — ТОЛЬКО АДМИНИСТРАТОРУ,
+   * как и деньги заказа: это та же величина «сколько заплатил».
+   * `null` у кода — промокода не было или смотрит не администратор.
+   */
+  promoKod: string | null;
+  promoSkidkaKop: number | null;
   cancelReason: string | null;
   /**
    * История работы. `null` — СПРАШИВАЛ НЕ АДМИНИСТРАТОР.
@@ -570,6 +631,8 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
     total_kop: string;
     balance_kop: string;
     money_kop: string;
+    promo_kod: string | null;
+    promo_skidka_kop: string;
     cancel_reason: string | null;
     secrets_wiped_at: Date | null;
     raschyot: Date;
@@ -587,7 +650,8 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
     `select o.id, o.plan_id, o.period, o.status, o.source, u.email, o.expires_at,
             t.order_id as t_order, t.operator_id as t_operator_id, tf.email as t_operator_email, t.done_at as t_done_at,
             o.operator_id, f.email as operator_email,
-            o.total_kop, o.balance_kop, o.money_kop, o.cancel_reason, o.secrets_wiped_at,
+            o.total_kop, o.balance_kop, o.money_kop, o.promo_kod, o.promo_skidka_kop,
+            o.cancel_reason, o.secrets_wiped_at,
             (now() + (o.period || ' months')::interval)::date as raschyot,
             o.utm_source, o.utm_medium, o.utm_campaign, o.utm_term, o.utm_content
        from shop_order o
@@ -618,12 +682,12 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
          карточку заказа: почты и пароли аккаунтов» (пункт 8), — и
          у заказа, отменённого после выполнения: это тот же заказ,
          и подписку с него снимают по этим же данным.
-     Стёртое через семь дней не расшифровывается никому: шифротекста
-     к тому времени нет вовсе (закон 35). */
-  const vidit =
-    moy ||
-    Boolean(otmena && otmena.moya && !otmena.zakryta) ||
-    (admin && (r.status === 'done' || Boolean(otmena)));
+       • с пятьдесят третьей итерации — администратор у ЛЮБОГО заказа:
+         «Продажи → Открыть показывает карточку заказа: почты и пароли
+         аккаунтов, даты окончания подписки, историю» (Р-171).
+     Стёртое до пятьдесят третьей итерации не расшифровывается никому:
+     шифротекста нет вовсе (закон 35). */
+  const vidit = moy || Boolean(otmena && otmena.moya && !otmena.zakryta) || admin;
   const slots = await zapros<{
     id: string;
     idx: number;
@@ -660,6 +724,8 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
     totalKop: admin ? Number(r.total_kop) : null,
     balanceKop: admin ? Number(r.balance_kop) : null,
     moneyKop: admin ? Number(r.money_kop) : null,
+    promoKod: admin ? r.promo_kod : null,
+    promoSkidkaKop: admin && r.promo_kod ? Number(r.promo_skidka_kop) : null,
     cancelReason: r.cancel_reason,
     istoriya: admin ? await istoriyaZakaza(id) : null,
     secretsWiped: Boolean(r.secrets_wiped_at),

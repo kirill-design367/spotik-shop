@@ -6,6 +6,7 @@ import { nastroyki, proveritVozvrat } from '@/lib/server/robokassa';
 import Celi from '@/components/shop/Celi';
 import { CELI, type TovarZakaza } from '@/lib/metrika';
 import { katalog, naytiTarif, srokPolno } from '@/lib/server/catalog';
+import { rubli } from '@/lib/server/money';
 
 export const metadata: Metadata = { title: 'Оплата — Spotik Shop', robots: { index: false, follow: false } };
 export const dynamic = 'force-dynamic';
@@ -39,6 +40,42 @@ export default async function PayOk({
   let podarok = false;
   let tovary: TovarZakaza[] = [];
   let vsegoRub = 0;
+  /* ⚠️ ПОПОЛНЕНИЕ БАЛАНСА ВОЗВРАЩАЕТСЯ СЮДА ЖЕ (Р-168): Success URL
+     в кабинете Робокассы один на магазин. Заказа у такого счёта нет,
+     и страница говорит про баланс — и тоже ничего не подтверждает:
+     деньги кладёт только проверенное уведомление (закон 34). */
+  const popolnenie =
+    platyozh && kto
+      ? await odna<{ status: string; amount_kop: string }>(
+          `select status, amount_kop from payment where id = $1 and kind = 'topup' and user_id = $2`,
+          [platyozh, kto.userId],
+        )
+      : null;
+  if (popolnenie) {
+    const zachisleno = popolnenie.status === 'paid';
+    return (
+      <main id="main" className="page" tabIndex={-1}>
+        <div className="spasibo">
+          <svg className="galka" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+            <circle className="galka__krug" cx="32" cy="32" r="29" />
+            <path className="galka__put" d="M19 33.5 L28 42.5 L45.5 23" />
+          </svg>
+          <h1 className="page__h" style={{ marginBottom: 6 }}>
+            {zachisleno ? 'Баланс пополнен' : 'Спасибо'}
+          </h1>
+          <p className="page__lead" style={{ margin: 0 }}>
+            {zachisleno
+              ? `${rubli(Number(popolnenie.amount_kop))} уже на балансе. Спишутся при следующем оформлении — галочкой в «К оплате».`
+              : 'Платёж отправлен. Как только банк его подтвердит — обычно за несколько минут, — деньги появятся на балансе в кабинете.'}
+          </p>
+        </div>
+        <div className="page__knopki">
+          <a className="btn" href="/cabinet/">В личный кабинет</a>
+          <a className="btn btn--ghost" href="/">Вернуться на сайт</a>
+        </div>
+      </main>
+    );
+  }
   if (platyozh && kto) {
     const r = await odna<{
       order_id: string;

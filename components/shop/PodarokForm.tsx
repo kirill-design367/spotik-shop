@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import VyborTarifa, { type KartaTarifa } from '@/components/mid/VyborTarifa';
 import { rubli } from '@/lib/server/money';
+import CenaSoSkidkoy from './CenaSoSkidkoy';
 import type { TarifSCenami } from '@/lib/server/catalog';
 
 /**
@@ -94,12 +95,17 @@ export default function PodarokForm({ tarify }: { tarify: TarifSCenami[] }) {
           <span>
             Сертификат · {karta.name}, {srokSlovami(period)}
           </span>
-          <span className="tnum summa" key={cena?.kop ?? 0}>{cena ? rubli(cena.kop) : '—'}</span>
+          {cena ? (
+            <CenaSoSkidkoy kop={cena.kop} bylo={cena.bezSkidki} klass="tnum summa" kluch={cena.kop} />
+          ) : (
+            <span className="tnum">—</span>
+          )}
         </p>
+        {/* ⚠️ СТАРАЯ ЦЕНА СТОИТ ЗАЧЁРКНУТОЙ РЯДОМ С НОВОЙ, С ПЛАШКОЙ «−N%»
+            (Р-170); здесь остаётся только срок скидки. */}
         {cena?.bezSkidki && cena.doDaty ? (
           <p className="panel__note" style={{ marginTop: 0 }}>
-            Было <s className="tnum">{rubli(cena.bezSkidki)}</s> — скидка действует
-            до {cena.doDaty}.
+            Скидка действует до {cena.doDaty}.
           </p>
         ) : null}
         <p className="panel__note" style={{ marginTop: 0 }}>

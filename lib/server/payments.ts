@@ -14,6 +14,7 @@ import { nazvanieZakaza } from './orders';
 import { katalog, naytiTarif } from './catalog';
 import { nastroyki, robokassaRabotaet, ssylkaOplaty } from './robokassa';
 import { log } from './log';
+import { rubli } from './money';
 
 export type Schet =
   | { ok: true; platyozh: number; adres: string; test: boolean }
@@ -82,4 +83,49 @@ export async function vystavitSchet(zakaz: number, userId: number): Promise<Sche
  */
 export function imitatorVklyuchyon(): boolean {
   return Boolean(env.payFakeSecret) && !robokassaRabotaet();
+}
+
+/**
+ * ПОПОЛНЕНИЕ БАЛАНСА: счёт без заказа (Р-168).
+ *
+ * ⚠️ СЧЁТ ЖИВЁТ В ТОЙ ЖЕ ТАБЛИЦЕ `payment`: номер счёта в Робокассе —
+ * это `payment.id`, и второй источник номеров дал бы повторный
+ * `InvId`, а его Робокасса не принимает никогда. Зачисляет деньги
+ * та же единственная дверь — `otmetitOplachennym`, по проверенному
+ * уведомлению; возврат человека на страницу успеха не зачисляет
+ * ничего (закон 34).
+ *
+ * ⚠️ ЧЕК — ПРЕДОПЛАТА: услуги за этими деньгами ещё нет.
+ */
+export const POPOLNENIE_MIN_KOP = 10_00;
+export const POPOLNENIE_MAX_KOP = 50_000_00;
+
+export async function vystavitSchetPopolneniya(userId: number, summaKop: number): Promise<Schet> {
+  if (!Number.isInteger(summaKop) || summaKop < POPOLNENIE_MIN_KOP || summaKop > POPOLNENIE_MAX_KOP) {
+    return {
+      ok: false,
+      pochemu: `Сумма пополнения — от ${rubli(POPOLNENIE_MIN_KOP)} до ${rubli(POPOLNENIE_MAX_KOP)}, целыми рублями.`,
+    };
+  }
+  const imitator = imitatorVklyuchyon();
+  if (!robokassaRabotaet() && !imitator) {
+    return { ok: false, pochemu: 'Оплата картой ещё не подключена: магазин Робокассы не настроен.' };
+  }
+  const p = await odna<{ id: string }>(
+    `insert into payment (kind, user_id, order_id, provider, amount_kop, status)
+     values ('topup', $1, null, 'robokassa', $2, 'new') returning id`,
+    [userId, summaKop],
+  );
+  const platyozh = Number(p!.id);
+  if (imitator) {
+    log.warn('счёт пополнения выставлен ИМИТАТОРОМ: настоящей оплаты нет', { user: userId, payment: platyozh, amount_kop: summaKop });
+    return { ok: true, platyozh, adres: `/pay/test/?payment=${platyozh}`, test: true };
+  }
+  const n = nastroyki();
+  const adres = ssylkaOplaty(n, platyozh, summaKop, 'Spotik Shop, пополнение баланса', [
+    { name: 'Пополнение баланса Spotik Shop', sumKop: summaKop, sposob: 'full_prepayment' },
+  ]);
+  await zapros('update payment set external_id = $2 where id = $1', [platyozh, String(platyozh)]);
+  log.info('счёт пополнения выставлен', { user: userId, payment: platyozh, amount_kop: summaKop, test: n.test });
+  return { ok: true, platyozh, adres, test: n.test };
 }

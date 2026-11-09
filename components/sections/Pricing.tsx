@@ -123,9 +123,6 @@ export default function Pricing({
   const plan = vidnye.find((t) => t.id === planId) ?? vidnye[0] ?? tarify[0];
   const cena = plan.ceny.find((c) => c.period === period);
   const acc = account[plan.id] ?? 'new';
-  /* Экономия относительно помесячной оплаты того же тарифа. */
-  const mes = plan.ceny.find((c) => c.period === 1)?.rub;
-  const save = cena && mes && period > 1 ? mes * period - cena.rub : 0;
   /* Египетская плашка идёт за ВЫБРАННОЙ парой: сменили карту или
      срок — плашка плавно встала или ушла. */
   const egipetskaya = (egipet ?? EGIPET_PO_UMOLCHANIYU).some((e) => e.planId === plan.id && e.period === period);
@@ -167,7 +164,9 @@ export default function Pricing({
           <p className="order__plan">
             <span className="order__label">Выбрано</span>
             <b>{plan.name}</b>
-            {save > 0 ? <span className="order__save tnum">экономия {formatPrice(save)} ₽</span> : null}
+            {/* ⚠️ ЗЕЛЁНОЙ СТРОКИ «ЭКОНОМИЯ» БОЛЬШЕ НЕТ (Р-170): скидку
+                говорит плашка «−N%» на самой карте, рядом с зачёркнутой
+                старой ценой. */}
           </p>
 
           {/* ⚠️ ВЫБОР АККАУНТА — ДВЕ КРУПНЫЕ ПЛАШКИ, А НЕ ДВА КРУЖКА

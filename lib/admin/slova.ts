@@ -40,6 +40,8 @@ const S = {
   'nav.certs': ['Сертификаты', 'Certificates'],
   'nav.staff': ['Сотрудники', 'Staff'],
   'nav.stats': ['Статистика', 'Stats'],
+  'nav.sales': ['Продажи', 'Sales'],
+  'nav.promo': ['Промокоды', 'Promo codes'],
   'nav.site': ['Сайт', 'Site'],
   'nav.logout': ['Выйти', 'Log out'],
   'nav.lang': ['Язык интерфейса', 'Interface language'],
@@ -155,6 +157,74 @@ const S = {
   'st.done': ['выполнен', 'done'],
   'st.cancelled': ['отменён', 'cancelled'],
 
+  /* ── Промокоды (Р-167) ───────────────────────────────────────── */
+  'pr.h': ['Промокоды', 'Promo codes'],
+  'pr.hint': [
+    'Скидка считается от текущей цены тарифа — уже со скидкой тарифа, если она действует. Активация тратится в момент оформления заказа, а не когда код введён на сайте: код, сгоревший у того, кто передумал, — это код, отобранный у того, кто дошёл до конца. Отменили заказ до выполнения — активация вернулась коду.',
+    'The discount is taken off the current plan price — already discounted, if the plan has a discount. An activation is spent when the order is placed, not when the code is typed on the site: a code burned by someone who changed their mind is a code taken from someone who went through with it. Cancel the order before it is done and the activation returns to the code.',
+  ],
+  'pr.new_h': ['Завести промокод', 'Add a promo code'],
+  'pr.kod': ['Код', 'Code'],
+  'pr.kod_hint': [
+    'Латиница, цифры и дефис, до 16 знаков; регистр не важен — код всё равно приводится к прописным. Пустое поле — и код придумается сам.',
+    'Latin letters, digits and hyphens, up to 16 characters; case does not matter, the code is upper-cased anyway. Leave it empty and one will be generated.',
+  ],
+  'pr.skidka': ['Скидка, %', 'Discount, %'],
+  'pr.do': ['Действует до', 'Valid until'],
+  'pr.aktivaciy': ['Активаций', 'Activations'],
+  'pr.zavesti': ['Завести промокод', 'Add a promo code'],
+  'pr.sohranit': ['Сохранить', 'Save'],
+  'pr.otklyuchit': ['Отключить', 'Switch off'],
+  'pr.vklyuchit': ['Включить обратно', 'Switch back on'],
+  'pr.ostalos': ['Осталось', 'Left'],
+  'pr.ispolzovano': ['Использовано', 'Used'],
+  'pr.st_deystvuet': ['Действует', 'Active'],
+  'pr.st_istyok': ['Истёк', 'Expired'],
+  'pr.st_konchilis': ['Активации кончились', 'Activations used up'],
+  'pr.st_otklyuchen': ['Отключён', 'Switched off'],
+  'pr.kem': ['Кем и когда применялся', 'Who used it and when'],
+  'pr.ne_primenyalsya': ['Ещё не применялся', 'Not used yet'],
+  'pr.skidka_rub': ['Скидка', 'Discount'],
+  'pr.vernulas': ['активация вернулась', 'activation returned'],
+  'pr.none': ['Промокодов пока нет.', 'No promo codes yet.'],
+  'pr.zaveden': ['Промокод {kod} заведён.', 'Promo code {kod} added.'],
+  'pr.izmenen': ['Промокод {kod} сохранён.', 'Promo code {kod} saved.'],
+  'pr.otklyuchen': ['Промокод {kod} отключён.', 'Promo code {kod} switched off.'],
+  'pr.vklyuchen': ['Промокод {kod} снова действует.', 'Promo code {kod} works again.'],
+  'pr.e_kod': ['В коде не осталось ни одного знака: только латиница, цифры и дефис.', 'Nothing is left of that code: Latin letters, digits and hyphens only.'],
+  'pr.e_zanyat': ['Такой код уже заведён.', 'That code already exists.'],
+  'pr.e_skidka': ['Скидка бывает от 1 до 100 процентов.', 'A discount is between 1 and 100 per cent.'],
+  'pr.e_srok': ['Укажите дату, до которой код работает.', 'Set the date the code works until.'],
+  'pr.e_aktivacii': ['Активаций бывает от одной до десяти тысяч.', 'Activations range from one to ten thousand.'],
+  'pr.e_net': ['Такого промокода нет.', 'There is no such promo code.'],
+  'pr.e_malo': [
+    'Активаций не может быть меньше, чем уже использовано.',
+    'There cannot be fewer activations than are already used.',
+  ],
+
+  /* ── Продажи (Р-171) ─────────────────────────────────────────── */
+  'sl.h': ['Продажи', 'Sales'],
+  'sl.hint': [
+    'Все заказы, свежие сверху. Период — по дате оплаты, у неоплаченных — по дате оформления, дни по Москве. «Открыть» показывает карточку заказа с аккаунтами и историей.',
+    'All orders, newest first. The period is by payment date, or by order date for unpaid ones, days in Moscow time. “Open” shows the order card with its accounts and history.',
+  ],
+  'sl.all': ['Все', 'All'],
+  'sl.q': ['Поиск', 'Search'],
+  'sl.q_ph': ['номер, почта клиента или аккаунта', 'number, client or account email'],
+  'sl.q_hint': [
+    'Номер заказа и почта клиента ищутся и по куску. Почта аккаунта Spotify — только целиком: она хранится зашифрованной, и сравнивается её отпечаток.',
+    'Order number and client email match partially. A Spotify account email only matches in full: it is stored encrypted, and its fingerprint is compared.',
+  ],
+  'sl.sbros': ['Сбросить', 'Reset'],
+  'sl.found': ['Найдено заказов: {n}', 'Orders found: {n}'],
+  'sl.sum': ['Сумма', 'Amount'],
+  'sl.promo': ['Промокод', 'Promo code'],
+  'sl.cert': ['сертификат', 'certificate'],
+  'sl.pages': ['Страницы', 'Pages'],
+  'sl.prev': ['Назад', 'Previous'],
+  'sl.next': ['Дальше', 'Next'],
+  'sl.page': ['Страница {n} из {m}', 'Page {n} of {m}'],
+
   /* ── Карточка заказа ─────────────────────────────────────────── */
   'z.h': ['Заказ № {n}', 'Order #{n}'],
   'z.back': ['← назад в очередь', '← back to the queue'],
@@ -170,6 +240,7 @@ const S = {
   'z.taken_by': ['взял {kto}', 'taken by {kto}'],
   'z.cancel_reason': ['Отменён потому что', 'Cancelled because'],
   'z.utm': ['Откуда пришёл', 'Came from'],
+  'z.promo': ['Промокод', 'Promo code'],
   'z.take': ['Взять заказ', 'Take this order'],
   'z.release': ['Вернуть в очередь', 'Put back in the queue'],
   'z.done_note': [
@@ -250,11 +321,11 @@ const S = {
   'w.yes': ['Да', 'Yes'],
   'w.no': ['Нет', 'No'],
   'w.back': ['Назад', 'Back'],
-  'w.finish_h': ['Завершение', 'Finishing up'],
-  'w.finish_btn': ['Завершить заказ', 'Finish the order'],
-  'w.all_done': [
-    'Все аккаунты пройдены. Осталось закрыть заказ — клиенту уйдёт письмо.',
-    'Every account is done. All that is left is to close the order — the client will be emailed.',
+  /* Шага «Завершение» нет с пятьдесят третьей итерации (Р-169):
+     последний аккаунт и выполняет заказ. */
+  'w.last_step': [
+    'Это последний аккаунт: после «Да» заказ будет выполнен, и клиенту уйдёт письмо.',
+    'This is the last account: after “Yes” the order is completed and the client is emailed.',
   ],
   'w.ends': ['Дата окончания подписки в Spotify', 'Subscription end date in Spotify'],
   'w.ends_hint': [
@@ -489,9 +560,21 @@ const S = {
   'ss.orders': ['Заказов', 'Orders'],
   'ss.revenue': ['Выручка', 'Revenue'],
   'ss.revenue_note': [
-    'Заказы, выполненные за выбранный период, по времени выполнения, — это итог таблицы «По тарифам и срокам» ниже. Заказ, у которого потом отменили подписку, считается: деньги остались у сервиса. Выручка — это деньги, прошедшие через кассу: оплаченное с баланса и заказы по сертификату сюда не входят, эти деньги уже посчитаны там, где их приняли.',
-    'Orders completed in the selected period, by completion time — the total of the “By plan and term” table below. An order whose subscription was cancelled later still counts: the money stayed with the service. Revenue is money that went through the payment provider: balance payments and certificate orders are not counted here, that money was already counted where it came in.',
+    'Заказы, выполненные за выбранный период, по времени выполнения, — это итог таблицы «По тарифам и срокам» ниже. Заказ, у которого потом отменили подписку, считается: деньги остались у сервиса. Выручка — это то, чем выполненный заказ оплачен: картой и с баланса. Деньги на баланс приходят пополнением, возвратом за отменённый заказ и оплатой заказа, который их уже не ждал, — и ни в одном из этих случаев не считаются, пока ими не оплатят выполненный заказ. Так каждый рубль попадает в выручку ровно один раз. Заказы по сертификату стоят ноль: деньги за них посчитаны при покупке сертификата.',
+    'Orders completed in the selected period, by completion time — the total of the “By plan and term” table below. An order whose subscription was cancelled later still counts: the money stayed with the service. Revenue is what a completed order was paid with: by card and from the balance. Money reaches the balance through top-ups, refunds for cancelled orders and payments for orders that were no longer waiting — and in none of these cases is it counted until it pays for a completed order. That way every rouble enters revenue exactly once. Certificate orders cost zero: their money was counted when the certificate was bought.',
   ],
+  'ss.topups': ['Пополнения баланса', 'Balance top-ups'],
+  'ss.topups_n': ['· пополнений: {n}', '· top-ups: {n}'],
+  'ss.topups_note': [
+    'Пополнения — по дате оплаты, за тот же период. В выручку они не входят: эти деньги войдут в неё, когда ими оплатят выполненный заказ.',
+    'Top-ups by payment date, for the same period. They are not part of revenue: that money enters revenue when it pays for a completed order.',
+  ],
+  'ss.promo': ['Промокоды', 'Promo codes'],
+  'ss.promo_note': [
+    'Выполненные за период заказы с промокодом и скидка по ним — те же заказы, что в таблице «По тарифам и срокам».',
+    'Orders completed in the period with a promo code and the discount on them — the same orders as in the “By plan and term” table.',
+  ],
+  'ss.promo_skidka': ['Скидка', 'Discount'],
   /* ⚠️ ВЕРХНЯЯ КАРТОЧКА СЧИТАЕТ ВЫПОЛНЕННЫЕ (пятидесятая итерация,
      вопрос 106), и надпись у неё своя: общее «Заказов» осталось
      заголовком столбцов в таблицах. */
@@ -642,7 +725,7 @@ export type Podstanovki = Record<string, string | number>;
  * обязана называться одним из этих имён или попасть в этот список;
  * числа, тариф, срок и роль — наши надписи, их переводить можно.
  */
-export const PODSTANOVKI_DANNYE: readonly string[] = ['email', 'kto'];
+export const PODSTANOVKI_DANNYE: readonly string[] = ['email', 'kto', 'kod'];
 
 export type Perevod = (k: Klyuch, p?: Podstanovki) => string;
 

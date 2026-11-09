@@ -46,6 +46,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               {s.role === 'admin' ? <a href="/admin/settings/">{t('nav.prices')}</a> : null}
               {s.role === 'admin' ? <a href="/admin/certificates/">{t('nav.certs')}</a> : null}
               {s.role === 'admin' ? <a href="/admin/staff/">{t('nav.staff')}</a> : null}
+        {/* ⚠️ ПРОДАЖИ И ПРОМОКОДЫ — ТОЛЬКО АДМИНИСТРАТОРУ (Р-171, Р-167):
+            там почты всех клиентов и деньги. Страницы проверяют роль сами,
+            меню только не зовёт туда того, кого не пустят. */}
+        {s.role === 'admin' ? <a href="/admin/sales/">{t('nav.sales')}</a> : null}
+        {s.role === 'admin' ? <a href="/admin/promo/">{t('nav.promo')}</a> : null}
               {/* ⚠️ СТАТИСТИКА ОТКРЫТА И ИСПОЛНИТЕЛЮ с сорок второй
                   итерации — постановка. Без ссылки в шапке «открыта»
                   означало бы «доступна тому, кто знает адрес». */}

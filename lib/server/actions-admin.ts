@@ -23,15 +23,13 @@ import {
   otmenaNazad,
   otmenitZakaz,
   otmetitPodpiskuOtmenyonnoy,
-  otmetitSlotGotovym,
+  proytiShag,
   shagNazad,
   vernutOtmenu,
   vernutVOchered,
   vzyatOtmenu,
   vzyatZakaz,
   zaprositOtmenuPodpiski,
-  zapisatVydachu,
-  zavershitZakaz,
 } from './orders';
 import { soobshchitKomande } from './notify';
 import { pismoParolNePodoshyol } from './letters';
@@ -55,6 +53,13 @@ import { imyaTarifaIz, klyuchPary, srokDlyaSotrudnika } from '@/lib/plans';
 import { CHASTOTY_OCHEREDI } from '@/lib/admin/chastoty';
 import { zapomnitYazyk } from './yazyk';
 import { ponyatYazyk, type Klyuch, type Podstanovki } from '@/lib/admin/slova';
+import {
+  izmenit as izmenitPromo,
+  otklyuchit as otklyuchitPromo,
+  zavesti as zavestiPromo,
+  type OshibkaKoda,
+} from './promokody';
+import { kodPromo } from '@/lib/promokod';
 
 export type OtvetA = {
   error?: Klyuch;
@@ -181,32 +186,40 @@ export async function adminShag(_p: OtvetA, fd: FormData): Promise<OtvetA> {
   if (!(await tolkoSvoy(zakaz, s.id))) return { error: 'e.not_yours' };
   const op = String(fd.get('op') ?? '');
 
-  /* ── Аккаунт пройден ─────────────────────────────────────────── */
-  if (op === 'gotov') {
-    const ok = await otmetitSlotGotovym(Number(fd.get('slot') ?? 0), zakaz);
-    if (!ok) return { error: 'e.mark_done' };
-    revalidatePath(`/admin/orders/${zakaz}`);
-    return { ok: 'k.marked' };
-  }
-
-  /* ── Старый заказ: доступы заводит оператор ──────────────────── */
-  if (op === 'vydacha') {
-    if (!shifrGotov()) return { error: 'e.no_key' };
-    const login = String(fd.get('login') ?? '').trim();
-    const mailPass = String(fd.get('mailPass') ?? '');
-    const spotifyPass = String(fd.get('spotifyPass') ?? '');
-    if (!login || !mailPass || !spotifyPass) return { error: 'e.fill_three' };
-    const ok = await zapisatVydachu({
-      slotId: Number(fd.get('slot') ?? 0),
+  /* ── Аккаунт пройден ───────────────────────────────────────────
+     ⚠️ ПОСЛЕДНИЙ ШАГ ВЫПОЛНЯЕТ ЗАКАЗ — шага «Завершение» нет с пятьдесят
+     третьей итерации (Р-169). Дата окончания у продления приходит
+     с шагом своего аккаунта, обязательна и проверяется на сервере. */
+  if (op === 'gotov' || op === 'vydacha') {
+    let vydacha: { login: string; mailPass: string; spotifyPass: string } | undefined;
+    if (op === 'vydacha') {
+      if (!shifrGotov()) return { error: 'e.no_key' };
+      const login = String(fd.get('login') ?? '').trim();
+      const mailPass = String(fd.get('mailPass') ?? '');
+      const spotifyPass = String(fd.get('spotifyPass') ?? '');
+      if (!login || !mailPass || !spotifyPass) return { error: 'e.fill_three' };
+      vydacha = { login, mailPass, spotifyPass };
+    }
+    const ends = String(fd.get('ends') ?? '').trim();
+    const r = await proytiShag({
       zakaz,
       staffId: s.id,
-      login,
-      mailPass,
-      spotifyPass,
+      slotId: Number(fd.get('slot') ?? 0),
+      ends: ends || null,
+      vydacha,
     });
-    if (!ok) return { error: 'e.save_creds' };
+    if (!r.ok) {
+      if (r.pochemu === 'nuzhna_data') return { error: 'e.need_date', polya: { n: r.n ?? 1 } };
+      if (r.pochemu === 'net_klyucha') return { error: 'e.no_key' };
+      if (r.pochemu === 'ne_tot_shag') return { error: op === 'vydacha' ? 'e.save_creds' : 'e.mark_done' };
+      return { error: 'e.not_yours' };
+    }
     revalidatePath(`/admin/orders/${zakaz}`);
-    return { ok: 'k.creds_saved' };
+    if (r.zakryt) {
+      revalidatePath('/admin');
+      return { ok: 'k.order_closed' };
+    }
+    return { ok: op === 'vydacha' ? 'k.creds_saved' : 'k.marked' };
   }
 
   /* ── Шаг назад ───────────────────────────────────────────────── */
@@ -215,31 +228,6 @@ export async function adminShag(_p: OtvetA, fd: FormData): Promise<OtvetA> {
     if (!ok) return { error: 'e.no_back' };
     revalidatePath(`/admin/orders/${zakaz}`);
     return { ok: 'k.back' };
-  }
-
-  /* ── Завершение ──────────────────────────────────────────────── */
-  if (op === 'zavershit') {
-    /* ⚠️ ДАТА У ПРОДЛЕНИЯ ОБЯЗАТЕЛЬНА, И ПРОВЕРЯЕТСЯ ЭТО НА СЕРВЕРЕ.
-       Поле в разметке человек правит в браузере за секунду, а от этой
-       даты считается письмо за три дня до конца подписки (закон 44):
-       пустая дата означала бы либо молчание, либо письмо не в тот
-       день. У нового аккаунта официальной даты взять негде — там
-       срок по-прежнему считается от выдачи. */
-    const slots = await zapros<{ id: string; mode: string; idx: number }>(
-      'select id, mode, idx from order_slot where order_id = $1 order by idx',
-      [zakaz],
-    );
-    const daty: Record<number, string> = {};
-    for (const sl of slots) {
-      const v = String(fd.get(`ends_${sl.id}`) ?? '').trim();
-      if (sl.mode !== 'renew') continue;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return { error: 'e.need_date', polya: { n: sl.idx + 1 } };
-      daty[Number(sl.id)] = v;
-    }
-    const r = await zavershitZakaz(zakaz, s.id, daty);
-    if (!r.ok) return { error: r.pochemu === 'Не все участники заполнены.' ? 'e.not_all_done' : 'e.not_yours' };
-    revalidatePath('/admin');
-    return { ok: 'k.order_closed' };
   }
 
   /* ── Отмена ──────────────────────────────────────────────────── */
@@ -721,4 +709,58 @@ export async function adminDisableStaff(fd: FormData): Promise<void> {
   }
   revalidatePath('/admin/staff');
   redirect('/admin/staff/');
+}
+
+// ── промокоды (Р-167) ──────────────────────────────────────────────
+
+/**
+ * ⚠️ ТОЛЬКО АДМИНИСТРАТОРУ, и проверка стоит в каждом действии:
+ * серверное действие — обычная точка входа, мимо страницы в него
+ * попасть можно. Скидка — это деньги сервиса, а деньги исполнителю
+ * не видны с сорок второй итерации (Р-148, Р-155).
+ */
+const OSHIBKA_PROMO: Record<OshibkaKoda, Klyuch> = {
+  net_koda: 'pr.e_kod',
+  zanyat: 'pr.e_zanyat',
+  nevernaya_skidka: 'pr.e_skidka',
+  net_sroka: 'pr.e_srok',
+  nevernye_aktivacii: 'pr.e_aktivacii',
+  net: 'pr.e_net',
+  malo_aktivaciy: 'pr.e_malo',
+};
+
+function poliyaPromo(fd: FormData) {
+  return {
+    skidkaProc: Number(String(fd.get('skidka') ?? '').trim()),
+    doDaty: String(fd.get('do') ?? '').trim(),
+    aktivaciy: Number(String(fd.get('aktivaciy') ?? '').trim()),
+  };
+}
+
+export async function adminPromoZavesti(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+  const s = await ktoSotrudnik();
+  if (!s || s.role !== 'admin') return { error: 'o.only_admin' };
+  const r = await zavestiPromo({ kod: String(fd.get('kod') ?? ''), ...poliyaPromo(fd) }, s.id);
+  if ('oshibka' in r) return { error: OSHIBKA_PROMO[r.oshibka] };
+  revalidatePath('/admin/promo/');
+  return { ok: 'pr.zaveden', polya: { kod: r.kod } };
+}
+
+export async function adminPromoIzmenit(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+  const s = await ktoSotrudnik();
+  if (!s || s.role !== 'admin') return { error: 'o.only_admin' };
+  const r = await izmenitPromo(String(fd.get('kod') ?? ''), poliyaPromo(fd));
+  if ('oshibka' in r) return { error: OSHIBKA_PROMO[r.oshibka] };
+  revalidatePath('/admin/promo/');
+  return { ok: 'pr.izmenen', polya: { kod: r.kod } };
+}
+
+export async function adminPromoOtklyuchit(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+  const s = await ktoSotrudnik();
+  if (!s || s.role !== 'admin') return { error: 'o.only_admin' };
+  const kod = String(fd.get('kod') ?? '');
+  const vykl = fd.get('kak') === '1';
+  if (!(await otklyuchitPromo(kod, vykl))) return { error: 'pr.e_net' };
+  revalidatePath('/admin/promo/');
+  return { ok: vykl ? 'pr.otklyuchen' : 'pr.vklyuchen', polya: { kod: kodPromo(kod) } };
 }

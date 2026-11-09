@@ -842,3 +842,50 @@
   .ozhivayet .plashka-egipet { animation: none; }
   .shkala__tochka { transition: none; }
 }
+
+/* ── ПРОМОКОД НА ОФОРМЛЕНИИ (Р-167) ────────────────────────────────────
+   Поле и кнопка в ряд; на узком экране кнопка уходит под поле, а не
+   ужимает его до нечитаемого. Принятый код — строкой с «Убрать». */
+.promo { margin: var(--ritm) 0; }
+.promo__ryad { display: flex; gap: 10px; align-items: stretch; flex-wrap: wrap; }
+.promo__ryad .promo__pole { flex: 1 1 180px; width: auto; text-transform: uppercase; letter-spacing: 0.04em; }
+.promo__ryad .btn { flex: 0 0 auto; min-height: 52px; }
+.promo__est {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 52px; padding: 0 14px;
+  border-radius: var(--ui-r);
+  background: color-mix(in srgb, var(--green) 14%, var(--ink));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 55%, transparent);
+}
+.promo__kod { font-variation-settings: 'wght' 650; letter-spacing: 0.04em; }
+/* «Убрать» — та же пилюля, что «Изменить», но НЕ во всю строку: правило
+   узкого экрана растягивает «Изменить» на 100 %, и в строке принятого
+   кода кнопка вылезала за панель на 9 px (ручная проверка, 390). */
+.promo__est .vybor__izm { width: auto; margin-top: 0; }
+.promo__est > span { min-width: 0; }
+/* Сумма с копейками («149,25 ₽») не рвётся перед знаком рубля: перенос
+   уходит в подпись слева. */
+.sum > span:last-child { white-space: nowrap; }
+
+/* Плашка «−N%» внутри кнопки срока — мельче, чтобы кнопка не росла. */
+.pick__skidka { margin-left: 8px; font-size: 11px; padding: 2px 6px; vertical-align: 1px; }
+/* У выбранной кнопки поле зелёное — плашка выворачивается, иначе
+   зелёное на зелёном не видно вовсе. */
+.pick__btn[aria-checked='true'] .pick__skidka { background: var(--on-green-dim); color: var(--green); }
+
+/* ── ПОПОЛНЕНИЕ БАЛАНСА И ИСТОРИЯ (Р-168) ──────────────────────────── */
+.cab__balans-blok { display: grid; gap: var(--ritm); }
+.popolnenie__forma { display: grid; gap: var(--ritm); padding-top: var(--ritm); }
+.popolnenie__forma .field { margin: 0; }
+.popolnenie__summy { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); margin: 0; }
+.popolnenie__summa { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; min-height: 56px; }
+.popolnenie__podpis { font-size: 11px; color: var(--dim-2); line-height: 1.25; }
+.popolnenie__summa[aria-pressed='true'] { background: var(--green); color: var(--on-green-dim); }
+.popolnenie__summa[aria-pressed='true'] .popolnenie__podpis { color: var(--on-green-dim); }
+.cab__istoriya summary { cursor: pointer; color: var(--dim); font-size: 14px; }
+.cab__dvizheniya { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.cab__dvizheniya li { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+.cab__dv-chto { display: grid; gap: 2px; }
+.cab__dv-kogda { font-size: 12px; color: var(--dim-2); }
+.cab__dv-summa { white-space: nowrap; }
+.cab__dv-summa--plus { color: var(--green); }

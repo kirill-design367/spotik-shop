@@ -498,9 +498,19 @@ jobs:
           # лежит каталог с самими файлами шрифтов. Префиксная
           # локация nginx однажды забрала страницу себе и ответила
           # отказом вместо неё.
-          for p in /cabinet/ /checkout/ /certificate/ /oferta/ /politika/ /soglashenie/ /soglasie/ /admin/login/ /fonts/; do
+          for p in /cabinet/ /checkout/ /certificate/ /sertifikaty/ /oferta/ /politika/ /soglashenie/ /soglasie/ /admin/login/ /fonts/; do
             code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE$p" || echo 000)
             chk "страница $p" 200 "$code"
+          done
+
+          # Новые разделы админки (пятьдесят третья, Р-167, Р-171):
+          # без входа они уводят на вход — 307 на /admin/login/,
+          # замерено на собранном приложении. Сессии у проверки нет,
+          # поэтому ни почт клиентов, ни паролей она не видит ни при
+          # каком исходе.
+          for p in /admin/sales/ /admin/promo/; do
+            loc=$(curl -sS -o /dev/null -D - --max-time 20 "$BASE$p" | tr -d '\r' | awk -F': ' 'tolower($1)=="location"{print $2}')
+            chk "раздел $p без входа уводит на вход" "/admin/login/" "${loc:-нет перенаправления}"
           done
 
           # ⚠️ СТАРЫЙ АДРЕС ПОЛИТИКИ ОБЯЗАН ВЕСТИ НА ПОЛИТИКУ. Ссылки

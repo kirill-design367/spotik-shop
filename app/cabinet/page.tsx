@@ -6,7 +6,9 @@ import KabinetZhivoy from '@/components/shop/KabinetZhivoy';
 import Kopirovat from '@/components/shop/Kopirovat';
 import Svorachivanie from '@/components/shop/Svorachivanie';
 import { ktoKlient } from '@/lib/server/auth';
-import { balans, moiZakazy } from '@/lib/server/views';
+import { balans, istoriyaBalansa, moiZakazy } from '@/lib/server/views';
+import { katalog, srokKratko } from '@/lib/server/catalog';
+import Popolnenie, { type SummaPodpiski } from '@/components/shop/Popolnenie';
 import { moiSertifikaty } from '@/lib/server/certificates';
 import { bazaEst } from '@/lib/server/db';
 import { otpechatokKabineta } from '@/lib/server/otpechatok';
@@ -19,6 +21,21 @@ import { dopisatAdres } from '@/lib/admin/prichiny';
 
 export const metadata: Metadata = { title: 'Личный кабинет — Spotik Shop', robots: { index: false, follow: false } };
 export const dynamic = 'force-dynamic';
+
+/** Дата движения по балансу — по Москве, как всё время на сайте (закон 49). */
+function poMoskveDen(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString('ru-RU', {
+      timeZone: 'Europe/Moscow',
+      day: 'numeric',
+      month: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return iso.slice(0, 10);
+  }
+}
 
 const ZNACHOK: Record<Status, string> = {
   new: 'badge',
@@ -100,11 +117,19 @@ export default async function Cabinet({
     );
   }
 
-  const [zakazy, sert, bal] = await Promise.all([
+  const [zakazy, sert, bal, istoriya, spisok] = await Promise.all([
     moiZakazy(kto.userId),
     moiSertifikaty(kto.userId),
     balans(kto.userId),
+    istoriyaBalansa(kto.userId),
+    katalog(),
   ]);
+  /* Быстрые суммы — ТЕКУЩИЕ цены тарифов, то есть уже со скидкой,
+     если она действует: пополняют, чтобы оплатить подписку, и сумма
+     обязана быть ровно той, что спишется. */
+  const summy: SummaPodpiski[] = spisok.flatMap((t) =>
+    t.ceny.map((c) => ({ kop: c.kop, podpis: `${t.name}, ${srokKratko(c.period)}` })),
+  );
 
   return (
     <main id="main" className="page" tabIndex={-1}>
@@ -139,22 +164,44 @@ export default async function Cabinet({
       <KabinetZhivoy nachalo={await otpechatokKabineta(kto.userId)} />
 
       {/* ⚠️ БАЛАНС — СВОЯ КАРТОЧКА, А НЕ СТРОКА В ШАПКЕ (постановка
-          тридцать шестой итерации). Появляется он одним способом —
-          возвратом за отменённый заказ, — и человеку надо видеть,
-          что деньги не пропали, а лежат и тратятся при следующем
-          оформлении. Нулевой баланс не показываем вовсе: пустая
-          строка «0 ₽» только пугает. */}
-      {bal > 0 ? (
-        <div className="panel cab__balans">
+          тридцать шестой итерации), и С ПЯТЬДЕСЯТ ТРЕТЬЕЙ ОНА СТОИТ
+          ВСЕГДА: на ней живёт «Пополнить баланс» (Р-168). Прежде нулевой
+          баланс не показывался вовсе, потому что появлялся он одним
+          способом — возвратом за отменённый заказ; теперь его кладут
+          и сами. */}
+      <div className="panel cab__balans-blok">
+        <div className="cab__balans">
           <div>
             <span className="panel__h" style={{ margin: 0, display: 'block' }}>Баланс</span>
             <p className="panel__note" style={{ marginTop: 4 }}>
-              Спишется при следующем оформлении — галочкой в «К оплате».
+              {bal > 0
+                ? 'Спишется при следующем оформлении — галочкой в «К оплате».'
+                : 'Пополните заранее — и заказ оплатится с баланса в одно касание.'}
             </p>
           </div>
           <span className="cab__balance tnum">{rubli(bal)}</span>
         </div>
-      ) : null}
+        <Popolnenie summy={summy} />
+        {istoriya.length ? (
+          <details className="cab__istoriya">
+            <summary>История баланса</summary>
+            <ul className="cab__dvizheniya">
+              {istoriya.map((d, i) => (
+                <li key={`${d.kogda}-${i}`}>
+                  <span className="cab__dv-chto">
+                    {d.chto}
+                    <span className="cab__dv-kogda">{poMoskveDen(d.kogda)}</span>
+                  </span>
+                  <span className={`tnum cab__dv-summa${d.deltaKop > 0 ? ' cab__dv-summa--plus' : ''}`}>
+                    {d.deltaKop > 0 ? '+' : ''}
+                    {rubli(d.deltaKop)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
+      </div>
 
       <h2 className="cab__h2">Заказы</h2>
       {!zakazy.length ? (
@@ -329,8 +376,7 @@ export default async function Cabinet({
 
                 {z.sekretyStyorty && z.status === 'done' ? (
                   <p className="panel__note">
-                    Доступы стёрты с сервера через семь дней после закрытия заказа — так надёжнее.
-                    Если вы их не сохранили, напишите нам.
+                    Доступы по этому заказу стёрты с сервера. Если вы их не сохранили, напишите нам.
                   </p>
                 ) : null}
               </article>

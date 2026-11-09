@@ -1577,13 +1577,42 @@
 }
 .card__per { display: block; font-size: 12px; }
 /* Старая цена: зачёркнутая и тише новой. Строка идёт НАД ценой —
-   на карте высотой в банковскую место под неё есть только там. */
+   на карте высотой в банковскую место под неё есть только там.
+   ⚠️ С ПЯТЬДЕСЯТ ТРЕТЬЕЙ ИТЕРАЦИИ В ТОЙ ЖЕ СТРОКЕ СТОИТ ПЛАШКА «−N%»
+   (Р-170): строка у старой цены уже была, и высоты карта не прибавила. */
+.card__bylo-ryad {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-bottom: 1px;
+}
 .card__bylo {
-  display: block;
+  display: inline;
   font-size: 12px;
   line-height: 1.2;
   color: var(--dim-2);
   text-decoration-thickness: 1px;
+}
+
+/* ── ПЛАШКА СКИДКИ «−N%» (Р-170) ──────────────────────────────────────
+   Яркая: сплошное зелёное поле и тёмный текст — на зелёном текст
+   только `--on-green-dim`, белый не проходит (раздел 3). Пилюля —
+   на лендинге это та же форма, что у плашек срока, и третьего радиуса
+   не заводится. Одна на главную, сертификаты и оформление. */
+.skidka-plashka {
+  display: inline-block;
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: var(--ui-r-pill, 999px);
+  background: var(--green);
+  color: var(--on-green-dim);
+  font-size: 11px;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  font-variation-settings: 'wght' 760;
+  text-decoration: none;
+  white-space: nowrap;
 }
 
 /* ── ДЕСКТОП: РЯД КАРТ БАНКОВСКОЙ ПРОПОРЦИИ ──────────────────────────────
@@ -1615,6 +1644,7 @@
     padding: clamp(14px, 1.6vw, 26px);
   }
   .card__price { text-align: left; }
+  .card__bylo-ryad { justify-content: flex-start; }
   .card__price, .card__per { font-size: 13px; }
   .card__name { font-size: clamp(1.25rem, 2.2vw, 1.75rem); }
 }
@@ -1647,7 +1677,6 @@
   color: var(--dim-2);
 }
 .order__plan b { font-variation-settings: 'wght' 680; }
-.order__save { font-size: 12px; color: var(--green); font-variation-settings: 'wght' 650; }
 /* Две плашки стоят рядом и делят ширину поровну; на самом узком
    экране ложатся друг под друга. */
 .order__opts {
@@ -2492,4 +2521,25 @@
 .order .plashka-pochta { width: min(100%, 420px); margin-top: 12px; }
 @media (prefers-reduced-motion: reduce) {
   .egipet { transition: none; }
+}
+
+/* ── ЦЕНА СО СКИДКОЙ НА ОФОРМЛЕНИИ И СЕРТИФИКАТАХ (Р-170) ─────────────
+   Плашка «−N%», зачёркнутая старая цена и рядом новая. Цвета обязаны
+   перебить `.sum span:first-child` раздела: там первый ребёнок
+   красится приглушённым, а внутри этого куска первым стоит плашка
+   (или сама цена, когда скидки нет). */
+.cena-sk {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 8px;
+}
+.cena-sk span { color: inherit; }
+.cena-sk .skidka-plashka { color: var(--on-green-dim); }
+.cena-sk__bylo {
+  font-size: 0.8em;
+  color: var(--dim-2);
+  font-variation-settings: 'wght' 450;
+  text-decoration-thickness: 1px;
 }

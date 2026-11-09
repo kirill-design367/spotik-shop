@@ -30,10 +30,12 @@ export default async function PayTest({
   const kto = await ktoKlient();
   const p =
     kto && platyozh
-      ? await odna<{ amount_kop: string; order_id: string; status: string }>(
+      ? await odna<{ amount_kop: string; order_id: string | null; status: string }>(
+          /* ⚠️ СЧЁТ ПОПОЛНЕНИЯ БЕЗ ЗАКАЗА (Р-168): его владелец лежит
+             в самом платеже, а у заказного — в заказе. */
           `select p.amount_kop, p.order_id, p.status
-             from payment p join shop_order o on o.id = p.order_id
-            where p.id = $1 and o.user_id = $2`,
+             from payment p left join shop_order o on o.id = p.order_id
+            where p.id = $1 and coalesce(o.user_id, p.user_id) = $2`,
           [platyozh, kto.userId],
         )
       : null;
@@ -52,7 +54,7 @@ export default async function PayTest({
       ) : (
         <form action={deystviePodtverditTest} className="panel">
           <p className="sum sum--total">
-            <span>Заказ № {p.order_id}</span>
+            <span>{p.order_id ? `Заказ № ${p.order_id}` : 'Пополнение баланса'}</span>
             <span className="tnum">{rubli(Number(p.amount_kop))}</span>
           </p>
           <input type="hidden" name="payment" value={platyozh} />

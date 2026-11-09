@@ -21,7 +21,9 @@ import {
 import { bazaEst } from './db';
 import { sozdatZakaz, zakazPoSertifikatu, otmenitZakaz, type VvodUchastnika } from './orders';
 import { utmIzKuki } from './utm';
-import { vystavitSchet } from './payments';
+import { vystavitSchet, vystavitSchetPopolneniya } from './payments';
+import { proverit as proveritPromo } from './promokody';
+import { kodPromo, otkazSlovami } from '@/lib/promokod';
 import { nayti, POCHEMU_KOD } from './certificates';
 import { katalog, naytiTarif } from './catalog';
 import { prinyatObrashchenie } from './podderzhka';
@@ -208,6 +210,9 @@ export async function deystvieOformit(_prosh: Otvet, fd: FormData): Promise<Otve
     /* Метки читает ДЕЙСТВИЕ, а не страница: `cookies()` на лендинге
        перевёл бы первый экран на посчитанный ответ (закон 36). */
     utm: await utmIzKuki(),
+    /* Промокод проверяется ЗАНОВО внутри транзакции заказа: ответ
+       кнопки «Применить» был предварительным (Р-167). */
+    promo: String(fd.get('promo') ?? ''),
   });
   if (!itog.ok) return { oshibka: itog.pochemu };
 
@@ -216,6 +221,50 @@ export async function deystvieOformit(_prosh: Otvet, fd: FormData): Promise<Otve
   if (!schet.ok) return { oshibka: `${schet.pochemu} Заказ № ${itog.zakaz} сохранён и ждёт оплаты в кабинете.` };
   /* ⚠️ АДРЕС ОТДАЁТСЯ НАРУЖУ, А НЕ `redirect(schet.adres)`: уходить
      на чужой домен обязан сам браузер — см. `kuda` выше и Р-143. */
+  return { kuda: schet.adres };
+}
+
+/**
+ * ПРОВЕРКА ПРОМОКОДА на оформлении — по кнопке «Применить» (Р-167).
+ *
+ * ⚠️ ОТВЕТ ПРЕДВАРИТЕЛЬНЫЙ И В БАЗУ НЕ ПИШЕТ НИЧЕГО, кроме счётчика
+ * неудач для предела частоты: активация тратится при оформлении.
+ * Отдаётся ровно бит и процент — ни срока, ни остатка активаций:
+ * перебором по этому ответу узнаётся только то, что узнаётся вводом
+ * кода в поле. Скидку в рублях форма считает ТОЙ ЖЕ функцией
+ * `skidkaKop` из `lib/promokod`, что и сервер.
+ */
+export type OtvetPromo = { kod: string; skidkaProc: number } | { oshibka: string };
+
+export async function deystvieProveritPromo(vvod: string): Promise<OtvetPromo> {
+  if (!bazaEst()) return { oshibka: NET_BAZY };
+  const kto = await ktoKlient();
+  if (!kto) return { oshibka: 'Сначала войдите по коду из письма.' };
+  if (!kodPromo(vvod)) return { oshibka: otkazSlovami('net') };
+  const itog = await proveritPromo(vvod, kto.userId);
+  if (!itog.godit) return { oshibka: otkazSlovami(itog.pochemu) };
+  return { kod: itog.kod, skidkaProc: itog.skidkaProc };
+}
+
+/**
+ * ПОПОЛНЕНИЕ БАЛАНСА из кабинета (Р-168).
+ *
+ * ⚠️ СУММА ПРИХОДИТ В РУБЛЯХ ИЗ ФОРМЫ И ПРОВЕРЯЕТСЯ ЗДЕСЬ: поле
+ * человек правит в браузере. Деньги на баланс кладёт не это действие,
+ * а проверенное уведомление Робокассы (закон 34): отсюда уходит только
+ * адрес платёжной формы, и браузер идёт туда сам (Р-143).
+ */
+export async function deystviePopolnit(_prosh: Otvet, fd: FormData): Promise<Otvet> {
+  if (!bazaEst()) return { oshibka: NET_BAZY };
+  const kto = await ktoKlient();
+  if (!kto) return { oshibka: 'Сначала войдите по коду из письма.' };
+  const syroe = String(fd.get('summa') ?? '').replace(/\s+/g, '').replace(',', '.');
+  const rub = Number(syroe);
+  if (!syroe || !Number.isFinite(rub) || !Number.isInteger(rub)) {
+    return { oshibka: 'Укажите сумму целыми рублями.' };
+  }
+  const schet = await vystavitSchetPopolneniya(kto.userId, rub * 100);
+  if (!schet.ok) return { oshibka: schet.pochemu };
   return { kuda: schet.adres };
 }
 
@@ -328,8 +377,8 @@ export async function deystviePodtverditTest(fd: FormData): Promise<void> {
   const platyozh = Number(fd.get('payment') ?? 0);
   const { odna } = await import('./db');
   const p = await odna<{ amount_kop: string }>(
-    `select p.amount_kop from payment p join shop_order o on o.id = p.order_id
-      where p.id = $1 and o.user_id = $2 and p.status = 'new'`,
+    `select p.amount_kop from payment p left join shop_order o on o.id = p.order_id
+      where p.id = $1 and coalesce(o.user_id, p.user_id) = $2 and p.status = 'new'`,
     [platyozh, kto.userId],
   );
   if (p) {

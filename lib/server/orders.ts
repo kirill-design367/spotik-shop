@@ -25,6 +25,8 @@ import { imyaTarifaIz, srokDlyaSotrudnika } from '@/lib/plans';
 import { imenaTarifov } from './imena';
 import type { Para } from './dostup';
 import { parolNeGoditsya, pochtaNeVerna } from '@/lib/proverka';
+import { zanyat as zanyatPromo, vernut as vernutPromo } from './promokody';
+import { kodPromo, otkazSlovami, type OtkazPromo } from '@/lib/promokod';
 
 export type Status = 'new' | 'paid' | 'in_work' | 'done' | 'cancelled';
 export type Rezhim = 'new' | 'renew';
@@ -114,6 +116,8 @@ export async function sozdatZakaz(opts: {
   tratitBalans: boolean;
   /** Метки кампании; их снял браузер при первом заходе (lib/server/utm.ts). */
   utm?: Utm;
+  /** Промокод, как его набрал человек; пусто — без промокода (Р-167). */
+  promo?: string;
 }): Promise<ItogSozdaniya> {
   if (!opts.soglasie) return { ok: false, pochemu: 'Нужно согласие на обработку персональных данных.' };
 
@@ -138,13 +142,12 @@ export async function sozdatZakaz(opts: {
   const bedaUchastnikov = proveritUchastnikov(opts.uchastniki);
   if (bedaUchastnikov) return { ok: false, pochemu: bedaUchastnikov };
 
+  const promoVvod = kodPromo(opts.promo ?? '');
   const itog = await vTranzakcii(async (c) => {
     const u = await c.query<{ balance_kop: string }>('select balance_kop from app_user where id = $1 for update', [
       opts.userId,
     ]);
     const balans = Number(u.rows[0]?.balance_kop ?? 0);
-    const sBalansa = opts.tratitBalans ? Math.min(balans, cena) : 0;
-    const kDoplate = cena - sBalansa;
 
     /* ⚠️ МЕТКИ КАМПАНИИ ПИШУТСЯ РОВНО ЗДЕСЬ, В МОМЕНТ СОЗДАНИЯ
        ЗАКАЗА, и больше нигде. Приписать их позже неоткуда: кука
@@ -152,11 +155,35 @@ export async function sozdatZakaz(opts: {
     const z = await c.query<{ id: string }>(
       `insert into shop_order (user_id, kind, plan_id, period, status, total_kop, balance_kop, money_kop, source, consent_at,
                                utm_source, utm_medium, utm_campaign, utm_term, utm_content)
-       values ($1, $2, $3, $4, 'new', $5, $6, 0, 'payment', now(), $7, $8, $9, $10, $11)
+       values ($1, $2, $3, $4, 'new', $5, 0, 0, 'payment', now(), $6, $7, $8, $9, $10)
        returning id`,
-      [opts.userId, opts.kind, opts.planId, opts.period, cena, sBalansa, ...utmVRyad(opts.utm ?? {})],
+      [opts.userId, opts.kind, opts.planId, opts.period, cena, ...utmVRyad(opts.utm ?? {})],
     );
     const zakaz = Number(z.rows[0]!.id);
+
+    /* ⚠️ ПРОМОКОД (Р-167): АКТИВАЦИЯ ЗАНИМАЕТСЯ В ЭТОЙ ЖЕ ТРАНЗАКЦИИ.
+       Ответ формы был предварительным; настоящее решение — здесь,
+       и принимает его база. Не подошёл — заказ НЕ создаётся вовсе:
+       человек видел в форме цену со скидкой, и молча взять с него
+       полную значило бы обмануть ровно там, где он проверяет.
+       Скидка считается от текущей цены (уже со скидкой тарифа)
+       и ДО баланса. `total_kop` — цена ПОСЛЕ промокода: от неё
+       считаются платёж, чек и возврат, и ни одно место не обязано
+       помнить о вычитании. */
+    let itogo = cena;
+    if (promoVvod) {
+      const p = await zanyatPromo(c, promoVvod, zakaz, opts.userId, cena);
+      if (!p.zanyali) throw new PromoNePodoshyol(p.pochemu);
+      itogo = cena - p.skidkaKop;
+      await c.query('update shop_order set promo_kod = $2, promo_skidka_kop = $3 where id = $1', [
+        zakaz,
+        p.kod,
+        p.skidkaKop,
+      ]);
+    }
+    const sBalansa = opts.tratitBalans ? Math.min(balans, itogo) : 0;
+    const kDoplate = itogo - sBalansa;
+    await c.query('update shop_order set total_kop = $2, balance_kop = $3 where id = $1', [zakaz, itogo, sBalansa]);
 
     for (let i = 0; i < opts.uchastniki.length; i++) {
       const uch = opts.uchastniki[i]!;
@@ -189,9 +216,22 @@ export async function sozdatZakaz(opts: {
 
     const oplachen = kDoplate === 0 ? await oplatitVnutri(c, zakaz, 0) : false;
 
-    log.info('заказ создан', { order: zakaz, plan: opts.planId, period: opts.period, balance_kop: sBalansa, rest_kop: kDoplate });
+    log.info('заказ создан', {
+      order: zakaz,
+      plan: opts.planId,
+      period: opts.period,
+      balance_kop: sBalansa,
+      rest_kop: kDoplate,
+      promo: promoVvod || '—',
+    });
     return { ok: true as const, zakaz, sBalansa, kDoplate, oplachen };
+  }).catch((e: unknown) => {
+    if (e instanceof PromoNePodoshyol) return { ok: false as const, pochemu: e.pochemu };
+    throw e;
   });
+  if (!itog.ok) {
+    return { ok: false, pochemu: `${otkazSlovami(itog.pochemu)} Заказ не оформлен: уберите промокод или введите другой.` };
+  }
 
   /* ⚠️ ПОЛНАЯ ОПЛАТА С БАЛАНСА — ЭТО ТОЖЕ ОПЛАТА, И ЗА НЕЙ ОБЯЗАНО
      ИДТИ ВСЁ ТО ЖЕ САМОЕ. Без этой строки заказ, закрытый балансом
@@ -203,6 +243,13 @@ export async function sozdatZakaz(opts: {
      что в `zakazPoSertifikatu`). */
   if (itog.oplachen) await posleOplaty(itog.zakaz);
   return { ok: true, zakaz: itog.zakaz, sBalansa: itog.sBalansa, kDoplate: itog.kDoplate };
+}
+
+/** Промокод не подошёл в момент оформления — транзакция откатывается целиком. */
+class PromoNePodoshyol extends Error {
+  constructor(readonly pochemu: OtkazPromo) {
+    super(`промокод: ${pochemu}`);
+  }
 }
 
 /**
@@ -223,12 +270,22 @@ async function oplatitVnutri(c: PoolClient, zakaz: number, dengiKop: number): Pr
   return true;
 }
 
+/**
+ * Причина движения по балансу при пополнении. ОДНО место: по этой же
+ * строке статистика складывает пополнения за период (Р-168).
+ */
+export const PRICHINA_POPOLNENIYA = 'пополнение баланса';
+
 export async function otmetitOplachennym(platyozh: number, prishloKop: number): Promise<void> {
   const itog = await vTranzakcii(async (c) => {
-    const p = await c.query<{ id: string; order_id: string; amount_kop: string; status: string }>(
-      'select id, order_id, amount_kop, status from payment where id = $1 for update',
-      [platyozh],
-    );
+    const p = await c.query<{
+      id: string;
+      order_id: string | null;
+      user_id: string | null;
+      kind: 'order' | 'topup';
+      amount_kop: string;
+      status: string;
+    }>('select id, order_id, user_id, kind, amount_kop, status from payment where id = $1 for update', [platyozh]);
     const row = p.rows[0];
     if (!row) {
       log.warn('уведомление о неизвестном платеже', { payment: platyozh });
@@ -244,6 +301,29 @@ export async function otmetitOplachennym(platyozh: number, prishloKop: number): 
       return null;
     }
     await c.query(`update payment set status = 'paid', paid_at = now() where id = $1`, [platyozh]);
+
+    /* ⚠️ ПОПОЛНЕНИЕ БАЛАНСА (Р-168): заказа нет, деньги ложатся
+       на баланс владельца счёта В ЭТОЙ ЖЕ ТРАНЗАКЦИИ, и движение
+       называется своими словами. Зачисляется то, что ПРИШЛО: недоплата
+       отбита выше, а переплата — тоже деньги человека. В выручку
+       пополнение само не идёт: оно посчитается один раз, когда им
+       оплатят выполненный заказ (`balance_kop` заказа, stats.ts). */
+    if (row.kind === 'topup') {
+      const vladelec = Number(row.user_id ?? 0);
+      if (!vladelec) {
+        log.error('пополнение без владельца', { payment: platyozh, money_kop: prishloKop });
+        return null;
+      }
+      await c.query('update app_user set balance_kop = balance_kop + $1 where id = $2', [prishloKop, vladelec]);
+      await c.query('insert into balance_move (user_id, delta_kop, reason, order_id) values ($1, $2, $3, null)', [
+        vladelec,
+        prishloKop,
+        PRICHINA_POPOLNENIYA,
+      ]);
+      log.info('баланс пополнен', { payment: platyozh, user: vladelec, money_kop: prishloKop });
+      return { popolnenie: true as const };
+    }
+
     const zakaz = Number(row.order_id);
     if (await oplatitVnutri(c, zakaz, prishloKop)) return { zakaz, naBalans: 0 };
 
@@ -281,7 +361,7 @@ export async function otmetitOplachennym(platyozh: number, prishloKop: number): 
     return { zakaz, naBalans: prishloKop };
   });
 
-  if (!itog) return;
+  if (!itog || 'popolnenie' in itog) return;
   /* ⚠️ СООБЩИТЬ КОМАНДЕ ОБЯЗАТЕЛЬНО, и это не «ещё одно
      уведомление»: деньги легли на баланс, а не в заказ, и без человека
      дальше ничего не произойдёт. */
@@ -513,63 +593,133 @@ export async function vernutVOchered(zakaz: number, staffId: number): Promise<bo
   });
 }
 
-/** Выданные оператором доступы к НОВОМУ аккаунту. Шифруются те же. */
-export async function zapisatVydachu(opts: {
-  slotId: number;
+/**
+ * ПРОЙТИ ТЕКУЩИЙ ШАГ: отметить аккаунт и, если он последний, ВЫПОЛНИТЬ
+ * ЗАКАЗ — одной транзакцией.
+ *
+ * ⚠️ ШАГА «ЗАВЕРШЕНИЕ» НЕТ С ПЯТЬДЕСЯТ ТРЕТЬЕЙ ИТЕРАЦИИ (Р-169).
+ * Постановка: «Когда подтверждён последний шаг („Вы уверены?" → „Да"),
+ * заказ выполняется сразу». Отметка последнего аккаунта и закрытие
+ * заказа поэтому стоят в ОДНОЙ транзакции: раздельно бывало бы
+ * состояние «все аккаунты отмечены, а заказ в работе», и выйти из него
+ * было бы нечем — кнопки «Завершить» больше нет.
+ *
+ * ⚠️ ДАТА ОКОНЧАНИЯ У ПРОДЛЕНИЯ ПРИХОДИТ ВМЕСТЕ С ШАГОМ СВОЕГО АККАУНТА
+ * и проверяется ЗДЕСЬ: поле `required` человек снимает в браузере
+ * за секунду, а от даты считается письмо за три дня (закон 44).
+ * Расчётная дата у продления врёт — у клиента мог остаться неистёкший
+ * срок, — поэтому оператор переписывает её из Spotify (Р-145).
+ *
+ * ⚠️ ТЕКУЩИЙ ШАГ ВЫЧИСЛЯЕТСЯ, А НЕ БЕРЁТСЯ ИЗ ФОРМЫ: это первый
+ * аккаунт без отметки. Номер из формы только сверяется с ним — иначе
+ * правкой разметки отмечался бы любой аккаунт. Если отметки стоят
+ * у всех, а заказ ещё в работе (так остаются заказы, начатые до этой
+ * итерации со старым шагом «Завершение»), текущим считается ПОСЛЕДНИЙ
+ * аккаунт: его «Да» и выполняет заказ.
+ *
+ * ⚠️ `expires_at` — САМАЯ РАННЯЯ ИЗ ДАТ: напоминание обязано уйти
+ * до того, как кончится ПЕРВЫЙ из аккаунтов. У нового аккаунта своей
+ * даты нет, и срок ему считается от выдачи; `least` в Postgres
+ * пропускает NULL, поэтому одна строка накрывает все три случая.
+ */
+export type ItogShaga =
+  | { ok: true; zakryt: boolean }
+  | { ok: false; pochemu: 'ne_vash' | 'ne_tot_shag' | 'nuzhna_data' | 'net_klyucha'; n?: number };
+
+export async function proytiShag(opts: {
   zakaz: number;
   staffId: number;
-  login: string;
-  mailPass: string;
-  spotifyPass: string;
-}): Promise<boolean> {
-  if (!shifrGotov()) return false;
-  const r = await zapros(
-    `update order_slot s
-        set out_login_enc = $3, out_mail_pass_enc = $4, out_password_enc = $5, done_at = now()
-       from shop_order o
-      where s.id = $1 and s.order_id = o.id and o.id = $2 and o.operator_id is not null
-      returning s.id`,
-    [opts.slotId, opts.zakaz, zashifrovat(opts.login.trim()), zashifrovat(opts.mailPass), zashifrovat(opts.spotifyPass)],
-  );
-  return r.length > 0;
+  slotId: number;
+  /** Дата окончания подписки из Spotify, `ГГГГ-ММ-ДД` — только у продления. */
+  ends: string | null;
+  /** Старый заказ: доступы к новому аккаунту вводит оператор (до тридцать четвёртой итерации). */
+  vydacha?: { login: string; mailPass: string; spotifyPass: string };
+}): Promise<ItogShaga> {
+  if (opts.vydacha && !shifrGotov()) return { ok: false, pochemu: 'net_klyucha' };
+  const itog = await vTranzakcii(async (c): Promise<ItogShaga> => {
+    const o = await c.query<{ status: Status; operator_id: string | null }>(
+      'select status, operator_id from shop_order where id = $1 for update',
+      [opts.zakaz],
+    );
+    const row = o.rows[0];
+    if (!row || row.status !== 'in_work' || Number(row.operator_id) !== opts.staffId) return { ok: false, pochemu: 'ne_vash' };
+    const slots = (
+      await c.query<{ id: string; idx: number; mode: Rezhim; done_at: Date | null }>(
+        'select id, idx, mode, done_at from order_slot where order_id = $1 order by idx for update',
+        [opts.zakaz],
+      )
+    ).rows;
+    if (!slots.length) return { ok: false, pochemu: 'ne_tot_shag' };
+    const tekushchiy = slots.find((s) => !s.done_at) ?? slots[slots.length - 1]!;
+    if (Number(tekushchiy.id) !== opts.slotId) return { ok: false, pochemu: 'ne_tot_shag' };
+    const prodlenie = tekushchiy.mode === 'renew';
+    if (prodlenie && !(opts.ends && /^\d{4}-\d{2}-\d{2}$/.test(opts.ends) && !Number.isNaN(Date.parse(opts.ends)))) {
+      return { ok: false, pochemu: 'nuzhna_data', n: tekushchiy.idx + 1 };
+    }
+    if (opts.vydacha) {
+      await c.query(
+        `update order_slot set out_login_enc = $2, out_mail_pass_enc = $3, out_password_enc = $4,
+                done_at = coalesce(done_at, now())
+          where id = $1`,
+        [
+          opts.slotId,
+          zashifrovat(opts.vydacha.login.trim()),
+          zashifrovat(opts.vydacha.mailPass),
+          zashifrovat(opts.vydacha.spotifyPass),
+        ],
+      );
+    } else {
+      await c.query(
+        `update order_slot set done_at = coalesce(done_at, now()),
+                ends_at = case when $2::text is null then ends_at else $2::date end
+          where id = $1`,
+        [opts.slotId, prodlenie ? opts.ends : null],
+      );
+    }
+    const ostalis = slots.some((s) => !s.done_at && Number(s.id) !== opts.slotId);
+    if (ostalis) return { ok: true, zakryt: false };
+
+    /* ⚠️ ДАТА ОКОНЧАНИЯ ЗАКАЗА СТАВИТСЯ ЗДЕСЬ, А НЕ ПРИ ОПЛАТЕ:
+       доступ начинается тогда, когда его выдали, а между оплатой
+       и выдачей стоит очередь оператора (закон 44). И закрытие с записью
+       в журнал — та же транзакция: «Выполнил» спрашивают у журнала. */
+    await c.query(
+      `update shop_order set status = 'done', closed_at = now(),
+              expires_at = least(
+                (select min(ends_at) from order_slot where order_id = $1)::timestamptz,
+                case when exists (select 1 from order_slot where order_id = $1 and ends_at is null)
+                     then now() + (period || ' months')::interval else null end
+              )
+        where id = $1`,
+      [opts.zakaz],
+    );
+    await zapisatSobytie(c, opts.zakaz, opts.staffId, 'vypolnil');
+    return { ok: true, zakryt: true };
+  });
+  if (itog.ok && itog.zakryt) await posleVypolneniya(opts.zakaz, opts.staffId);
+  return itog;
 }
 
-/**
- * Отметить участника выполненным.
- *
- * ⚠️ РАБОТАЕТ В ОБОИХ РЕЖИМАХ С ТРИДЦАТЬ ЧЕТВЁРТОЙ ИТЕРАЦИИ. Пока
- * при «новом аккаунте» логин с паролем придумывал оператор, слот
- * закрывался САМ ФАКТОМ выдачи (`zapisatVydachu`), и эта дверь была
- * только для продления. Теперь оператор заводит аккаунт на данные
- * КЛИЕНТА и вводить ему нечего — значит закрывают слот одинаково.
- */
-export async function otmetitSlotGotovym(slotId: number, zakaz: number): Promise<boolean> {
-  const r = await zapros(
-    `update order_slot set done_at = now() where id = $1 and order_id = $2 returning id`,
-    [slotId, zakaz],
+/** Что происходит ПОСЛЕ выполнения: письмо клиенту и сигнал команде. */
+async function posleVypolneniya(zakaz: number, staffId: number): Promise<void> {
+  const u = await odna<{ email: string; plan_id: string; period: number; kind: 'plan' | 'certificate' }>(
+    `select u.email, o.plan_id, o.period, o.kind
+       from shop_order o join app_user u on u.id = o.user_id where o.id = $1`,
+    [zakaz],
   );
-  return r.length > 0;
+  if (u) {
+    /* Название заказа вместо номера: номера клиент больше нигде
+       не видит (тридцать шестая итерация). */
+    const spisok = await katalog();
+    const t = naytiTarif(spisok, u.plan_id);
+    await pismoZakazGotov(u.email, nazvanieZakaza(t?.name ?? u.plan_id, u.period, u.kind));
+  }
+  /* ⚠️ «КТО ВЫПОЛНИЛ» БЕРЁТСЯ ИЗ БАЗЫ, А НЕ ИЗ ВЫЗЫВАЮЩЕГО: заказ
+     закрыла транзакция, проверившая `operator_id`. */
+  const f = await odna<{ email: string }>('select email from staff where id = $1', [staffId]);
+  await soobshchitKomande({ vid: 'zakaz_zakryt', zakaz, kto: f?.email ?? `сотрудник ${staffId}` });
 }
 
-/**
- * Закрыть заказ.
- *
- * ⚠️ С СОРОК ВТОРОЙ ИТЕРАЦИИ ДАТУ ОКОНЧАНИЯ У ПРОДЛЕНИЯ НАЗЫВАЕТ
- * SPOTIFY, А НЕ АРИФМЕТИКА. У клиента на аккаунте мог остаться
- * неистёкший срок, и «сегодня плюс срок заказа» тогда врёт: Spotify
- * показывает дату ПОЗЖЕ. Оператор переписывает её с экрана на шаге
- * «Завершение», и от неё же считается письмо за три дня (закон 44).
- *
- * ⚠️ `expires_at` — САМАЯ РАННЯЯ ИЗ ДАТ, а не последняя. Напоминание
- * обязано уйти до того, как кончится ПЕРВЫЙ из аккаунтов заказа:
- * позже — значит уже после.
- *
- * ⚠️ У СЛОТА БЕЗ СВОЕЙ ДАТЫ (новый аккаунт) СРОК ПО-ПРЕЖНЕМУ
- * СЧИТАЕТСЯ ОТ ВЫДАЧИ — там официальной даты взять негде, аккаунт
- * только что заведён. `least` в Postgres пропускает NULL, поэтому
- * одна строка накрывает все три случая: все даты введены, ни одной,
- * и смесь.
- */
 /**
  * Шаг назад: снять отметку с ПОСЛЕДНЕГО пройденного аккаунта.
  *
@@ -597,79 +747,6 @@ export async function shagNazad(zakaz: number, staffId: number): Promise<boolean
     [zakaz, staffId],
   );
   return r.length > 0;
-}
-
-export async function zavershitZakaz(
-  zakaz: number,
-  staffId: number,
-  /** Официальные даты окончания: номер слота → «ГГГГ-ММ-ДД». */
-  daty: Record<number, string> = {},
-): Promise<{ ok: boolean; pochemu?: string }> {
-  const slots = await zapros<{ id: string; done_at: Date | null; mode: Rezhim }>(
-    'select id, done_at, mode from order_slot where order_id = $1',
-    [zakaz],
-  );
-  if (slots.some((s) => !s.done_at)) return { ok: false, pochemu: 'Не все участники заполнены.' };
-
-  const svoi: string[] = [];
-  let estBezDaty = false;
-  for (const sl of slots) {
-    const d = daty[Number(sl.id)];
-    if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
-      svoi.push(d);
-      await zapros('update order_slot set ends_at = $2::date where id = $1 and order_id = $3', [
-        Number(sl.id),
-        d,
-        zakaz,
-      ]);
-    } else {
-      estBezDaty = true;
-    }
-  }
-  const rannyaya = svoi.length ? svoi.slice().sort()[0]! : null;
-
-  /* ⚠️ ДАТА ОКОНЧАНИЯ СТАВИТСЯ ЗДЕСЬ, А НЕ ПРИ ОПЛАТЕ, и это
-     не мелочь. Доступ начинается тогда, когда его выдали, а между
-     оплатой и выдачей стоит очередь оператора: посчитай мы от оплаты —
-     человек потерял бы эти часы, и потерял бы их по нашей вине.
-     Срок тарифа приходит числом месяцев из той же строки заказа. */
-  /* ⚠️ ЗАКРЫТИЕ И ЗАПИСЬ В ЖУРНАЛ — ОДНА ТРАНЗАКЦИЯ. «Выполнил»
-     спрашивают потом у журнала, и заказ, закрытый без записи, выпал
-     бы из истории и из статистики по сотрудникам разом. */
-  const zakryt = await vTranzakcii(async (c) => {
-    const r = await c.query<{ user_id: string }>(
-      `update shop_order set status = 'done', closed_at = now(),
-              expires_at = least(
-                $3::date::timestamptz,
-                case when $4 then now() + (period || ' months')::interval else null end
-              )
-        where id = $1 and status = 'in_work' and operator_id = $2 returning user_id`,
-      [zakaz, staffId, rannyaya, estBezDaty],
-    );
-    if (!r.rows.length) return false;
-    await zapisatSobytie(c, zakaz, staffId, 'vypolnil');
-    return true;
-  });
-  if (!zakryt) return { ok: false, pochemu: 'Заказ не в работе у вас.' };
-  const u = await odna<{ email: string; plan_id: string; period: number; kind: 'plan' | 'certificate' }>(
-    `select u.email, o.plan_id, o.period, o.kind
-       from shop_order o join app_user u on u.id = o.user_id where o.id = $1`,
-    [zakaz],
-  );
-  if (u) {
-    /* Название заказа вместо номера: номера клиент больше нигде
-       не видит (тридцать шестая итерация). */
-    const spisok = await katalog();
-    const t = naytiTarif(spisok, u.plan_id);
-    await pismoZakazGotov(u.email, nazvanieZakaza(t?.name ?? u.plan_id, u.period, u.kind));
-  }
-  /* ⚠️ «КТО ВЫПОЛНИЛ» БЕРЁТСЯ ИЗ БАЗЫ, А НЕ ИЗ ВЫЗЫВАЮЩЕГО. Заказ
-     закрывает тот, у кого он в работе, и проверено это тем же
-     `update … where operator_id = $2`: адрес, пришедший сбоку,
-     мог бы разойтись с тем, кто на самом деле закрыл. */
-  const f = await odna<{ email: string }>('select email from staff where id = $1', [staffId]);
-  await soobshchitKomande({ vid: 'zakaz_zakryt', zakaz, kto: f?.email ?? `сотрудник ${staffId}` });
-  return { ok: true };
 }
 
 /**
@@ -746,6 +823,9 @@ export async function otmenitZakaz(
         [row.user_id, vernut, zakaz],
       );
     }
+    /* Активация промокода возвращается коду ЭТОЙ ЖЕ транзакцией (Р-167):
+       раздельно бывало бы «заказ отменён, активация сгорела». */
+    await vernutPromo(c, zakaz);
     // Сертификат, по которому заказ оформляли, возвращается к жизни:
     // человек не виноват, что доступ не оформили.
     if (row.certificate_id) {

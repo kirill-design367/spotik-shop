@@ -161,8 +161,17 @@ export default async function AdminStats({
               <dd className="tnum">{d.obshchee.zakazov}</dd>
               <dt>{t('ss.revenue')}</dt>
               <dd className="tnum">{rubli(d.obshchee.vyruchkaKop)}</dd>
+              {/* ⚠️ ПОПОЛНЕНИЯ — ОТДЕЛЬНОЙ СТРОКОЙ И НЕ В ВЫРУЧКЕ (Р-168):
+                  эти деньги посчитаются, когда ими оплатят выполненный
+                  заказ, — иначе одни и те же рубли вошли бы дважды. */}
+              <dt>{t('ss.topups')}</dt>
+              <dd className="tnum">
+                {rubli(d.obshchee.popolneniyaKop)}{' '}
+                <span className="hint">{t('ss.topups_n', { n: d.obshchee.popolneniy })}</span>
+              </dd>
             </dl>
             <p className="hint">{t('ss.revenue_note')}</p>
+            <p className="hint">{t('ss.topups_note')}</p>
           </div>
 
           <div className="ad__card">
@@ -333,6 +342,39 @@ export default async function AdminStats({
           </div>
         )}
       </div>
+      ) : null}
+
+      {/* ⚠️ ПРОМОКОДЫ — ТОЛЬКО АДМИНИСТРАТОРУ (Р-167): скидка — это деньги.
+          Те же выполненные заказы и тот же период, что у таблицы тарифов. */}
+      {d.promokody ? (
+        <div className="ad__card">
+          <h3>{t('ss.promo')}</h3>
+          <p className="hint">{t('ss.promo_note')}</p>
+          {!d.promokody.length ? (
+            <p className="hint">{t('ss.none')}</p>
+          ) : (
+            <div className="ad__scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t('t.code')}</th>
+                    <th>{t('ss.orders')}</th>
+                    <th>{t('ss.promo_skidka')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.promokody.map((r) => (
+                    <tr key={r.kod}>
+                      <td {...NE_PEREVODIT}>{r.kod}</td>
+                      <td className="tnum">{r.zakazov}</td>
+                      <td className="tnum">−{rubli(r.skidkaKop)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       ) : null}
 
       {/* ⚠️ ГЕНЕРАТОР СТОИТ В СТАТИСТИКЕ, А НЕ В НАСТРОЙКАХ, и это

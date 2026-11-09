@@ -72,7 +72,7 @@ const pool = new pg.Pool({ connectionString: URL_BAZY, max: 1 });
    посередине. */
 await pool.query(`truncate balance_move, payment, order_slot, certificate, shop_order,
   session, login_code, cert_try, support_try, app_user, staff, staff_plan_off,
-  plan_price, plan_name, plan_discount, plan_off, setting, notify_outbox
+  plan_price, plan_name, plan_discount, plan_off, setting, notify_outbox, promo_try
   restart identity cascade`);
 await pool.end();
 
@@ -409,13 +409,11 @@ await shagVpered(admin, '.ad__shag[data-sost="seychas"] button:has-text("отм�
     `${(await admin.$$('.ad__shag[data-sost="proyden"]')).length}`);
 }
 
-for (let i = 0; i < 4; i += 1) {
-  const knopka = admin.locator('.ad__shag[data-sost="seychas"] button:has-text("отметить выполненным")').first();
-  if (!(await knopka.count())) break;
-  await shagVpered(admin, '.ad__shag[data-sost="seychas"] button:has-text("отметить выполненным")');
-}
-
-/* ── ЗАВЕРШЕНИЕ: ДАТА ОКОНЧАНИЯ У ПРОДЛЕНИЯ ОБЯЗАТЕЛЬНА ────────────
+/* ── ПОСЛЕДНИЙ АККАУНТ — ПРОДЛЕНИЕ: ДАТА ОКОНЧАНИЯ В ЕГО ШАГЕ ──────
+   ⚠️ С ПЯТЬДЕСЯТ ТРЕТЬЕЙ ИТЕРАЦИИ ШАГА «ЗАВЕРШЕНИЕ» НЕТ (Р-169):
+   поле даты переехало в шаг аккаунта на продление, а «Да» последнего
+   шага сразу выполняет заказ. Второй аккаунт этого заказа и есть
+   последний и на продление.
    ⚠️ ПОЛЕ ЗАРАНЕЕ ЗАПОЛНЕНО РАСЧЁТНОЙ ДАТОЙ (постановка), и считает
    её СЕРВЕР: спроси мы часы браузера, оператор из другого пояса
    получил бы другую подстановку (закон 49). Проверяем, что оно
@@ -424,7 +422,7 @@ for (let i = 0; i < 4; i += 1) {
 let svoyaData = '';
 {
   const pole = admin.locator('.ad__shag[data-sost="seychas"] input[type="date"]').first();
-  chk('на завершении спрошена дата окончания у продления', (await pole.count()) === 1, `${await pole.count()}`);
+  chk('в шаге продления спрошена дата окончания', (await pole.count()) === 1, `${await pole.count()}`);
   const podstavleno = await pole.inputValue();
   chk('поле даты заранее заполнено', /^\d{4}-\d{2}-\d{2}$/.test(podstavleno), podstavleno || 'пусто');
   /* ⚠️ СВОЯ ДАТА — НА ДЕСЯТЬ СУТОК РАНЬШЕ РАСЧЁТНОЙ, И ЭТО НЕ ВКУС.
@@ -439,7 +437,7 @@ let svoyaData = '';
   svoyaData = d.toISOString().slice(0, 10);
   await pole.fill(svoyaData);
 }
-await shagVpered(admin, '.ad__shag[data-sost="seychas"] button:has-text("Завершить заказ")');
+await shagVpered(admin, '.ad__shag[data-sost="seychas"] button:has-text("отметить выполненным")');
 const posle = await admin.textContent('body');
 /* ⚠️ `\s*`, А НЕ ПРОБЕЛ: подпись и значение стоят соседними `dt`
    и `dd`, и между ними в `textContent` нет ни одного знака. */
@@ -1180,10 +1178,12 @@ console.log('── СКРУГЛЁННЫЕ УГЛЫ В РАЗДЕЛЕ, И ЛЕН
          «визуально — как плашка про рабочее время», а та живёт
          на `--ui-r` раздела. Это исключение названо в Р-158.
          ⚠️ `.plashka-pochta` — ТАБЛИЧКА ПРО ПОЧТУ (пятьдесят первая,
-         Р-165): тот же вид общим правилом, тот же `--ui-r`. */
+         Р-165): тот же вид общим правилом, тот же `--ui-r`.
+         ⚠️ `.skidka-plashka` — ПЛАШКА «−N%» (пятьдесят третья, Р-170):
+         пилюля, как плашка срока и кнопка, а третьего радиуса нет. */
       if (
         el.closest(
-          '.btn, .seg, .seg__btn, .opt, .card, .cards__glow, .burger, .menu, .rstep__wave, .route__node, .pd__knopka, .plashka-egipet, .plashka-pochta',
+          '.btn, .seg, .seg__btn, .opt, .card, .cards__glow, .burger, .menu, .rstep__wave, .route__node, .pd__knopka, .plashka-egipet, .plashka-pochta, .skidka-plashka',
         )
       )
         continue;
@@ -1455,7 +1455,17 @@ console.log('── СКИДКА И ВЫКЛЮЧЕННАЯ ЯЧЕЙКА: ЧЕР�
      2 890 ₽, то есть строка «890» честно есть в разметке и никогда
      не попадает на экран. Проверка про ЭКРАН, значит и читать надо
      экран. */
-  const chek = await klient.innerText('main');
+  /* ⚠️ С ПЯТЬДЕСЯТ ТРЕТЬЕЙ ИТЕРАЦИИ СТАРАЯ ЦЕНА СТОИТ И НА ОФОРМЛЕНИИ —
+     зачёркнутой, рядом с плашкой «−N%» (Р-170). Значит «890» на экране
+     законно, но ТОЛЬКО внутри зачёркнутого: считается текст экрана
+     без элементов `<s>`. */
+  const chek = await klient.evaluate(() => {
+    const m = document.querySelector('main');
+    if (!m) return '';
+    const kopiya = m.cloneNode(true);
+    for (const z of kopiya.querySelectorAll('s')) z.remove();
+    return kopiya.textContent ?? '';
+  });
   chk('оформление считает по цене со скидкой', /690/.test(chek) && !/890/.test(chek),
     chek.replace(/\s+/g, ' ').slice(0, 90));
 
@@ -2467,8 +2477,8 @@ console.log('── ИСТОРИЯ РАБОТЫ: ДВА СОТРУДНИКА, П
 
   await oper.goto(`http://localhost:${PORT}/admin/orders/${peredannyy}/`, { waitUntil: 'networkidle' });
   await nazhat(oper, 'button:has-text("Взять")');
+  /* Аккаунт один, и его «Да» сразу выполняет заказ (Р-169). */
   await shagVpered(oper, '.ad__shag[data-sost="seychas"] button:has-text("отметить выполненным")');
-  await shagVpered(oper, '.ad__shag[data-sost="seychas"] button:has-text("Завершить заказ")');
 
   const sost = await p2.query('select status from shop_order where id = $1', [peredannyy]);
   chk('переданный заказ выполнен вторым сотрудником', sost.rows[0].status === 'done', sost.rows[0].status);
@@ -2735,7 +2745,7 @@ console.log('── ИСТОРИЯ РАБОТЫ: ДВА СОТРУДНИКА, П
      заказа, Р-148). */
   const uOperaStatHtml = await oper.content();
   chk('у исполнителя в статистике нет выручки',
-    !/Выручка/.test(uOperaStat) && !/деньги, прошедшие через кассу/.test(uOperaStat) &&
+    !/Выручка/.test(uOperaStat) && !/картой и с баланса/.test(uOperaStat) &&
       !/Выручка/.test(uOperaStatHtml),
     uOperaStat.replace(/\s+/g, ' ').match(/Выручка[^·]{0,40}/)?.[0] ?? 'чисто');
   chk('у исполнителя нет раздела «Ссылка с метками»',
@@ -2747,7 +2757,7 @@ console.log('── ИСТОРИЯ РАБОТЫ: ДВА СОТРУДНИКА, П
   await admin.goto(`http://localhost:${PORT}/admin/stats/?p=day`, { waitUntil: 'networkidle' });
   const uAdminaStat = await admin.innerText('main.ad');
   chk('у администратора выручка и ссылка с метками на месте',
-    /Выручка/.test(uAdminaStat) && /деньги, прошедшие через кассу/.test(uAdminaStat) &&
+    /Выручка/.test(uAdminaStat) && /картой и с баланса/.test(uAdminaStat) &&
       /Ссылка с метками/.test(uAdminaStat),
     `выручка ${/Выручка/.test(uAdminaStat)} · метки ${/Ссылка с метками/.test(uAdminaStat)}`);
 

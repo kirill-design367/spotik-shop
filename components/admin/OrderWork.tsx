@@ -14,7 +14,7 @@ import { slovar, sostoyanie, type Klyuch, type Perevod, type Yazyk } from '@/lib
 import { imyaTarifaIz, srokKratkoDlyaSotrudnika, type ImenaTarifov } from '@/lib/plans';
 import { prichinaSotrudniku, prichinyDlya } from '@/lib/admin/prichiny';
 import { poMoskve } from '@/lib/admin/vremya';
-import { NE_PEREVODIT, iliNadpis } from '@/components/Bukvalno';
+import Bukvalno, { NE_PEREVODIT, iliNadpis } from '@/components/Bukvalno';
 import { nadpis } from '@/components/admin/nadpis';
 
 /**
@@ -59,9 +59,12 @@ export default function OrderWork({
   const [otvet, shag, idyot] = useActionState<OtvetA, FormData>(adminShag, {});
 
   const neproydennyy = z.slots.findIndex((s) => !s.gotov);
-  /** Номер текущего шага. Равен числу аккаунтов — значит «Завершение». */
-  const tekushchiy = neproydennyy === -1 ? z.slots.length : neproydennyy;
-  const vsego = z.slots.length + 1;
+  /* ⚠️ ШАГА «ЗАВЕРШЕНИЕ» НЕТ (Р-169): последний аккаунт и выполняет
+     заказ. Отмечены все, а заказ в работе — так остаются заказы,
+     начатые со старым последним шагом; тогда текущим снова стоит
+     ПОСЛЕДНИЙ аккаунт, и его «Да» закрывает заказ. */
+  const tekushchiy = neproydennyy === -1 ? (z.status === 'in_work' ? z.slots.length - 1 : -1) : neproydennyy;
+  const vsego = z.slots.length;
   const rub = (kop: number) => (kop / 100).toFixed(2);
 
   return (
@@ -111,6 +114,15 @@ export default function OrderWork({
                       balance: rub(z.balanceKop),
                       card: rub(z.moneyKop),
                     })}
+              </dd>
+            </>
+          ) : null}
+          {z.promoKod ? (
+            <>
+              <dt>{t('z.promo')}</dt>
+              <dd>
+                <Bukvalno>{z.promoKod}</Bukvalno>
+                {z.promoSkidkaKop !== null ? ` · −${rub(z.promoSkidkaKop)}` : ''}
               </dd>
             </>
           ) : null}
@@ -169,7 +181,15 @@ export default function OrderWork({
           по каждому аккаунту». Блок рисуется, только если доступы
           расшифрованы ТОМУ, КТО СМОТРИТ — решает сервер
           (`dostupyVidny`), разметка ничего не прячет. */}
-      {(z.status === 'done' || z.otmena) && z.dostupyVidny ? <Akkaunty z={z} t={t} /> : null}
+      {/* ⚠️ С ПЯТЬДЕСЯТ ТРЕТЬЕЙ ИТЕРАЦИИ АДМИНИСТРАТОР ВИДИТ ИХ У ЛЮБОГО
+          ЗАКАЗА — «Продажи → Открыть» (Р-171): «почты и пароли аккаунтов,
+          даты окончания подписки, историю». Признак администратора здесь —
+          история: исполнителю сервер её не отдаёт вовсе. Свой заказ
+          в работе блок не повторяет — данные стоят в шаге. */}
+      {z.dostupyVidny &&
+      (z.status === 'done' || z.otmena || (z.istoriya !== null && !(moy && z.status === 'in_work'))) ? (
+        <Akkaunty z={z} t={t} />
+      ) : null}
 
       {/* ⚠️ ЗАДАЧА «ОТМЕНА ПОДПИСКИ» (пункт 9). Своё действие и своё
           состояние: у заказа шаги уже пройдены, и сообщение на экране
@@ -212,16 +232,6 @@ export default function OrderWork({
           ))
         : null}
 
-      {moy && z.status !== 'cancelled' ? (
-        <ShagZaversheniya
-          z={z}
-          t={t}
-          vsego={vsego}
-          tekushchiy={zakryt ? -1 : tekushchiy}
-          shag={shag}
-          idyot={idyot}
-        />
-      ) : null}
     </>
   );
 }
@@ -440,8 +450,10 @@ function ShagAkkaunta({
   shag: (fd: FormData) => void;
   idyot: boolean;
 }) {
-  const proyden = s.gotov;
   const seychas = tekushchiy === s.idx;
+  const proyden = s.gotov && !seychas;
+  /** Последний аккаунт: его «Да» выполняет заказ. */
+  const posledniy = s.idx === z.slots.length - 1;
   const zhdyot = !proyden && !seychas;
   const imya = `${z.slots.length > 1 ? t('u.account', { n: s.idx + 1 }) : ''}${s.mode === 'new' ? t('u.new') : t('u.renew')}`;
   /* Старый заказ: доступы заводил оператор, и доделывать его надо тем
@@ -503,22 +515,42 @@ function ShagAkkaunta({
               <Glavnaya t={t} podpis={s.outLogin ? t('u.update_creds') : t('u.save_creds')} idyot={idyot} />
             </form>
           ) : (
-            <form action={shag}>
+            <form action={shag} className="ad__form">
               <input type="hidden" name="order" value={z.id} />
               <input type="hidden" name="slot" value={s.id} />
               <input type="hidden" name="op" value="gotov" />
+              {/* ⚠️ ДАТА ОКОНЧАНИЯ У ПРОДЛЕНИЯ — В ШАГЕ СВОЕГО АККАУНТА
+                  (Р-169), обязательная и заранее заполненная расчётной
+                  датой, которую считает СЕРВЕР (закон 49). У нового
+                  аккаунта поля нет: срок считается от выдачи. */}
+              {s.mode === 'renew' ? (
+                <>
+                  <label>
+                    {t('w.ends')}
+                    <input type="date" name="ends" required defaultValue={s.endsAt ?? z.raschyotnayaData} />
+                  </label>
+                  <p className="hint" style={{ margin: 0 }}>
+                    {t('w.ends_hint')}
+                  </p>
+                </>
+              ) : null}
+              {posledniy ? (
+                <p className="hint" style={{ margin: 0 }}>
+                  {t('w.last_step')}
+                </p>
+              ) : null}
               <Glavnaya
                 t={t}
                 podpis={s.mode === 'renew' ? t('u.renew_done') : t('u.new_done')}
                 idyot={idyot}
+                hod={posledniy ? t('z.closing') : undefined}
               />
             </form>
           )}
 
           {/* ⚠️ «ОТМЕНИТЬ ЗАКАЗ» СТОИТ НА КАЖДОМ ШАГЕ, ГДЕ ОПЕРАТОР
               РАБОТАЕТ С ПОЧТАМИ И ПАРОЛЯМИ (постановка) — то есть
-              на шагах аккаунтов, и только на них: на «Завершении»
-              работать уже нечем. */}
+              на каждом шаге аккаунта. */}
           <Otmena z={z} t={t} en={en} shag={shag} idyot={idyot} />
           {/* На первом шаге назад идти некуда, и кнопки там нет. */}
           {s.idx > 0 ? <Nazad z={z} t={t} shag={shag} idyot={idyot} /> : null}
@@ -529,86 +561,6 @@ function ShagAkkaunta({
         <p className="hint">
           {t('w.ends')}: {s.endsAt}
         </p>
-      ) : null}
-    </div>
-  );
-}
-
-/**
- * Последний шаг.
- *
- * ⚠️ У ПРОДЛЕНИЯ ДАТА ОКОНЧАНИЯ СПРАШИВАЕТСЯ, И ОНА ОБЯЗАТЕЛЬНА
- * (постановка). Причина не в аккуратности: у клиента на аккаунте мог
- * остаться неистёкший срок, и «сегодня плюс срок заказа» тогда врёт —
- * Spotify показывает дату позже. От введённой даты считается письмо
- * за три дня до конца (закон 44). Поле заранее заполнено расчётной
- * датой, и считает её СЕРВЕР (закон 49).
- *
- * ⚠️ У НОВОГО АККАУНТА ПОЛЯ НЕТ ВОВСЕ — «для новых аккаунтов как
- * сейчас»: официальной даты там взять негде, аккаунт только что
- * заведён, и срок считается от выдачи.
- */
-function ShagZaversheniya({
-  z,
-  t,
-  vsego,
-  tekushchiy,
-  shag,
-  idyot,
-}: {
-  z: ZakazOperatoru;
-  t: Perevod;
-  vsego: number;
-  tekushchiy: number;
-  shag: (fd: FormData) => void;
-  idyot: boolean;
-}) {
-  const nomer = z.slots.length;
-  const seychas = tekushchiy === nomer;
-  const zakryt = z.status === 'done' || z.status === 'cancelled';
-  const prodleniya = z.slots.filter((s) => s.mode === 'renew');
-
-  return (
-    <div className="ad__shag" data-sost={zakryt ? 'proyden' : seychas ? 'seychas' : 'zhdyot'}>
-      <h3>
-        <span className="ad__shag-n" aria-hidden="true">
-          {zakryt ? '✓' : nomer + 1}
-        </span>
-        <span>
-          {t('w.step', { n: nomer + 1, vsego })} · {t('w.finish_h')}
-        </span>
-      </h3>
-
-      {!seychas && !zakryt ? <p className="hint">{t('w.locked')}</p> : null}
-
-      {seychas ? (
-        <>
-          <p className="hint">{t('w.all_done')}</p>
-          <form action={shag} className="ad__form">
-            <input type="hidden" name="order" value={z.id} />
-            <input type="hidden" name="op" value="zavershit" />
-            {prodleniya.map((s) => (
-              <label key={s.id}>
-                {z.slots.length > 1
-                  ? `${t('u.account', { n: s.idx + 1 })}${t('w.ends')}`
-                  : t('w.ends')}
-                <input
-                  type="date"
-                  name={`ends_${s.id}`}
-                  required
-                  defaultValue={s.endsAt ?? z.raschyotnayaData}
-                />
-              </label>
-            ))}
-            {prodleniya.length ? (
-              <p className="hint" style={{ margin: 0 }}>
-                {t('w.ends_hint')}
-              </p>
-            ) : null}
-            <Glavnaya t={t} podpis={t('w.finish_btn')} idyot={idyot} hod={t('z.closing')} />
-          </form>
-          <Nazad z={z} t={t} shag={shag} idyot={idyot} />
-        </>
       ) : null}
     </div>
   );

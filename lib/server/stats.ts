@@ -138,7 +138,20 @@ export type Obshchee = {
   srednyayaMinut: number | null;
   sertifikatovKupleno: number;
   sertifikatovAktivirovano: number;
+  /**
+   * ПОПОЛНЕНИЯ БАЛАНСА ЗА ПЕРИОД, по дате оплаты счёта (Р-168).
+   *
+   * ⚠️ ЭТО НЕ ВЫРУЧКА И В НЕЁ НЕ ВХОДИТ. Деньги пополнения попадают
+   * в выручку ровно один раз — когда ими оплачен ВЫПОЛНЕННЫЙ заказ
+   * (`balance_kop` этого заказа). Сложи мы их ещё и здесь — одни
+   * и те же рубли посчитались бы дважды: при пополнении и при заказе.
+   */
+  popolneniy: number;
+  popolneniyaKop: number;
 };
+
+/** Промокод в статистике: выполненные заказы с ним и скидка по ним. */
+export type StrokaPromo = { kod: string; zakazov: number; skidkaKop: number };
 
 export type Svodka = {
   /** `null` — СПРАШИВАЛ НЕ АДМИНИСТРАТОР. */
@@ -153,6 +166,12 @@ export type Svodka = {
    * (сорок девятая итерация). У оператора — только его.
    */
   tarify: StrokaTarifa[];
+  /**
+   * Промокоды выполненных за период заказов (Р-167). `null` —
+   * СПРАШИВАЛ НЕ АДМИНИСТРАТОР: скидка — это деньги, а деньги
+   * исполнителю не видны (Р-155).
+   */
+  promokody: StrokaPromo[] | null;
   /**
    * По сотрудникам. `null` — СПРАШИВАЛ НЕ АДМИНИСТРАТОР.
    *
@@ -251,7 +270,7 @@ export async function svodka(p: Period, kto: { admin: boolean; staffId: number }
 
      ⚠️ `closed_at` У ВЫПОЛНЕННОГО ЗАКАЗА — ЭТО ТОТ ЖЕ МОМЕНТ, ЧТО
      У СОБЫТИЯ «ВЫПОЛНИЛ» В ЖУРНАЛЕ: закрытие и запись идут одной
-     транзакцией и одним `now()` (`zavershitZakaz`), а старые заказы
+     транзакцией и одним `now()` (`proytiShag`), а старые заказы
      засыпаны в журнал ровно по `closed_at` (миграция 012). Значит
      «по времени выполнения, как в блоке По сотрудникам» выполняется
      буквально — и при этом сюда попадают и заказы на сертификат,
@@ -278,10 +297,20 @@ export async function svodka(p: Period, kto: { admin: boolean; staffId: number }
 
   /* ⚠️ ДЕНЬГИ НЕ ПОДНИМАЮТСЯ ИЗ БАЗЫ ВОВСЕ, КОГДА ПОКАЗЫВАТЬ ИХ
      НЕКОМУ. «Убирай на сервере» можно было бы выполнить и стиранием
-     числа перед возвратом, но не считать его — короче и строже. */
+     числа перед возвратом, но не считать его — короче и строже.
+
+     ⚠️ С ПЯТЬДЕСЯТ ТРЕТЬЕЙ ИТЕРАЦИИ ВЫРУЧКА — ЭТО ДЕНЬГИ КАРТОЙ ПЛЮС
+     ДЕНЬГИ С БАЛАНСА у выполненного заказа (Р-168). Постановка: «деньги
+     пополнения считаются в выручке один раз — когда ими оплачен
+     выполненный заказ». Прежде баланс не считался вовсе, а на баланс
+     ложатся три вида денег, и ни один не посчитан в момент прихода:
+     пополнение, возврат за ОТМЕНЁННЫЙ заказ (отменённый в выручку
+     не входит) и деньги, пришедшие по заказу, который их уже не ждал.
+     Значит рубль с баланса, ушедший в выполненный заказ, нигде ещё
+     не считан — и считается здесь, ровно один раз. */
   const potarif = await zapros<{ plan_id: string; period: number; n: string; kop: string | null }>(
     `select o.plan_id, o.period, count(*)::text as n${
-      admin ? ', coalesce(sum(o.money_kop), 0)::text as kop' : ', null as kop'
+      admin ? ', coalesce(sum(o.money_kop + o.balance_kop), 0)::text as kop' : ', null as kop'
     }
        from shop_order o
       where ${VYPOLNEN} and ${gz.uslovie}${svoi.uslovie}
@@ -301,7 +330,7 @@ export async function svodka(p: Period, kto: { admin: boolean; staffId: number }
   const vypolneno = tarify.reduce((a, r) => a + r.zakazov, 0);
 
   if (!admin) {
-    return { obshchee: null, vypolneno, tarify, poSotrudnikam: null, istochniki: null };
+    return { obshchee: null, vypolneno, tarify, promokody: null, poSotrudnikam: null, istochniki: null };
   }
 
   /* ⚠️ ВЕРХНЯЯ КАРТОЧКА — ЭТО ИТОГ ТАБЛИЦЫ ТАРИФОВ, А НЕ СВОЙ ЗАПРОС
@@ -355,6 +384,31 @@ export async function svodka(p: Period, kto: { admin: boolean; staffId: number }
       order by count(*) desc`,
     gz.params,
   );
+  /* ⚠️ ПОПОЛНЕНИЯ — ПО ОПЛАЧЕННЫМ СЧЕТАМ ПОПОЛНЕНИЯ, по дате оплаты.
+     Не по `balance_move`: строка движения пишется той же дверью, но
+     причина в ней — слово, а счёт — признак `kind`, и опираться на
+     признак надёжнее. */
+  const gp = granicy(p, 'paid_at');
+  const pop = await odna<{ n: string; kop: string }>(
+    `select count(*)::text as n, coalesce(sum(amount_kop), 0)::text as kop
+       from payment
+      where kind = 'topup' and status = 'paid' and ${gp.uslovie}`,
+    gp.params,
+  );
+
+  /* Промокоды — у ТЕХ ЖЕ выполненных заказов и за тот же период, что
+     таблица тарифов: иначе «скидка по промокоду» и «выручка» на одном
+     экране считали бы разные множества. */
+  const pr = await zapros<{ promo_kod: string; n: string; kop: string }>(
+    `select o.promo_kod, count(*)::text as n, coalesce(sum(o.promo_skidka_kop), 0)::text as kop
+       from shop_order o
+      where ${VYPOLNEN} and ${gz.uslovie} and o.promo_kod is not null
+      group by o.promo_kod
+      order by count(*) desc, o.promo_kod`,
+    gz.params,
+  );
+  const promokody: StrokaPromo[] = pr.map((r) => ({ kod: r.promo_kod, zakazov: Number(r.n), skidkaKop: Number(r.kop) }));
+
   const vsego = ist.reduce((a, r) => a + Number(r.n), 0);
   const istochniki: StrokaIstochnika[] = ist.map((r) => ({
     istochnik: r.utm_source,
@@ -435,9 +489,12 @@ export async function svodka(p: Period, kto: { admin: boolean; staffId: number }
       srednyayaMinut: sr?.min == null ? null : Number(sr.min),
       sertifikatovKupleno: Number(sert?.kupleno ?? 0),
       sertifikatovAktivirovano: Number(sert?.aktivirovano ?? 0),
+      popolneniy: Number(pop?.n ?? 0),
+      popolneniyaKop: Number(pop?.kop ?? 0),
     },
     vypolneno,
     tarify,
+    promokody,
     poSotrudnikam,
     istochniki,
   };

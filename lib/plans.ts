@@ -272,12 +272,20 @@ export function formatPrice(v: number): string {
   return v.toLocaleString('ru-RU').replace(/ /g, ' ');
 }
 
-/** Экономия относительно помесячной оплаты того же тарифа. */
-export function savings(plan: Plan, months: PeriodKey): number {
-  const monthly = plan.prices[1];
-  const total = plan.prices[months];
-  if (!monthly || !total || months === 1) return 0;
-  return monthly * months - total;
+/**
+ * Размер скидки тарифа в процентах — для плашки «−N%» (Р-170).
+ *
+ * ⚠️ ОДНО МЕСТО НА ГЛАВНУЮ, СЕРТИФИКАТЫ И ОФОРМЛЕНИЕ: три копии
+ * округления разошлись бы на первой же скидке в 33,5 %. Цена со скидкой
+ * всегда НИЖЕ прежней (иначе каталог скидку не отдаёт вовсе), поэтому
+ * ноль процентов не показывается никогда: самая малая скидка — «−1%».
+ *
+ * Прежняя «экономия относительно помесячной оплаты» (`savings`) снята
+ * вместе с зелёной строкой: постановка пятьдесят третьей итерации.
+ */
+export function procentSkidki(bylo: number, stalo: number): number {
+  if (!(bylo > 0) || !(stalo < bylo)) return 0;
+  return Math.max(1, Math.round((1 - stalo / bylo) * 100));
 }
 
 /**

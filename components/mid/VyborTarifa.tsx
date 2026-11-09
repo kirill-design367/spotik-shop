@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { attachCards } from '@/lib/cards';
-import { PERIODS, formatPrice } from '@/lib/plans';
+import { PERIODS, formatPrice, procentSkidki } from '@/lib/plans';
 
 /**
  * ВЫБОР ТАРИФА И СРОКА — ПЛАШКИ СРОКА И РЯД КАРТ.
@@ -140,7 +140,11 @@ export default function VyborTarifa({
     const p = PERIODS.find((x) => x.key === period);
     const c = tarif.ceny.find((x) => x.period === period);
     return `${p?.label ?? `${period} мес`}, тариф «${tarif.name}»: ${
-      c ? `${formatPrice(c.rub)} рублей` : 'на этот срок не оформляется'
+      c
+        ? `${formatPrice(c.rub)} рублей${
+            c.byloRub ? ` вместо ${formatPrice(c.byloRub)}, скидка ${procentSkidki(c.byloRub, c.rub)} процентов` : ''
+          }`
+        : 'на этот срок не оформляется'
     }`;
   })();
 
@@ -240,8 +244,16 @@ export default function VyborTarifa({
                   <span className="card__price tnum">
                     {/* ⚠️ СТАРАЯ ЦЕНА СТОИТ НАД НОВОЙ И ЗАЧЁРКНУТА,
                         а срок скидки — рядом с новой. Иначе «до 30.09»
-                        читается как срок тарифа, а не скидки. */}
-                    {c?.byloRub ? <s className="card__bylo">{formatPrice(c.byloRub)} ₽</s> : null}
+                        читается как срок тарифа, а не скидки.
+                        ⚠️ С ПЯТЬДЕСЯТ ТРЕТЬЕЙ ИТЕРАЦИИ РЯДОМ С НЕЙ ЯРКАЯ
+                        ПЛАШКА «−N%» (Р-170): процент считает одно место,
+                        `procentSkidki`, на всех трёх страницах. */}
+                    {c?.byloRub ? (
+                      <span className="card__bylo-ryad">
+                        <span className="skidka-plashka">−{procentSkidki(c.byloRub, c.rub)}%</span>
+                        <s className="card__bylo">{formatPrice(c.byloRub)} ₽</s>
+                      </span>
+                    ) : null}
                     <b>{c ? `${formatPrice(c.rub)} ₽` : '—'}</b>
                     <span className="card__per">
                       за {period} мес{c?.doDaty ? ` · до ${c.doDaty}` : ''}

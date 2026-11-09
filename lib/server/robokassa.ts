@@ -106,11 +106,21 @@ function shpHvost(pary: Record<string, string>): string[] {
     .map((k) => `${k}=${pary[k]}`);
 }
 
+/**
+ * Способ расчёта в позиции чека.
+ *
+ * ⚠️ У ПОПОЛНЕНИЯ БАЛАНСА — ПРЕДОПЛАТА, А НЕ ПОЛНЫЙ РАСЧЁТ (Р-168):
+ * постановка «чек по 54-ФЗ — как на предоплату». За деньгами на балансе
+ * ещё не стоит оказанная услуга — её человек выберет потом, — и полный
+ * расчёт в чеке был бы неправдой. У заказа по-прежнему полный расчёт.
+ */
+export type SposobRaschyota = 'full_payment' | 'full_prepayment';
+
 export type PoziciyaCheka = {
   name: string;
   quantity: number;
   sum: number;
-  payment_method: 'full_payment';
+  payment_method: SposobRaschyota;
   payment_object: 'service';
   tax: 'none';
 };
@@ -123,12 +133,15 @@ export type PoziciyaCheka = {
  * обязан стоять этот остаток: чек пробивается на те деньги, которые
  * прошли через кассу.
  */
-export function chek(n: Nastroyki, pozicii: { name: string; sumKop: number }[]): Record<string, unknown> {
+export function chek(
+  n: Nastroyki,
+  pozicii: { name: string; sumKop: number; sposob?: SposobRaschyota }[],
+): Record<string, unknown> {
   const items: PoziciyaCheka[] = pozicii.map((p) => ({
     name: p.name.slice(0, 128),
     quantity: 1,
     sum: Number(rubliStrokoy(p.sumKop)),
-    payment_method: 'full_payment',
+    payment_method: p.sposob ?? 'full_payment',
     payment_object: 'service',
     tax: 'none',
   }));
@@ -188,7 +201,7 @@ export function ssylkaOplaty(
   invId: number,
   summaKop: number,
   opisanie: string,
-  pozicii: { name: string; sumKop: number }[],
+  pozicii: { name: string; sumKop: number; sposob?: SposobRaschyota }[],
 ): string {
   const outSum = rubliStrokoy(summaKop);
   const chekJson = JSON.stringify(chek(n, pozicii));
