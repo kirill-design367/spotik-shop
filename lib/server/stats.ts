@@ -32,6 +32,7 @@
  */
 
 import { odna, zapros } from './db';
+import { nastoyashchayaData } from '../data';
 
 /* ⚠️ ТАРИФ И СРОК СЫРЫЕ: переводит их страница, зная свой язык.
 
@@ -200,8 +201,8 @@ export type Svodka = {
  * тарифов и источников (они считались за 30 суток).
  */
 export function ponyatPeriod(vid: string, ot: string, doDaty: string): Period {
-  const data = /^\d{4}-\d{2}-\d{2}$/;
-  if (data.test(ot)) return { vid: 'daty', ot, do: data.test(doDaty) ? doDaty : null };
+  // Невозможная дата («2026-02-31») база не примет: она — «без даты».
+  if (nastoyashchayaData(ot)) return { vid: 'daty', ot, do: nastoyashchayaData(doDaty) ? doDaty : null };
   const b = BYSTRYE.find((x) => x.kluch === vid);
   return { vid: b ? b.kluch : 'month' };
 }

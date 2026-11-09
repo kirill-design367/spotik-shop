@@ -29,6 +29,7 @@
 import { odna, zapros } from './db';
 import { otpechatokPochty } from './crypto';
 import type { Status } from './orders';
+import { nastoyashchayaData } from '../data';
 
 export const NA_STRANICE = 50;
 
@@ -59,20 +60,24 @@ export type StrokaProdazhi = {
   promoKod: string | null;
 };
 
-const DATA = /^\d{4}-\d{2}-\d{2}$/;
+/** Предел номера страницы: дальше страниц не бывает, а `1e300` ушло бы в SQL строкой «1e+302». */
+const PREDEL_STRANIC = 100_000;
+
+/** Невозможная дата («2026-02-31») — «без фильтра», как всё чужое здесь. */
+const data = (v: string | undefined): string | null => (nastoyashchayaData(v) ? v : null);
 const STATUSY: readonly string[] = ['new', 'paid', 'in_work', 'done', 'cancelled', 'podpiska'];
 
 /** Разобрать адресную строку. Чужое значение — «без фильтра», а не отказ. */
 export function ponyatFiltr(sp: Record<string, string>): FiltrProdazh {
   const period = Number(sp.srok);
   return {
-    ot: DATA.test(sp.ot ?? '') ? sp.ot! : null,
-    do: DATA.test(sp.do ?? '') ? sp.do! : null,
+    ot: data(sp.ot),
+    do: data(sp.do),
     plan: /^[a-z0-9_-]{1,32}$/.test(sp.plan ?? '') ? sp.plan! : null,
     period: [1, 3, 6, 12].includes(period) ? period : null,
     status: STATUSY.includes(sp.st ?? '') ? (sp.st as FiltrProdazh['status']) : null,
     q: (sp.q ?? '').trim().slice(0, 200),
-    stranica: Math.max(1, Math.floor(Number(sp.s) || 1)),
+    stranica: Math.min(PREDEL_STRANIC, Math.max(1, Math.floor(Number(sp.s) || 1))),
   };
 }
 

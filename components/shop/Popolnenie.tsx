@@ -43,24 +43,34 @@ export default function Popolnenie({ summy }: { summy: SummaPodpiski[] }) {
         {otkryto ? 'Свернуть' : 'Пополнить баланс'}
       </button>
       <div className="vybor__varianty" data-on={otkryto ? '' : undefined}>
-        <div className="vybor__nutro" {...(otkryto ? {} : { inert: '' as unknown as boolean })}>
+        {/* ⚠️ `inert` БУЛЕВЫМ: пустую строку React 19 читает как «выключено»,
+            и свёрнутая форма оставалась в обходе клавиатурой. */}
+        <div className="vybor__nutro" inert={!otkryto || undefined}>
           <form action={popolnit} className="popolnenie__forma" noValidate>
             {summy.length ? (
               <>
                 <p className="field__label">На сумму подписки</p>
                 <div className="pick popolnenie__summy">
-                  {summy.map((s) => (
+                  {summy.map((s) => {
+                    /* ⚠️ ЦЕНА БЫВАЕТ С КОПЕЙКАМИ (её задают в админке,
+                       и скидка её дробит), а пополнение — целыми рублями.
+                       Сумма кнопки округляется ВВЕРХ: так её хватит
+                       на эту подписку, а «Пополнить» не встанет серым
+                       от суммы, которую не поправить руками. */
+                    const celye = Math.ceil(s.kop / 100);
+                    return (
                     <button
                       key={`${s.kop}-${s.podpis}`}
                       type="button"
                       className="pick__btn popolnenie__summa"
-                      aria-pressed={rub * 100 === s.kop}
-                      onClick={() => setSumma(String(s.kop / 100))}
+                      aria-pressed={rub === celye}
+                      onClick={() => setSumma(String(celye))}
                     >
-                      <span className="tnum">{rubli(s.kop)}</span>
+                      <span className="tnum">{rubli(celye * 100)}</span>
                       <span className="popolnenie__podpis">{s.podpis}</span>
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               </>
             ) : null}

@@ -138,7 +138,11 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
   const primenit = async () => {
     const kod = kodPromo(promoVvod);
     if (!kod) {
-      setPromoBeda('Введите промокод.');
+      // Набрано, но после приведения ничего не осталось — это не пустое
+      // поле, а знаки, которых в промокоде не бывает.
+      setPromoBeda(
+        promoVvod.trim() ? 'В промокоде бывают только латинские буквы, цифры и дефис.' : 'Введите промокод.',
+      );
       return;
     }
     setPromoIdyot(true);
@@ -243,6 +247,14 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
       action={oformit}
       noValidate
       onSubmit={(e) => {
+        /* ⚠️ НАБРАЛ ПРОМОКОД И НЕ НАЖАЛ «ПРИМЕНИТЬ» — ЗАКАЗ НЕ УХОДИТ.
+           Иначе он ушёл бы по полной цене, и человек, вводивший код,
+           узнал бы об этом только на странице оплаты. */
+        if (!promo && promoVvod.trim()) {
+          e.preventDefault();
+          setPromoBeda('Нажмите «Применить», чтобы промокод сработал, или очистите поле.');
+          return;
+        }
         if (!vsyoLiVerno()) {
           e.preventDefault();
           return;
@@ -289,7 +301,7 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
         <p className="panel__note vybor__z">{tarif?.note ?? vvod.zametka}</p>
 
         <div className="vybor__varianty" data-on={menyaem ? '' : undefined}>
-          <div className="vybor__nutro" {...(menyaem ? {} : { inert: '' as unknown as boolean })}>
+          <div className="vybor__nutro" inert={!menyaem || undefined}>
             <p className="field__label">Тариф</p>
             <div className="pick" role="radiogroup" aria-label="Тариф">
               {vvod.tarify.map((t) => (
@@ -477,7 +489,10 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
                 type="button"
                 className="vybor__izm"
                 onClick={() => {
+                  // «Убрать» убирает и набранное: иначе поле вернулось бы
+                  // с тем же кодом, и заказ упёрся бы в «Нажмите „Применить“».
                   setPromo(null);
+                  setPromoVvod('');
                   setPromoBeda(null);
                 }}
               >

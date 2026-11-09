@@ -29,6 +29,7 @@ import { headers } from 'next/headers';
 import { odna, zapros } from './db';
 import { log } from './log';
 import { kodPromo, skidkaKop, type OtkazPromo } from '../promokod';
+import { nastoyashchayaData } from '../data';
 
 export type Promokod = {
   kod: string;
@@ -160,7 +161,7 @@ function proveritPolya(z: { skidkaProc: number; doDaty: string; aktivaciy: numbe
   if (!Number.isInteger(z.skidkaProc) || z.skidkaProc < 1 || z.skidkaProc > 100) return 'nevernaya_skidka';
   // Потолок не от вкуса: свободное место ищется перебором номеров.
   if (!Number.isInteger(z.aktivaciy) || z.aktivaciy < 1 || z.aktivaciy > PREDEL_AKTIVACIY) return 'nevernye_aktivacii';
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(z.doDaty) || Number.isNaN(Date.parse(z.doDaty))) return 'net_sroka';
+  if (!nastoyashchayaData(z.doDaty)) return 'net_sroka';
   return null;
 }
 
@@ -252,7 +253,13 @@ async function adresKlienta(): Promise<string> {
   return 'bez-adresa';
 }
 
-async function chasto(adres: string, userId: number): Promise<boolean> {
+/**
+ * Сработал ли предел — и какой: минутный ждать минуту, часовой час.
+ * Человеку они говорят разное, иначе «подождите минуту» врало бы
+ * тому, кого держит часовой (то же разведение, что у кода
+ * сертификата, Р-107).
+ */
+async function chasto(adres: string, userId: number): Promise<'chasto' | 'chasto_chas' | null> {
   const r = await odna<{ am: string; ach: string; um: string; uch: string }>(
     `select
        count(*) filter (where adres = $1 and created_at > now() - interval '1 minute')::text as am,
@@ -264,8 +271,62 @@ async function chasto(adres: string, userId: number): Promise<boolean> {
       and (adres = $1 or user_id = $2)`,
     [adres, userId],
   );
-  if (!r) return false;
-  return Number(r.ach) >= V_CHAS || Number(r.uch) >= V_CHAS || Number(r.am) >= V_MINUTU || Number(r.um) >= V_MINUTU;
+  if (!r) return null;
+  if (Number(r.ach) >= V_CHAS || Number(r.uch) >= V_CHAS) return 'chasto_chas';
+  if (Number(r.am) >= V_MINUTU || Number(r.um) >= V_MINUTU) return 'chasto';
+  return null;
+}
+
+/**
+ * ⚠️ ДВЕРЕЙ К КОДУ ДВЕ, И ПРЕДЕЛ СТОИТ У ОБЕИХ: «Применить» на форме
+ * и само оформление заказа. Серверное действие оформления — обычная
+ * точка входа, и стучаться в него можно мимо «Применить», с любым
+ * кодом в скрытом поле: без предела там промокод перебирался бы без
+ * счёта. Та же ошибка «двух дверей», от которой Р-107 уводит код
+ * сертификата. Отказ по частоте ничего не говорит о самом коде.
+ */
+export async function predel(userId: number): Promise<'chasto' | 'chasto_chas' | null> {
+  const adres = await adresKlienta();
+  const kak = await chasto(adres, userId);
+  if (kak) log.warn('перебор промокода', { adres, user: userId });
+  return kak;
+}
+
+/**
+ * Записать неудачу. Зовётся ВНЕ транзакции заказа: та откатывается
+ * целиком, и запись, сделанная внутри неё, пропала бы вместе с ней.
+ * В счёт идут только неудачи — честный путь зовёт проверку дважды
+ * одним и тем же верным кодом.
+ */
+export async function neudacha(userId: number): Promise<void> {
+  await zapros('insert into promo_try (adres, user_id) values ($1, $2)', [await adresKlienta(), userId]);
+}
+
+/**
+ * ⚠️ НЕОПЛАЧЕННЫЙ ЗАКАЗ ДЕРЖИТ АКТИВАЦИЮ, И ОДНОМУ ЧЕЛОВЕКУ ТАКОЙ
+ * ЗАКАЗ НА КОД — ОДИН. Активация занимается при оформлении (иначе её
+ * забирал бы тот, кто передумал), а неоплаченный заказ сам собой
+ * не отменяется: без этого правила «Оформить» в цикле разбирало бы
+ * код с ограниченным числом активаций, не заплатив ни рубля. Это то же,
+ * что в Нейролавке держит один открытый заказ на человека (там
+ * повтор возвращает первый заказ). Отменённый или оплаченный заказ
+ * активацию уже не «держит»: первый её вернул, второй потратил.
+ */
+async function derzhit(
+  q: PoolClient | null,
+  kod: string,
+  userId: number,
+  krome: number | null,
+): Promise<boolean> {
+  const sql = `select 1
+                 from promo_aktivaciya a
+                 join shop_order o on o.id = a.order_id
+                where a.kod = $1 and a.user_id = $2 and a.snyata_v is null
+                  and o.status = 'new' and ($3::bigint is null or a.order_id <> $3)
+                limit 1`;
+  const p = [kod, userId, krome];
+  if (q) return ((await q.query(sql, p)).rowCount ?? 0) > 0;
+  return (await odna(sql, p)) !== null;
 }
 
 /**
@@ -280,15 +341,18 @@ async function chasto(adres: string, userId: number): Promise<boolean> {
  * по частоте ничего не говорит о самом коде.
  */
 export async function proverit(syroe: string, userId: number): Promise<ItogPromo> {
-  const adres = await adresKlienta();
-  if (await chasto(adres, userId)) {
-    log.warn('перебор промокода', { adres, user: userId });
-    return { godit: false, pochemu: 'chasto' };
+  const kak = await predel(userId);
+  if (kak) return { godit: false, pochemu: kak };
+  const s = await po(syroe);
+  const itog = itogIz(s);
+  /* Код верный, но его держит свой же неоплаченный заказ: это не перебор,
+     и в счёт неудач такой ответ не идёт. Проверяется и РАНЬШЕ «кончились»:
+     последнюю активацию может держать как раз сам спрашивающий, и тогда
+     «разобрали» было бы неправдой — разобрал её он. */
+  if (s && (itog.godit || s.pochemu === 'konchilis') && (await derzhit(null, s.kod, userId, null))) {
+    return { godit: false, pochemu: 'uzhe' };
   }
-  const itog = itogIz(await po(syroe));
-  if (!itog.godit) {
-    await zapros('insert into promo_try (adres, user_id) values ($1, $2)', [adres, userId]);
-  }
+  if (!itog.godit) await neudacha(userId);
   return itog;
 }
 
@@ -322,6 +386,7 @@ export async function zanyat(
   if (!p) return { zanyali: false, pochemu: 'net' };
   if (p.otklyuchen) return { zanyali: false, pochemu: 'otklyuchen' };
   if (p.istyok) return { zanyali: false, pochemu: 'istyok' };
+  if (await derzhit(c, kod, userId, orderId)) return { zanyali: false, pochemu: 'uzhe' };
   // Цены нет — активацию не тратим: сжечь её ради нулевой скидки
   // было бы то же самое, что показать рубль вместо неизвестной цены.
   const skidka = skidkaKop(cenaKop, p.skidka_proc);

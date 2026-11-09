@@ -25,8 +25,14 @@ import { imyaTarifaIz, srokDlyaSotrudnika } from '@/lib/plans';
 import { imenaTarifov } from './imena';
 import type { Para } from './dostup';
 import { parolNeGoditsya, pochtaNeVerna } from '@/lib/proverka';
-import { zanyat as zanyatPromo, vernut as vernutPromo } from './promokody';
+import {
+  zanyat as zanyatPromo,
+  vernut as vernutPromo,
+  predel as promoPredel,
+  neudacha as promoNeudacha,
+} from './promokody';
 import { kodPromo, otkazSlovami, type OtkazPromo } from '@/lib/promokod';
+import { nastoyashchayaData } from '../data';
 
 export type Status = 'new' | 'paid' | 'in_work' | 'done' | 'cancelled';
 export type Rezhim = 'new' | 'renew';
@@ -142,7 +148,23 @@ export async function sozdatZakaz(opts: {
   const bedaUchastnikov = proveritUchastnikov(opts.uchastniki);
   if (bedaUchastnikov) return { ok: false, pochemu: bedaUchastnikov };
 
-  const promoVvod = kodPromo(opts.promo ?? '');
+  /* ⚠️ КОД ПРОМОКОДА ПРИШЁЛ ИЗ ФОРМЫ, А ФОРМУ ПРАВЯТ В БРАУЗЕРЕ.
+     Скрытое поле заполняет «Применить», но стучаться в действие можно
+     и мимо него, с любым кодом: предел частоты поэтому стоит и здесь,
+     а неудача пишется ПОСЛЕ отката транзакции (Р-167, Р-107). Набрано
+     что-то, от чего после приведения ничего не осталось, — это не
+     «без промокода», а неверный код: молча взять полную цену с того,
+     кто вводил промокод, было бы обманом. */
+  const promoSyroe = (opts.promo ?? '').trim();
+  const promoVvod = kodPromo(promoSyroe);
+  if (promoSyroe && !promoVvod) {
+    await promoNeudacha(opts.userId);
+    return { ok: false, pochemu: `${otkazSlovami('net')} Заказ не оформлен: уберите промокод или введите другой.` };
+  }
+  if (promoVvod) {
+    const kak = await promoPredel(opts.userId);
+    if (kak) return { ok: false, pochemu: `${otkazSlovami(kak)} Заказ не оформлен.` };
+  }
   const itog = await vTranzakcii(async (c) => {
     const u = await c.query<{ balance_kop: string }>('select balance_kop from app_user where id = $1 for update', [
       opts.userId,
@@ -230,6 +252,9 @@ export async function sozdatZakaz(opts: {
     throw e;
   });
   if (!itog.ok) {
+    // «Уже держит другой заказ» — не перебор: код верный, и в счёт
+    // неудач такой отказ не идёт.
+    if (itog.pochemu !== 'uzhe') await promoNeudacha(opts.userId);
     return { ok: false, pochemu: `${otkazSlovami(itog.pochemu)} Заказ не оформлен: уберите промокод или введите другой.` };
   }
 
@@ -644,16 +669,23 @@ export async function proytiShag(opts: {
     const row = o.rows[0];
     if (!row || row.status !== 'in_work' || Number(row.operator_id) !== opts.staffId) return { ok: false, pochemu: 'ne_vash' };
     const slots = (
-      await c.query<{ id: string; idx: number; mode: Rezhim; done_at: Date | null }>(
-        'select id, idx, mode, done_at from order_slot where order_id = $1 order by idx for update',
+      await c.query<{ id: string; idx: number; mode: Rezhim; done_at: Date | null; ends_at: Date | null }>(
+        'select id, idx, mode, done_at, ends_at from order_slot where order_id = $1 order by idx for update',
         [opts.zakaz],
       )
     ).rows;
     if (!slots.length) return { ok: false, pochemu: 'ne_tot_shag' };
-    const tekushchiy = slots.find((s) => !s.done_at) ?? slots[slots.length - 1]!;
+    /* ⚠️ ПРОДЛЕНИЕ БЕЗ ДАТЫ — НЕ ПРОЙДЕННЫЙ ШАГ. До пятьдесят третьей
+       итерации дату спрашивал шаг «Завершение», а аккаунты отмечались
+       без неё; заказ, начатый тогда, иначе закрылся бы без официальной
+       даты у уже отмеченного продления, и письмо за три дня считалось бы
+       от расчётной (закон 44). Такой аккаунт снова встаёт текущим шагом
+       и просит дату. Та же мера пройденного — `gotov` в виде админки. */
+    const proyden = (s: (typeof slots)[number]) => Boolean(s.done_at) && (s.mode !== 'renew' || Boolean(s.ends_at));
+    const tekushchiy = slots.find((s) => !proyden(s)) ?? slots[slots.length - 1]!;
     if (Number(tekushchiy.id) !== opts.slotId) return { ok: false, pochemu: 'ne_tot_shag' };
     const prodlenie = tekushchiy.mode === 'renew';
-    if (prodlenie && !(opts.ends && /^\d{4}-\d{2}-\d{2}$/.test(opts.ends) && !Number.isNaN(Date.parse(opts.ends)))) {
+    if (prodlenie && !nastoyashchayaData(opts.ends)) {
       return { ok: false, pochemu: 'nuzhna_data', n: tekushchiy.idx + 1 };
     }
     if (opts.vydacha) {
@@ -676,7 +708,7 @@ export async function proytiShag(opts: {
         [opts.slotId, prodlenie ? opts.ends : null],
       );
     }
-    const ostalis = slots.some((s) => !s.done_at && Number(s.id) !== opts.slotId);
+    const ostalis = slots.some((s) => !proyden(s) && Number(s.id) !== opts.slotId);
     if (ostalis) return { ok: true, zakryt: false };
 
     /* ⚠️ ДАТА ОКОНЧАНИЯ ЗАКАЗА СТАВИТСЯ ЗДЕСЬ, А НЕ ПРИ ОПЛАТЕ:

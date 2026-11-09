@@ -255,6 +255,10 @@ const S = {
     'Доступы стёрты через 7 дней после закрытия заказа.',
     'Credentials were wiped 7 days after this order closed.',
   ],
+  'z.okno': [
+    'Доступы закрытого заказа видны исполнителю семь дней после закрытия. Дальше — администратору.',
+    'The assigned operator sees the credentials for 7 days after the order closes. After that, only an administrator does.',
+  ],
   'z.take_first': [
     'Возьмите заказ, чтобы увидеть доступы клиента. Они расшифровываются только тому, кто взял заказ.',
     'Take the order to see the client credentials. They are decrypted for the assigned operator only.',

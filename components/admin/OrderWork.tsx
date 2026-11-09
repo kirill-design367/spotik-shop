@@ -173,6 +173,7 @@ export default function OrderWork({
           </p>
         ) : null}
         {z.secretsWiped ? <p className="hint">{t('z.wiped')}</p> : null}
+        {!z.secretsWiped && z.oknoIsteklo ? <p className="hint">{t('z.okno')}</p> : null}
       </div>
 
       {/* ⚠️ АККАУНТЫ ЗАКРЫТОГО ЗАКАЗА — «ОТКРЫТЬ» ИЗ НЕДАВНО ЗАКРЫТЫХ

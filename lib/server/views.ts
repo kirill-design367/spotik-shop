@@ -304,7 +304,10 @@ export async function istoriyaBalansa(userId: number, skolko = 20): Promise<Dviz
           : r.reason === 'возврат за отменённый заказ'
             ? `Возврат за отменённый заказ${zakaz ? ` — ${zakaz}` : ''}`
             : r.reason === 'оплата по заказу, который уже не ждал денег'
-              ? `Оплата пришла после отмены заказа${zakaz ? ` — ${zakaz}` : ''}`
+              ? /* ⚠️ НЕ «ПОСЛЕ ОТМЕНЫ»: путей сюда два, и второй — второй
+                   оплаченный счёт по заказу, который никто не отменял
+                   (кнопка «Оплатить» заводит новый счёт каждым нажатием). */
+                `Деньги по заказу, который их уже не ждал${zakaz ? ` — ${zakaz}` : ''}`
               : r.reason;
     return { kogda: new Date(r.created_at).toISOString(), deltaKop: Number(r.delta_kop), chto };
   });
@@ -558,6 +561,8 @@ export type ZakazOperatoru = {
    */
   istoriya: Sobytie[] | null;
   secretsWiped: boolean;
+  /** Исполнитель смотрит свой заказ, закрытый больше семи дней назад: доступы ему уже не показываются. */
+  oknoIsteklo: boolean;
   /**
    * Дата, которой заранее заполняется поле окончания: сегодня плюс
    * срок заказа, «ГГГГ-ММ-ДД».
@@ -635,6 +640,7 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
     promo_skidka_kop: string;
     cancel_reason: string | null;
     secrets_wiped_at: Date | null;
+    v_okne: boolean;
     raschyot: Date;
     utm_source: string | null;
     utm_medium: string | null;
@@ -652,6 +658,7 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
             o.operator_id, f.email as operator_email,
             o.total_kop, o.balance_kop, o.money_kop, o.promo_kod, o.promo_skidka_kop,
             o.cancel_reason, o.secrets_wiped_at,
+            (o.closed_at is null or o.closed_at > now() - interval '7 days') as v_okne,
             (now() + (o.period || ' months')::interval)::date as raschyot,
             o.utm_source, o.utm_medium, o.utm_campaign, o.utm_term, o.utm_content
        from shop_order o
@@ -686,8 +693,15 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
          «Продажи → Открыть показывает карточку заказа: почты и пароли
          аккаунтов, даты окончания подписки, историю» (Р-171).
      Стёртое до пятьдесят третьей итерации не расшифровывается никому:
-     шифротекста нет вовсе (закон 35). */
-  const vidit = moy || Boolean(otmena && otmena.moya && !otmena.zakryta) || admin;
+     шифротекста нет вовсе (закон 35).
+
+     ⚠️ ИСПОЛНИТЕЛЮ ЗАКРЫТОГО ЗАКАЗА — СЕМЬ ДНЕЙ ПОСЛЕ ЗАКРЫТИЯ, КАК БЫЛО.
+     До пятьдесят третьей итерации это окно держало стирание: через семь
+     дней шифротекста не оставалось. Стирание снято (Р-172), а читателей
+     постановка расширила только у АДМИНИСТРАТОРА; без окна оператор
+     читал бы почту и пароль каждого заказа, который когда-либо закрыл,
+     бессрочно. Шифротекст при этом на месте — администратору он виден. */
+  const vidit = (moy && r.v_okne) || Boolean(otmena && otmena.moya && !otmena.zakryta) || admin;
   const slots = await zapros<{
     id: string;
     idx: number;
@@ -729,6 +743,7 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
     cancelReason: r.cancel_reason,
     istoriya: admin ? await istoriyaZakaza(id) : null,
     secretsWiped: Boolean(r.secrets_wiped_at),
+    oknoIsteklo: moy && !r.v_okne && !admin,
     raschyotnayaData: new Date(r.raschyot).toISOString().slice(0, 10),
     konchaetsya: r.expires_at ? new Date(r.expires_at).toISOString().slice(0, 10) : null,
     otmena,
@@ -737,7 +752,11 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
       id: Number(s.id),
       idx: s.idx,
       mode: s.mode,
-      gotov: Boolean(s.done_at),
+      /* Пройден — отмечен и, у продления в работе, с датой: старый заказ
+         мог отметить продление без неё (см. `proytiShag`). У закрытого
+         заказа меру не меняем: закрытый до сорок второй итерации даты
+         не знал вовсе, и его аккаунты читались бы «не пройденными». */
+      gotov: Boolean(s.done_at) && (r.status !== 'in_work' || s.mode !== 'renew' || Boolean(s.ends_at)),
       recoverySent: Boolean(s.recovery_sent_at),
       endsAt: s.ends_at ? new Date(s.ends_at).toISOString().slice(0, 10) : null,
       clientLogin: vidit ? poprobovatRasshifrovat(s.in_login_enc) : null,

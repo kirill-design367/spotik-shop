@@ -60,6 +60,7 @@ import {
   type OshibkaKoda,
 } from './promokody';
 import { kodPromo } from '@/lib/promokod';
+import { nastoyashchayaData } from '../data';
 
 export type OtvetA = {
   error?: Klyuch;
@@ -465,7 +466,7 @@ export async function adminSetDiscount(_p: OtvetA, fd: FormData): Promise<OtvetA
   }
   const n = Number(rub);
   if (!Number.isFinite(n) || n < 0) return { error: 'e.price_number' };
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(doDaty)) return { error: 'e.bad_date' };
+  if (!nastoyashchayaData(doDaty)) return { error: 'e.bad_date' };
   await zapros(
     `insert into plan_discount (plan_id, period, price_kop, until) values ($1, $2, $3, $4::date)
      on conflict (plan_id, period) do update set price_kop = excluded.price_kop, until = excluded.until`,

@@ -87,7 +87,7 @@ export function Pole({
           из JS. Закрытый выведен из обхода клавиатурой `inert`. */}
       {spisok.length ? (
         <div className="pochty" data-on={otkryt ? '' : undefined}>
-          <div className="pochty__nutro" {...(otkryt ? {} : { inert: '' as unknown as boolean })}>
+          <div className="pochty__nutro" inert={!otkryt || undefined}>
             <p className="pochty__z">{zagolovokPochty ?? 'Ваши почты из прошлых заказов'}</p>
             {spisok.map((p) => (
               <button

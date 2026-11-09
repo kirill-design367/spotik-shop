@@ -384,8 +384,12 @@
 
 .sum { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; font-size: 15px; }
 .sum--total { font-size: 19px; font-variation-settings: 'wght' 700; border-top: 1px solid var(--hair); margin-top: 8px; padding-top: 16px; }
-.sum span:first-child { color: var(--dim); }
-.sum--total span:first-child { color: #fff; }
+/* ⚠️ ПОДПИСЬ — ПРЯМОЙ РЕБЁНОК СТРОКИ, А НЕ ЛЮБОЙ ПЕРВЫЙ СПАН ВНУТРИ.
+   Без `>` правило доставало и цену со скидкой (Р-170): внутри неё первым
+   стоит плашка «−N%» — она выходила серой на зелёном, а цена без скидки
+   в «К оплате» серела вслед за подписью. */
+.sum > span:first-child { color: var(--dim); }
+.sum--total > span:first-child { color: #fff; }
 
 /* ── Кабинет ─────────────────────────────────────────────────── */
 .cab__top { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: baseline; margin: 0 0 24px; }
