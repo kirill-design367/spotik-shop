@@ -70,6 +70,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               "['utm_source','utm_medium','utm_campaign','utm_term','utm_content'].forEach(function(k){" +
               "var v=p.get(k);if(v)o.push(k+'='+encodeURIComponent(v.slice(0,120)))});" +
               "if(o.length)document.cookie='spotik_utm='+o.join('&')+';path=/;samesite=lax'+" +
+              "(location.protocol==='https:'?';secure':'')}}catch(e){}" +
+              /* ⚠️ ПРОМО-ССЫЛКА `spotik.shop/?promo=КОД` — СВОИМ `try`, А НЕ
+                 ВНУТРИ УСЛОВИЯ МЕТОК: у кого кука меток уже есть, у того
+                 условие выше ложно, и промокод не записался бы вовсе.
+                 ⚠️ ПОБЕЖДАЕТ ПОСЛЕДНЯЯ ССЫЛКА, в отличие от меток: человек,
+                 перешедший по второй промо-ссылке, ждёт второй код. Код
+                 приводится к правилу `kodPromo` (`lib/promokod.ts`):
+                 прописные, `[A-Z0-9-]`, до шестнадцати знаков. Это копия
+                 правила, но не его источник: сервер приводит код заново
+                 той же `kodPromo`, а проверяет — как набранный руками.
+                 Пустой после приведения код куку не трогает. Читает её
+                 страница оформления, применяет форма (Р-167). */
+              "try{var pr=new URLSearchParams(location.search).get('promo');if(pr){" +
+              "pr=pr.toUpperCase().replace(/[^A-Z0-9-]+/g,'-').replace(/-+/g,'-').replace(/^-|-$/g,'')" +
+              ".slice(0,16).replace(/-$/,'');" +
+              "if(pr)document.cookie='spotik_promo='+pr+';path=/;samesite=lax'+" +
               "(location.protocol==='https:'?';secure':'')}}catch(e){}",
           }}
         />

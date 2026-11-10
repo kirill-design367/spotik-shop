@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState, useState } from 'react';
+import { useActionState, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Soglasie } from './Soglasie';
 import { deystvieOformit, deystvieProveritPromo, type Otvet } from '@/lib/server/actions-client';
 import { rubli } from '@/lib/server/money';
@@ -11,9 +11,9 @@ import { CHASY_SLOVAMI } from '@/lib/chasy';
 import { useUhodNaOplatu } from './uhod';
 import EgipetPlashka from '@/components/EgipetPlashka';
 import { VPN_OPLATA_TEKST, procentSkidki } from '@/lib/plans';
-import { kodPromo, PREDEL_KODA, skidkaKop } from '@/lib/promokod';
+import { KUKA_PROMO, kodPromo, PREDEL_KODA, skidkaKop } from '@/lib/promokod';
 import CenaSoSkidkoy from './CenaSoSkidkoy';
-import Bukvalno from '@/components/Bukvalno';
+import Bukvalno, { frazaSDannymi } from '@/components/Bukvalno';
 
 export type SrokVybor = {
   period: number;
@@ -54,7 +54,44 @@ export type Vvod = {
   balansKop: number;
   /** Посчитано НА СЕРВЕРЕ и по Москве — см. `lib/chasy.ts`. */
   vneRabochego: boolean;
+  /**
+   * Код из промо-ссылки `?promo=КОД` (параметр адреса или кука),
+   * уже приведённый к правилу кода. Пусто — ссылки не было.
+   */
+  promoIzSsylki: string;
 };
+
+/**
+ * Стереть куку промо-ссылки. Её ставит браузер (скрипт в `<head>`),
+ * поэтому и стирать её можно отсюда: она не httpOnly.
+ */
+function steretKukuPromo() {
+  try {
+    document.cookie =
+      `${KUKA_PROMO}=;path=/;max-age=0;samesite=lax` + (location.protocol === 'https:' ? ';secure' : '');
+  } catch {
+    /* Куки недоступны — стирать нечего. */
+  }
+}
+
+/**
+ * Убрать `promo` из адреса, не перезагружая страницу. Иначе
+ * обновление страницы снова принесло бы код — скрипт в `<head>`
+ * поставил бы куку заново, страница передала бы его форме, — и
+ * неподошедший код писал бы неудачу на каждом заходе.
+ */
+function ubratPromoIzAdresa() {
+  try {
+    const u = new URL(location.href);
+    if (!u.searchParams.has('promo')) return;
+    u.searchParams.delete('promo');
+    // `null`, а не `history.state`: так велит Next — свою служебную
+    // запись истории он переносит сам и узнаёт про новый адрес.
+    history.replaceState(null, '', u.pathname + u.search + u.hash);
+  } catch {
+    /* Не вышло — не страшно: кука уже решена. */
+  }
+}
 
 /**
  * Оформление заказа.
@@ -132,36 +169,73 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
      активацию в той же транзакции: проверка здесь — только чтобы новая
      цена была видна ДО оплаты. */
   const [promoVvod, setPromoVvod] = useState('');
-  const [promo, setPromo] = useState<{ kod: string; skidkaProc: number } | null>(null);
-  const [promoBeda, setPromoBeda] = useState<string | null>(null);
+  const [promo, setPromo] = useState<{ kod: string; skidkaProc: number; izSsylki: boolean } | null>(null);
+  const [promoBeda, setPromoBeda] = useState<ReactNode>(null);
   const [promoIdyot, setPromoIdyot] = useState(false);
-  const primenit = async () => {
-    const kod = kodPromo(promoVvod);
+  const primenit = async (syroe: string, izSsylki = false) => {
+    const kod = kodPromo(syroe);
     if (!kod) {
       // Набрано, но после приведения ничего не осталось — это не пустое
       // поле, а знаки, которых в промокоде не бывает.
       setPromoBeda(
-        promoVvod.trim() ? 'В промокоде бывают только латинские буквы, цифры и дефис.' : 'Введите промокод.',
+        syroe.trim() ? 'В промокоде бывают только латинские буквы, цифры и дефис.' : 'Введите промокод.',
       );
       return;
     }
     setPromoIdyot(true);
     setPromoBeda(null);
+    if (izSsylki) setPromoVvod(kod);
     try {
       const o = await deystvieProveritPromo(kod);
       if ('oshibka' in o) {
         setPromo(null);
-        setPromoBeda(o.oshibka);
+        if (izSsylki) {
+          /* ⚠️ КОД ИЗ ССЫЛКИ НЕ ПОДОШЁЛ — ПОЛЕ ПУСТЕЕТ, КУКА СТИРАЕТСЯ.
+             Оставь мы код в поле — заказ упёрся бы в «Нажмите
+             „Применить“», хотя человек ничего не набирал. Оставь куку —
+             форма применяла бы его на каждом заходе на оформление,
+             и устаревшая ссылка за пару минут исчерпала бы предел
+             частоты: тогда не прошёл бы и настоящий код, набранный
+             руками. Причина — словами сервера, тем же текстом,
+             что у «Применить». */
+          steretKukuPromo();
+          setPromoVvod('');
+          // Код — данные, слова вокруг — надпись (закон 54): фраза
+          // собирается с меткой на месте кода и режется по ней.
+          const prichina = o.oshibka.charAt(0).toLowerCase() + o.oshibka.slice(1);
+          setPromoBeda(frazaSDannymi((m) => `Промокод ${m.kod} из ссылки не подошёл: ${prichina}`, { kod }));
+        } else {
+          setPromoBeda(o.oshibka);
+        }
       } else {
-        setPromo(o);
+        setPromo({ ...o, izSsylki });
         setPromoVvod(o.kod);
       }
     } catch {
+      /* Ответа не было вовсе — решения тоже: код остаётся в поле
+         (и кука — на месте), «Применить» повторит попытку. */
       setPromoBeda('Не получилось проверить промокод. Попробуйте ещё раз.');
     } finally {
       setPromoIdyot(false);
     }
   };
+  /* ⚠️ КОД ИЗ ПРОМО-ССЫЛКИ ПРИМЕНЯЕТСЯ САМ И РОВНО ОДИН РАЗ — как только
+     форма на экране, то есть человек вошёл (без входа формы нет).
+     Проверка та же, что у кнопки «Применить», с тем же пределом
+     частоты и тем же счётом неудач: никакого признака «из ссылки»
+     на сервер не уходит — он был бы дверью мимо предела. «Один раз»
+     держат три вещи: ссылка-защёлка здесь (эффект в режиме
+     разработки зовётся дважды), `promo` уходит из адреса, а кука
+     стирается на любом отказе. */
+  const avtoPromo = useRef(false);
+  useEffect(() => {
+    if (avtoPromo.current) return;
+    avtoPromo.current = true;
+    if (!vvod.promoIzSsylki) return;
+    ubratPromoIzAdresa();
+    void primenit(vvod.promoIzSsylki, true);
+    // Ровно при монтировании: повторять применение нечему.
+  }, []);
   const [otvet, oformit, idyot] = useActionState<Otvet, FormData>(deystvieOformit, {});
   /* ⚠️ НА РОБОКАССУ УХОДИТ БРАУЗЕР, А НЕ РОУТЕР NEXT. Прежде это
      делал `redirect()` внутри серверного действия, и нажатие «назад»
@@ -438,11 +512,14 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
             </div>
           ))}
           {/* ⚠️ ОБЕЩАНИЯ «СТИРАЕТСЯ ЧЕРЕЗ СЕМЬ ДНЕЙ» БОЛЬШЕ НЕТ (Р-172):
-              доступы не стираются, и текст обязан говорить правду. */}
+              доступы не стираются, и текст обязан говорить правду.
+              ⚠️ И «ВИДЕН ТОЛЬКО ИСПОЛНИТЕЛЮ» НАЗЫВАЕТ ТЕПЕРЬ И АДМИНИСТРАТОРА:
+              он читает пароли любого заказа в «Продажах» (Р-171), и фраза
+              дословно от заказчика (пятьдесят четвёртая итерация). */}
           <p className="panel__note">
             {rezhimy.includes('renew')
-              ? 'Пароль нужен, чтобы включить Premium на аккаунте. Пароль хранится зашифрованным и виден только исполнителю заказа.'
-              : 'Аккаунт заведём мы — на указанную почту и с указанным паролем. Пароль хранится зашифрованным и виден только исполнителю заказа.'}
+              ? 'Пароль нужен, чтобы включить Premium на аккаунте. Пароль хранится зашифрованным и виден только исполнителю заказа и администратору.'
+              : 'Аккаунт заведём мы — на указанную почту и с указанным паролем. Пароль хранится зашифрованным и виден только исполнителю заказа и администратору.'}
           </p>
         </div>
       ) : (
@@ -484,6 +561,7 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
             <div className="promo__est">
               <span>
                 <Bukvalno className="promo__kod">{promo.kod}</Bukvalno> · −{promo.skidkaProc}%
+                {promo.izSsylki ? <span> · из ссылки</span> : null}
               </span>
               <button
                 type="button"
@@ -491,6 +569,9 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
                 onClick={() => {
                   // «Убрать» убирает и набранное: иначе поле вернулось бы
                   // с тем же кодом, и заказ упёрся бы в «Нажмите „Применить“».
+                  // И куку промо-ссылки тоже: иначе на следующем оформлении
+                  // форма применила бы убранный код снова.
+                  steretKukuPromo();
                   setPromo(null);
                   setPromoVvod('');
                   setPromoBeda(null);
@@ -521,11 +602,11 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
-                    void primenit();
+                    void primenit(promoVvod);
                   }
                 }}
               />
-              <button type="button" className="btn btn--ghost btn--sm" disabled={promoIdyot} onClick={() => void primenit()}>
+              <button type="button" className="btn btn--ghost btn--sm" disabled={promoIdyot} onClick={() => void primenit(promoVvod)}>
                 {promoIdyot ? 'Проверяем…' : 'Применить'}
               </button>
             </div>

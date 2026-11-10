@@ -22,7 +22,7 @@ import { bazaEst } from './db';
 import { sozdatZakaz, zakazPoSertifikatu, otmenitZakaz, type VvodUchastnika } from './orders';
 import { utmIzKuki } from './utm';
 import { vystavitSchet, vystavitSchetPopolneniya } from './payments';
-import { proverit as proveritPromo } from './promokody';
+import { proverit as proveritPromo, steretPromoKuku } from './promokody';
 import { kodPromo, otkazSlovami } from '@/lib/promokod';
 import { nayti, POCHEMU_KOD } from './certificates';
 import { katalog, naytiTarif } from './catalog';
@@ -215,6 +215,11 @@ export async function deystvieOformit(_prosh: Otvet, fd: FormData): Promise<Otve
     promo: String(fd.get('promo') ?? ''),
   });
   if (!itog.ok) return { oshibka: itog.pochemu };
+  /* Заказ с кодом из промо-ссылки оформлен — кука больше не нужна:
+     иначе на следующем оформлении форма применила бы тот же код снова
+     и упёрлась бы в «уже использовали». Стирается ДО перенаправления:
+     куки, поставленные действием, уезжают и с ним. */
+  await steretPromoKuku(String(fd.get('promo') ?? ''));
 
   if (itog.kDoplate === 0) redirect(`/cabinet/?order=${itog.zakaz}`);
   const schet = await vystavitSchet(itog.zakaz, kto.userId);

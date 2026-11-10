@@ -252,9 +252,9 @@ export async function sozdatZakaz(opts: {
     throw e;
   });
   if (!itog.ok) {
-    // «Уже держит другой заказ» — не перебор: код верный, и в счёт
-    // неудач такой отказ не идёт.
-    if (itog.pochemu !== 'uzhe') await promoNeudacha(opts.userId);
+    // «Уже держит другой заказ» и «уже использовали» — не перебор: код
+    // верный, и в счёт неудач такой отказ не идёт (то же в `proverit`).
+    if (itog.pochemu !== 'uzhe' && itog.pochemu !== 'ispolzovan') await promoNeudacha(opts.userId);
     return { ok: false, pochemu: `${otkazSlovami(itog.pochemu)} Заказ не оформлен: уберите промокод или введите другой.` };
   }
 

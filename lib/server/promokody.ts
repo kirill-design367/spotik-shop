@@ -24,11 +24,11 @@
  */
 
 import type { PoolClient } from 'pg';
-import { headers } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 
 import { odna, zapros } from './db';
 import { log } from './log';
-import { kodPromo, skidkaKop, type OtkazPromo } from '../promokod';
+import { KUKA_PROMO, kodPromo, skidkaKop, type OtkazPromo } from '../promokod';
 import { nastoyashchayaData } from '../data';
 
 export type Promokod = {
@@ -303,30 +303,50 @@ export async function neudacha(userId: number): Promise<void> {
 }
 
 /**
+ * Есть ли у этого человека ЖИВАЯ активация этого кода — и какая.
+ *
  * ⚠️ НЕОПЛАЧЕННЫЙ ЗАКАЗ ДЕРЖИТ АКТИВАЦИЮ, И ОДНОМУ ЧЕЛОВЕКУ ТАКОЙ
- * ЗАКАЗ НА КОД — ОДИН. Активация занимается при оформлении (иначе её
- * забирал бы тот, кто передумал), а неоплаченный заказ сам собой
- * не отменяется: без этого правила «Оформить» в цикле разбирало бы
- * код с ограниченным числом активаций, не заплатив ни рубля. Это то же,
- * что в Нейролавке держит один открытый заказ на человека (там
- * повтор возвращает первый заказ). Отменённый или оплаченный заказ
- * активацию уже не «держит»: первый её вернул, второй потратил.
+ * ЗАКАЗ НА КОД — ОДИН (`uzhe`). Активация занимается при оформлении
+ * (иначе её забирал бы тот, кто передумал), а неоплаченный заказ сам
+ * собой не отменяется: без этого правила «Оформить» в цикле разбирало
+ * бы код с ограниченным числом активаций, не заплатив ни рубля. Это то
+ * же, что в Нейролавке держит один открытый заказ на человека (там
+ * повтор возвращает первый заказ).
+ *
+ * ⚠️ А С ПЯТЬДЕСЯТ ЧЕТВЁРТОЙ ИТЕРАЦИИ ПРОМОКОД — ОДИН РАЗ НА ЧЕЛОВЕКА
+ * (`ispolzovan`), постановка: живая активация на оплаченном, взятом,
+ * выполненном или отменённом ПОДПИСКОЙ заказе значит «код потрачен».
+ * Отменённый до выполнения заказ активацию вернул (`snyata_v`,
+ * `vernut` ниже) и потому не считается: код снова годится.
+ *
+ * Ответ один на оба правила, и `uzhe` в нём побеждает: подсказка
+ * «оплатите или отмените» полезнее, чем «уже использовали», — ровно
+ * её человек и может исполнить.
+ *
+ * ⚠️ УНИКАЛЬНОГО ИНДЕКСА «ОДНА ЖИВАЯ АКТИВАЦИЯ НА ЧЕЛОВЕКА» НЕТ
+ * НАМЕРЕННО: на боевой базе до этой итерации повторы законно бывали,
+ * и индекс уронил бы миграцию. Двоих одновременных разнимает
+ * `for update` строки кода в `zanyat`: вторая транзакция ждёт первую
+ * и следующим запросом видит её активацию.
  */
-async function derzhit(
+async function svoyaAktivaciya(
   q: PoolClient | null,
   kod: string,
   userId: number,
   krome: number | null,
-): Promise<boolean> {
-  const sql = `select 1
+): Promise<'uzhe' | 'ispolzovan' | null> {
+  const sql = `select bool_or(o.status = 'new') as neoplachen
                  from promo_aktivaciya a
                  join shop_order o on o.id = a.order_id
                 where a.kod = $1 and a.user_id = $2 and a.snyata_v is null
-                  and o.status = 'new' and ($3::bigint is null or a.order_id <> $3)
-                limit 1`;
+                  and ($3::bigint is null or a.order_id <> $3)`;
   const p = [kod, userId, krome];
-  if (q) return ((await q.query(sql, p)).rowCount ?? 0) > 0;
-  return (await odna(sql, p)) !== null;
+  const r = q
+    ? ((await q.query<{ neoplachen: boolean | null }>(sql, p)).rows[0] ?? null)
+    : await odna<{ neoplachen: boolean | null }>(sql, p);
+  // Строк нет — `bool_or` отдаёт null: своей живой активации нет вовсе.
+  if (!r || r.neoplachen === null) return null;
+  return r.neoplachen ? 'uzhe' : 'ispolzovan';
 }
 
 /**
@@ -344,14 +364,18 @@ export async function proverit(syroe: string, userId: number): Promise<ItogPromo
   const kak = await predel(userId);
   if (kak) return { godit: false, pochemu: kak };
   const s = await po(syroe);
-  const itog = itogIz(s);
-  /* Код верный, но его держит свой же неоплаченный заказ: это не перебор,
-     и в счёт неудач такой ответ не идёт. Проверяется и РАНЬШЕ «кончились»:
+  /* ⚠️ ПОРЯДОК СТРОГИЙ: «уже применён» → «уже использовали» → прочее,
+     ровно как в `zanyat`. Код существует, и этот человек его уже
+     применял — это не перебор, и в счёт неудач такой ответ не идёт:
+     иначе человек, честно жавший «Применить» на своём же коде, упёрся
+     бы в «слишком много попыток». Проверяется и РАНЬШЕ «кончились»:
      последнюю активацию может держать как раз сам спрашивающий, и тогда
      «разобрали» было бы неправдой — разобрал её он. */
-  if (s && (itog.godit || s.pochemu === 'konchilis') && (await derzhit(null, s.kod, userId, null))) {
-    return { godit: false, pochemu: 'uzhe' };
+  if (s) {
+    const svoya = await svoyaAktivaciya(null, s.kod, userId, null);
+    if (svoya) return { godit: false, pochemu: svoya };
   }
+  const itog = itogIz(s);
   if (!itog.godit) await neudacha(userId);
   return itog;
 }
@@ -384,9 +408,15 @@ export async function zanyat(
     )
   ).rows[0];
   if (!p) return { zanyali: false, pochemu: 'net' };
+  /* ⚠️ «УЖЕ ПРИМЕНЁН» И «УЖЕ ИСПОЛЬЗОВАЛИ» — ПЕРВЫМИ И ПОД ЭТИМ ЖЕ
+     `for update`: две транзакции одного человека на один код идут
+     по очереди, и вторая видит активацию первой. Заказ, который сейчас
+     создаётся, исключён — его активации ещё нет, но и считать его
+     «своим прежним» было бы неправдой. */
+  const svoya = await svoyaAktivaciya(c, kod, userId, orderId);
+  if (svoya) return { zanyali: false, pochemu: svoya };
   if (p.otklyuchen) return { zanyali: false, pochemu: 'otklyuchen' };
   if (p.istyok) return { zanyali: false, pochemu: 'istyok' };
-  if (await derzhit(c, kod, userId, orderId)) return { zanyali: false, pochemu: 'uzhe' };
   // Цены нет — активацию не тратим: сжечь её ради нулевой скидки
   // было бы то же самое, что показать рубль вместо неизвестной цены.
   const skidka = skidkaKop(cenaKop, p.skidka_proc);
@@ -421,4 +451,44 @@ export async function vernut(c: PoolClient, orderId: number): Promise<number> {
     orderId,
   ]);
   return r.rowCount ?? 0;
+}
+
+// ── код из ссылки `?promo=` ──────────────────────────────────────
+
+/**
+ * Код из промо-ссылки, если человек по ней приходил, — уже приведённый
+ * к правилу кода. Пусто — ссылки не было. Зовётся страницей оформления
+ * (она динамическая); лендингу `cookies()` нельзя (закон 36), там куку
+ * ставит сам браузер.
+ *
+ * ⚠️ ЭТО НЕ ПРОВЕРКА И НЕ ПРИЗНАК «ИЗ ССЫЛКИ» ДЛЯ СЕРВЕРА. Форма
+ * применяет код ТОЙ ЖЕ проверкой, что кнопка «Применить», с тем же
+ * пределом частоты и тем же счётом неудач: флаг «из ссылки, не считать»
+ * был бы дверью мимо предела. Один раз — держит сама форма: после первой
+ * попытки она стирает куку (если код не подошёл) и убирает `promo`
+ * из адреса.
+ */
+export async function promoIzKuki(): Promise<string> {
+  try {
+    return kodPromo((await cookies()).get(KUKA_PROMO)?.value);
+  } catch {
+    /* Куку читать неоткуда (сборка, фоновая задача) — ссылки нет. */
+    return '';
+  }
+}
+
+/**
+ * Заказ с кодом из ссылки оформлен — кука больше не нужна. Стирается
+ * только если в ней ТОТ ЖЕ код: заказ с другим кодом (человек убрал
+ * код из ссылки и ввёл свой) куку не трогает, а без кода — тем более.
+ */
+export async function steretPromoKuku(kodZakaza: string): Promise<void> {
+  const kod = kodPromo(kodZakaza);
+  if (!kod) return;
+  try {
+    const jar = await cookies();
+    if (kodPromo(jar.get(KUKA_PROMO)?.value) === kod) jar.delete(KUKA_PROMO);
+  } catch {
+    /* Не из запроса — стирать нечего. */
+  }
 }

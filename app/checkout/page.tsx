@@ -9,6 +9,8 @@ import { katalog, naytiTarif, srokPolno } from '@/lib/server/catalog';
 import { balans, pochtyKlienta, pochtyZakaza } from '@/lib/server/views';
 import { bazaEst } from '@/lib/server/db';
 import { rabocheeVremya } from '@/lib/chasy';
+import { kodPromo } from '@/lib/promokod';
+import { promoIzKuki } from '@/lib/server/promokody';
 import Bukvalno from '@/components/Bukvalno';
 
 export const metadata: Metadata = { title: 'Оформление — Spotik Shop', robots: { index: false, follow: false } };
@@ -106,6 +108,15 @@ export default async function Checkout({
      и спрашивать базу незачем. */
   const podskazki = kto ? await pochtyKlienta(kto.userId) : [];
 
+  /* ⚠️ КОД ИЗ ПРОМО-ССЫЛКИ (`spotik.shop/?promo=КОД`). Куку ставит скрипт
+     в `<head>` на любой странице, а здесь параметр адреса ВАЖНЕЕ куки:
+     на первом заходе прямо на оформление скрипт ещё не успел её
+     поставить — он идёт в браузере, после этого ответа. Код здесь
+     только читается; применяет его форма той же проверкой, что кнопка
+     «Применить», и ровно один раз. Не вошёл — формы нет, кука доживёт
+     до входа: адрес после входа (`next`) параметра уже не несёт. */
+  const promoIzSsylki = kto ? kodPromo(odin('promo')) || (await promoIzKuki()) : '';
+
   /* ⚠️ В ФОРМУ ЕДЕТ ВЕСЬ КАТАЛОГ, А НЕ ОДИН ТАРИФ (тридцать седьмая
      итерация). Постановка: «выбранный на лендинге вариант показывается
      одной строкой — тариф, срок, цена и „Изменить“, а остальные
@@ -152,6 +163,7 @@ export default async function Checkout({
        Страница динамическая, поэтому плашка приезжает уже решённой:
        переведя часы на телефоне, её не подменить. */
     vneRabochego: !rabocheeVremya(),
+    promoIzSsylki,
   };
 
   return (
