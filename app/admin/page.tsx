@@ -4,7 +4,7 @@ import OtmenaVypolnennogo from '@/components/admin/OtmenaVypolnennogo';
 import { ktoSotrudnik } from '@/lib/server/auth';
 import { ochered, zakrytye } from '@/lib/server/views';
 import { dostupSotrudnika } from '@/lib/server/dostup';
-import { bazaEst } from '@/lib/server/db';
+import { bazaEst, odna } from '@/lib/server/db';
 import { pochtaNastroena } from '@/lib/server/mail';
 import { shifrGotov } from '@/lib/server/crypto';
 import { robokassaRabotaet } from '@/lib/server/robokassa';
@@ -44,11 +44,25 @@ export default async function AdminHome() {
   const d = await dostupSotrudnika(s);
   const [rows, closed, imena] = await Promise.all([ochered(d), zakrytye(d, 20), imenaTarifov()]);
   const en = y === 'en';
+  /* ⚠️ ОПЕРАТОР ВИДИТ СВОЁ СОСТОЯНИЕ ПРИВЯЗКИ, И ТОЛЬКО СВОЁ: без этого
+     он не поймёт, почему ему не приходят заказы в Telegram. Чужих имён
+     в строке нет — оператор не знает, что есть другие (постановка).
+     Без токена бота на сервере строки нет вовсе: привязывать нечем. */
+  const moyTelegram =
+    !admin && env.telegramToken
+      ? Boolean(
+          (await odna<{ est: boolean }>('select tg_chat_id is not null as est from staff where id = $1', [s.id]))
+            ?.est,
+        )
+      : null;
 
   return (
     <>
       <h1>{t('q.h')}</h1>
       <p className="hint">{t('q.hint')}</p>
+      {moyTelegram === null ? null : (
+        <p className="ad__note ad__note--moy">{moyTelegram ? t('tg.privyazan') : t('tg.vash_net')}</p>
+      )}
 
       <div className="ad__card">
         <h3>{t('q.setup')}</h3>

@@ -8,6 +8,7 @@ import { yazykSotrudnika } from '@/lib/server/yazyk';
 import { slovar } from '@/lib/admin/slova';
 import { klyuchPary, DARIMYE, PERIODS } from '@/lib/plans';
 import { katalog } from '@/lib/server/catalog';
+import { env } from '@/lib/server/env';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,8 +21,20 @@ export default async function AdminStaff() {
   if (s.role !== 'admin') return <p className="err">{t('o.only_admin')}</p>;
 
   const [rows, zaprety, imena, katalogSaita] = await Promise.all([
-    zapros<{ id: string; email: string; role: string; disabled: boolean }>(
-      'select id, email, role, disabled from staff order by role, email',
+    /* ⚠️ НОМЕР ЧАТА НА СТРАНИЦУ НЕ ЕДЕТ: администратору довольно знать,
+       привязан ли Telegram и КТО открыл ссылку (ник или имя). */
+    zapros<{
+      id: string;
+      email: string;
+      role: string;
+      disabled: boolean;
+      tg: boolean;
+      tg_username: string | null;
+      tg_imya: string | null;
+      tg_privyazan_at: Date | null;
+    }>(
+      `select id, email, role, disabled, tg_chat_id is not null as tg, tg_username, tg_imya, tg_privyazan_at
+         from staff order by role, email`,
     ),
     vseZaprety(),
     imenaTarifov(),
@@ -44,6 +57,12 @@ export default async function AdminStaff() {
     role: r.role,
     disabled: r.disabled,
     me: Number(r.id) === s.id,
+    tg: r.tg
+      ? {
+          kto: r.tg_username ? `@${r.tg_username}` : r.tg_imya,
+          at: r.tg_privyazan_at ? new Date(r.tg_privyazan_at).toISOString() : null,
+        }
+      : null,
     /* ⚠️ НА СТРАНИЦУ ЕДУТ РАЗРЕШЕНИЯ, А В БАЗЕ ЛЕЖАТ ЗАПРЕТЫ,
        и переворачивается это здесь, один раз. Галочка на экране
        значит «может выполнять», а «ничего не сказано» в базе значит
@@ -76,6 +95,9 @@ export default async function AdminStaff() {
       sroki={PERIODS.map((s) => s.key as number)}
       prodayutsya={prodayutsya.map((para) => klyuchPary(para.planId, para.period))}
       nikto={nikto}
+      /* Без токена бота ссылка привязки вела бы в никуда — вместо кнопки
+         карточка скажет «Telegram не настроен». */
+      tgEst={Boolean(env.telegramToken)}
     />
   );
 }

@@ -43,8 +43,11 @@ import {
 } from '@/lib/admin/prichiny';
 import { zadatImyaTarifa } from './imena';
 import { odna } from './db';
-import { zadatNastroyku, SROK_SERTIFIKATA } from './settings';
-import { shifrGotov } from './crypto';
+import { nastroyka, zadatNastroyku, RAZDACHA_MINUT, SROK_SERTIFIKATA, TG_BOT } from './settings';
+import { RAZDACHA_MINUT_DO, RAZDACHA_MINUT_OT } from '@/lib/admin/razdacha';
+import { novyToken, otpechatok, shifrGotov } from './crypto';
+import { env } from './env';
+import { log, pochtaVZhurnal } from './log';
 import { katalogPolny } from './catalog';
 import { akkauntyDlyaOtmeny, zakazDlyaAdminki } from './views';
 import { imenaTarifov } from './imena';
@@ -70,6 +73,8 @@ export type OtvetA = {
   polya?: Podstanovki;
   step?: string;
   email?: string;
+  /** Ссылка привязки Telegram: показывается один раз, в ответе действия. */
+  ssylka?: string;
 };
 
 /* ── Язык интерфейса ───────────────────────────────────────────── */
@@ -618,6 +623,84 @@ export async function adminSetCertDays(_p: OtvetA, fd: FormData): Promise<OtvetA
   if (!Number.isFinite(n) || n < 1) return { error: 'e.days_number' };
   await zadatNastroyku(SROK_SERTIFIKATA, String(Math.round(n)));
   return { ok: 'k.cert_days_saved' };
+}
+
+/**
+ * Время, за которое оператор должен взять предложенный заказ.
+ *
+ * ⚠️ ПРЕДЕЛЫ ПРОВЕРЯЕТ СЕРВЕР, а не `min`/`max` поля: атрибуты
+ * снимаются в браузере за секунду, а ноль минут значил бы, что заказ
+ * уходит от оператора раньше, чем до него дошло сообщение.
+ */
+export async function adminSetRazdachaMinut(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+  const s = await ktoSotrudnik();
+  if (!s || s.role !== 'admin') return { error: 'o.only_admin' };
+  const syroe = String(fd.get('minut') ?? '').trim();
+  const n = Number(syroe);
+  if (!/^\d+$/.test(syroe) || !Number.isInteger(n) || n < RAZDACHA_MINUT_OT || n > RAZDACHA_MINUT_DO) {
+    return { error: 'rz.e_minut', polya: { ot: RAZDACHA_MINUT_OT, do: RAZDACHA_MINUT_DO } };
+  }
+  await zadatNastroyku(RAZDACHA_MINUT, String(n));
+  revalidatePath('/admin/settings');
+  return { ok: 'rz.minut_saved', polya: { n } };
+}
+
+/**
+ * ПРИВЯЗКА TELEGRAM ОПЕРАТОРА: выдать ссылку или отвязать.
+ *
+ * Постановка: «в „Сотрудниках" у оператора кнопка „Привязать Telegram" —
+ * одноразовая ссылка на бота. Оператор открывает её, бот запоминает его
+ * чат. Отвязать может администратор».
+ *
+ * ⚠️ ОДНО ДЕЙСТВИЕ НА ОБЕ ОПЕРАЦИИ, ПОЛЕМ `op` — у карточки оператора
+ * одно сообщение о результате, а не два (закон 52).
+ *
+ * ⚠️ ТОКЕН УХОДИТ НА ЭКРАН ОДИН РАЗ, В ОТВЕТЕ ДЕЙСТВИЯ, а в базе лежит
+ * его отпечаток: ни перезагрузка страницы, ни ночная копия базы ссылку
+ * не покажут. Новая ссылка гасит прежние неиспользованные — по старой,
+ * пересланной кому-то, привязаться уже нельзя.
+ *
+ * ⚠️ ПРИВЯЗАТЬ МОЖНО ТОЛЬКО ОПЕРАТОРА: раздача предлагает заказы только
+ * операторам, а администратор видит и берёт всё и без бота. И без токена
+ * бота на сервере ссылку не выдаём вовсе — она вела бы в никуда.
+ */
+export async function adminTelegram(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+  const s = await ktoSotrudnik();
+  if (!s || s.role !== 'admin') return { error: 'o.only_admin' };
+  const id = Number(fd.get('id') ?? 0);
+  const op = String(fd.get('op') ?? '');
+  const kto = await odna<{ email: string; role: string }>('select email, role from staff where id = $1', [id]);
+  if (!kto) return { error: 'e.check_email' };
+  if (op === 'otvyazat') {
+    /* ⚠️ ОТВЯЗКА ТОЛЬКО СНИМАЕТ ЧАТ. Открытое предложение этому
+       оператору истекает на ближайшем ходе раздачи: он перестал быть
+       пригодным, и решает это одно место — раздача, а не эта кнопка. */
+    await zapros(
+      `update staff set tg_chat_id = null, tg_username = null, tg_imya = null, tg_privyazan_at = null where id = $1`,
+      [id],
+    );
+    await zapros('delete from tg_privyazka where staff_id = $1 and used_at is null', [id]);
+    log.info('Telegram отвязан', { staff: pochtaVZhurnal(kto.email) });
+    revalidatePath('/admin/staff');
+    return { ok: 'tg.otvyazan', polya: { email: kto.email }, step: String(id) };
+  }
+  if (op !== 'privyazat') return { error: 'e.bad_step' };
+  if (kto.role !== 'operator') return { error: 'tg.e_ne_operator' };
+  if (!env.telegramToken) return { error: 'tg.e_net_bota' };
+  const token = novyToken();
+  await zapros('delete from tg_privyazka where staff_id = $1 and used_at is null', [id]);
+  await zapros(
+    `insert into tg_privyazka (token_hash, staff_id, expires_at) values ($1, $2, now() + interval '24 hours')`,
+    [otpechatok(token), id],
+  );
+  const bot = (await nastroyka(TG_BOT, '')).trim();
+  log.info('выдана ссылка привязки Telegram', { staff: pochtaVZhurnal(kto.email) });
+  /* Имени бота нет — значит `getMe` ещё ни разу не ответил. Тогда
+     вместо ссылки команда, которую оператор отправит боту сам. */
+  if (!/^[A-Za-z0-9_]{3,64}$/.test(bot)) {
+    return { ok: 'tg.komanda', polya: { kod: `/start ${token}` }, step: String(id) };
+  }
+  return { ok: 'tg.ssylka', step: String(id), ssylka: `https://t.me/${bot}?start=${token}` };
 }
 
 export async function adminAddStaff(_p: OtvetA, fd: FormData): Promise<OtvetA> {

@@ -6,8 +6,20 @@
  */
 
 import { odna, tikho, zapros } from './db';
+import { RAZDACHA_MINUT_DO, RAZDACHA_MINUT_OT, RAZDACHA_MINUT_UMOLCHANIE } from '@/lib/admin/razdacha';
 
 export const SROK_SERTIFIKATA = 'certificate_days';
+/** Сколько минут заказ ждёт оператора, которому его предложили (раздача). */
+export const RAZDACHA_MINUT = 'razdacha_minut';
+/**
+ * Служебные величины бота — не настройки администратора, но живут
+ * здесь же: они обязаны переживать перезапуск и быть общими для двух
+ * экземпляров приложения во время выкладки.
+ *   `tg_offset` — с какого обновления читать `getUpdates`;
+ *   `tg_bot_username` — имя бота из `getMe`, для ссылки привязки.
+ */
+export const TG_OFFSET = 'tg_offset';
+export const TG_BOT = 'tg_bot_username';
 
 export async function nastroyka(klyuch: string, poUmolchaniyu: string): Promise<string> {
   const r = await tikho(() => odna<{ value: string }>('select value from setting where key = $1', [klyuch]), null);
@@ -26,4 +38,13 @@ export async function zadatNastroyku(klyuch: string, znachenie: string): Promise
 export async function srokSertifikataDney(): Promise<number> {
   const v = Number(await nastroyka(SROK_SERTIFIKATA, '365'));
   return Number.isFinite(v) && v > 0 ? Math.round(v) : 365;
+}
+
+/**
+ * Время на взятие предложенного заказа, минут. По умолчанию 15 —
+ * постановка: «Если оператор не взял заказ за 15 минут…».
+ */
+export async function vremyaNaVzyatieMinut(): Promise<number> {
+  const v = Number(await nastroyka(RAZDACHA_MINUT, String(RAZDACHA_MINUT_UMOLCHANIE)));
+  return Number.isInteger(v) && v >= RAZDACHA_MINUT_OT && v <= RAZDACHA_MINUT_DO ? v : RAZDACHA_MINUT_UMOLCHANIE;
 }

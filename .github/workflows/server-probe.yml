@@ -465,6 +465,10 @@ jobs:
           CQ=$(CHAT="$CHAT" python3 -c 'import os,urllib.parse; print(urllib.parse.quote(os.environ["CHAT"]))')
           tg getChat "chat_id=$CQ" chat.json
           tg getChatMember "chat_id=$CQ&user_id=$BOT" member.json
+          # Раздача заказов (пятьдесят четвёртая итерация) принимает обновления
+          # долгим опросом `getUpdates`, а он не работает, пока у бота стоит
+          # вебхук. Печатается ТОЛЬКО то, задан ли адрес, — сам адрес нет.
+          tg getWebhookInfo '' webhook.json
           python3 - "$d" <<'PY'
           import json, sys
           d = sys.argv[1]
@@ -504,7 +508,24 @@ jobs:
               print("::warning::у бота НЕТ права удалять сообщения в служебном чате (" + tip + ", статус " + st + ")")
           if tip == "group":
               print("::warning::служебный чат — обычная группа: при назначении бота администратором Telegram может перевести её в супергруппу, и номер чата сменится — тогда новый номер надо положить в секрет TELEGRAM_CHAT_ID и прогнать настройку сервера")
+          wh = chitat("webhook.json")
+          if not wh.get("ok"):
+              print("::warning::getWebhookInfo не ответил:", wh.get("description", "?"))
+          elif (wh.get("result") or {}).get("url"):
+              print("::error::у бота задан вебхук — долгий опрос getUpdates не работает, привязка операторов и кнопка «Take» молчат. Снять вебхук: deleteWebhook (сами мы его не снимаем)")
+          else:
+              print("вебхук: не задан — бот принимает обновления долгим опросом")
           PY
+          echo
+          echo "-- раздача заказов: привязки операторов --"
+          sudo -u postgres psql -qAF '|' -P border=2 spotik <<'SQL' 2>/dev/null || echo "(колонок ещё нет — миграция 020 не накатана)"
+          select count(*) filter (where role = 'operator' and not disabled)                          as operatorov,
+                 count(*) filter (where role = 'operator' and not disabled and tg_chat_id is not null) as s_telegram
+            from staff;
+          select key, case when key = 'tg_offset' then 'задан' else value end as value,
+                 to_char(updated_at,'MM-DD HH24:MI') as kogda
+            from setting where key in ('tg_offset', 'tg_bot_username', 'razdacha_minut') order by key;
+          SQL
           echo
           echo "-- сообщения с паролем в чате: что убрано и как --"
           sudo -u postgres psql -qAF '|' -P border=2 spotik <<'SQL' 2>/dev/null || echo "(таблицы ещё нет — миграция 016 не накатана)"

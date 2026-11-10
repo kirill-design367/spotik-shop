@@ -6,6 +6,7 @@ import {
   adminSetDiscount,
   adminSetPlanName,
   adminSetPrice,
+  adminSetRazdachaMinut,
   adminToggleCell,
   adminToggleEgipet,
   type OtvetA,
@@ -13,6 +14,7 @@ import {
 import { slovar, type Klyuch, type Yazyk } from '@/lib/admin/slova';
 import { nadpis } from '@/components/admin/nadpis';
 import { NE_PEREVODIT } from '@/components/Bukvalno';
+import { RAZDACHA_MINUT_DO, RAZDACHA_MINUT_OT } from '@/lib/admin/razdacha';
 
 export type Stroka = {
   planId: string;
@@ -49,12 +51,15 @@ export default function Prices({
   rows,
   plany,
   days,
+  minut,
   y,
 }: {
   rows: Stroka[];
   /** Тарифы с ДЕЙСТВУЮЩИМИ именами: своими или из кода. */
   plany: StrokaTarifa[];
   days: number;
+  /** Время на взятие предложенного заказа, минут (раздача). */
+  minut: number;
   y: Yazyk;
 }) {
   const t = slovar(y);
@@ -64,6 +69,7 @@ export default function Prices({
   const [gr, setYacheyka, busy4] = useActionState<OtvetA, FormData>(adminToggleCell, {});
   const [im, setImya, busy5] = useActionState<OtvetA, FormData>(adminSetPlanName, {});
   const [eg, setEgipet, busy6] = useActionState<OtvetA, FormData>(adminToggleEgipet, {});
+  const [rz, setMinut, busy7] = useActionState<OtvetA, FormData>(adminSetRazdachaMinut, {});
   const otkuda: Record<Stroka['iz'], Klyuch | null> = { baza: 'c.from_db', umolchanie: 'c.from_default', net: null };
 
   return (
@@ -289,6 +295,33 @@ export default function Prices({
         </label>
         <div className="ad__actions">
           <button type="submit" className="btn btn--sm" disabled={busy2}>
+            {t('o.save')}
+          </button>
+        </div>
+      </form>
+
+      {/* ⚠️ РАЗДАЧА — В САМОМ НИЗУ, СВОЕЙ ФОРМОЙ, И ПОЛЕ НАЗВАНО `minut`.
+          Сторожа находят формы этой страницы по именам полей (`on`,
+          `until`, `price`, `plan`, `period`) и по первой таблице, так что
+          ни таблицы, ни этих имён здесь нет. */}
+      <h2>{t('rz.h')}</h2>
+      <p className="hint">{t('rz.hint')}</p>
+      {rz.error ? <p className="err">{t(rz.error, rz.polya)}</p> : null}
+      {rz.ok ? <p className="ok">{nadpis(t, rz.ok, rz.polya)}</p> : null}
+      <form action={setMinut} className="ad__form">
+        <label>
+          {t('rz.minut')}
+          <input
+            type="number"
+            name="minut"
+            min={RAZDACHA_MINUT_OT}
+            max={RAZDACHA_MINUT_DO}
+            step={1}
+            defaultValue={minut}
+          />
+        </label>
+        <div className="ad__actions">
+          <button type="submit" className="btn btn--sm" disabled={busy7}>
             {t('o.save')}
           </button>
         </div>

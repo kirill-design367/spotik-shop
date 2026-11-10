@@ -72,7 +72,8 @@ const pool = new pg.Pool({ connectionString: URL_BAZY, max: 1 });
    посередине. */
 await pool.query(`truncate balance_move, payment, order_slot, certificate, shop_order,
   session, login_code, cert_try, support_try, app_user, staff, staff_plan_off,
-  plan_price, plan_name, plan_discount, plan_off, setting, notify_outbox, promo_try, otzyv
+  plan_price, plan_name, plan_discount, plan_off, setting, notify_outbox, promo_try, otzyv,
+  tg_obnovlenie, tg_privyazka, order_offer
   restart identity cascade`);
 await pool.end();
 

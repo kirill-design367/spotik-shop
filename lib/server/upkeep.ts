@@ -59,6 +59,13 @@ export async function ubrat(): Promise<void> {
     // Убранные из чата сообщения помнить незачем дольше, чем ушедшие
     // уведомления: паролей в строке нет, а разбор беды идёт по журналу.
     await zapros(`delete from tg_s_parolem where ubrano_at is not null and ubrano_at < now() - interval '14 days'`);
+    // Ссылки привязки Telegram: живут сутки. Погашенная держится ещё
+    // сутки — повторная доставка того же `/start` обязана ответить
+    // «Linked.», а не «ссылка недействительна» (`tgbot.ts`).
+    await zapros(`delete from tg_privyazka where expires_at < now() or used_at < now() - interval '1 day'`);
+    // Номера принятых обновлений бота: Telegram не держит обновления
+    // дольше суток, так что двое суток — с запасом против повтора.
+    await zapros(`delete from tg_obnovlenie where created_at < now() - interval '2 days'`);
   } catch (e) {
     log.error('уборка не прошла', { text: String((e as Error).message) });
   }

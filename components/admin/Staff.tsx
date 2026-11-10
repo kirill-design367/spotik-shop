@@ -1,11 +1,18 @@
 'use client';
 
 import { useActionState, useState } from 'react';
-import { adminAddStaff, adminDisableStaff, adminSetStaffPlans, type OtvetA } from '@/lib/server/actions-admin';
+import {
+  adminAddStaff,
+  adminDisableStaff,
+  adminSetStaffPlans,
+  adminTelegram,
+  type OtvetA,
+} from '@/lib/server/actions-admin';
 import { slovar, type Yazyk } from '@/lib/admin/slova';
 import { imyaTarifaIz, klyuchPary, srokKratkoDlyaSotrudnika, type ImenaTarifov } from '@/lib/plans';
 import { nadpis } from '@/components/admin/nadpis';
-import Bukvalno from '@/components/Bukvalno';
+import Bukvalno, { iliNadpis } from '@/components/Bukvalno';
+import { poMoskve } from '@/lib/admin/vremya';
 
 export type Chelovek = {
   id: number;
@@ -15,6 +22,9 @@ export type Chelovek = {
   me: boolean;
   /** РАЗРЕШЁННЫЕ пары «тариф × срок» ключами: в базе лежат запреты. */
   pary: string[];
+  /** Привязан ли Telegram: кто открыл ссылку (@ник или имя) и когда.
+      `null` — не привязан. Номера чата здесь нет и быть не должно. */
+  tg: { kto: string | null; at: string | null } | null;
 };
 
 /**
@@ -46,6 +56,7 @@ export default function Staff({
   sroki,
   prodayutsya,
   nikto,
+  tgEst,
 }: {
   list: Chelovek[];
   y: Yazyk;
@@ -60,6 +71,8 @@ export default function Staff({
   prodayutsya: string[];
   /** Пары, которые не может выполнить ни один действующий оператор. */
   nikto: { planId: string; period: number }[];
+  /** Задан ли на сервере токен бота: без него привязывать нечем. */
+  tgEst: boolean;
 }) {
   const t = slovar(y);
   const [a, add, busy] = useActionState<OtvetA, FormData>(adminAddStaff, {});
@@ -167,6 +180,8 @@ export default function Staff({
               imya={imya}
               srok={srok}
               t={t}
+              y={y}
+              tgEst={tgEst}
               plans={plans}
               plansBusy={plansBusy}
             />
@@ -197,6 +212,8 @@ function KartaOperatora({
   imya,
   srok,
   t,
+  y,
+  tgEst,
   plans,
   plansBusy,
 }: {
@@ -207,6 +224,8 @@ function KartaOperatora({
   imya: (id: string) => string;
   srok: (n: number) => string;
   t: ReturnType<typeof slovar>;
+  y: Yazyk;
+  tgEst: boolean;
   plans: (fd: FormData) => void;
   plansBusy: boolean;
 }) {
@@ -244,6 +263,12 @@ function KartaOperatora({
         <Bukvalno>{c.email}</Bukvalno>
         {c.disabled ? <span className="ad__tag">{t('f.disabled')}</span> : null}
       </div>
+
+      {/* ⚠️ ПРИВЯЗКА TELEGRAM — ПОСЛЕ ШАПКИ И ВНЕ ФОРМЫ ТАРИФОВ, СВОЕЙ
+          ФОРМОЙ (поправка concurrency-11). Кнопка внутри `form#tarify-N`
+          отправляла бы галочки тарифов, а сторож переводчика читает
+          первый `.ad__op-kto` и ждёт, что он начинается с почты. */}
+      <PrivyazkaTelegram c={c} t={t} y={y} tgEst={tgEst} />
 
       {/* `id` формы — опора для сторожа и для `aria`: у каждого
           оператора она своя. */}
@@ -321,6 +346,90 @@ function KartaOperatora({
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+/**
+ * Привязка Telegram одного оператора: состояние, «Привязать» или
+ * «Отвязать», и одноразовая ссылка, когда её только что выдали.
+ *
+ * ⚠️ СОСТОЯНИЕ — `.ad__note`, А НЕ `p.ok`. `p.ok` у раздела — только
+ * ответ действия: постоянная строка с этим классом отпускала бы
+ * ожидания сторожей раньше времени (поправка concurrency-11).
+ *
+ * ⚠️ КТО ОТКРЫЛ ССЫЛКУ, ТОКЕН И САМА ССЫЛКА — ДАННЫЕ (закон 54):
+ * ник и имя пришли из Telegram, токен — код. Всё это под
+ * `translate="no"`, а слова вокруг переводятся.
+ */
+function PrivyazkaTelegram({
+  c,
+  t,
+  y,
+  tgEst,
+}: {
+  c: Chelovek;
+  t: ReturnType<typeof slovar>;
+  y: Yazyk;
+  tgEst: boolean;
+}) {
+  const [o, deystvie, busy] = useActionState<OtvetA, FormData>(adminTelegram, {});
+  const [skopirovano, setSkopirovano] = useState(false);
+  if (!tgEst) return <p className="ad__note">{t('tg.ne_nastroen')}</p>;
+  const kopiya = o.ssylka ?? (typeof o.polya?.kod === 'string' ? o.polya.kod : null);
+  return (
+    <div className="ad__op-tg">
+      {c.tg ? (
+        <p className="ad__note">
+          {t('tg.privyazan')} · {iliNadpis(c.tg.kto, '—')}
+          {c.tg.at ? <> · {poMoskve(c.tg.at, y === 'en')}</> : null}
+        </p>
+      ) : (
+        <p className="ad__note">{t('tg.ne_privyazan')}</p>
+      )}
+      <form action={deystvie} className="ad__op-tg-forma">
+        <input type="hidden" name="id" value={c.id} />
+        <input type="hidden" name="op" value={c.tg ? 'otvyazat' : 'privyazat'} />
+        <button
+          type="submit"
+          className={c.tg ? 'btn btn--ghost btn--sm' : 'btn btn--sm'}
+          disabled={busy}
+          onClick={() => setSkopirovano(false)}
+        >
+          {c.tg ? t('tg.otvyazat') : t('tg.privyazat')}
+        </button>
+      </form>
+      {o.error ? <p className="err">{t(o.error)}</p> : null}
+      {o.ok ? (
+        <div className="ok">
+          <p>{nadpis(t, o.ok, o.polya)}</p>
+          {o.ssylka ? (
+            <p className="ad__op-tg-ssylka">
+              <Bukvalno>
+                <a href={o.ssylka} target="_blank" rel="noopener noreferrer">
+                  {o.ssylka}
+                </a>
+              </Bukvalno>
+            </p>
+          ) : null}
+          {kopiya && o.ok !== 'tg.otvyazan' ? (
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => {
+                /* Буфер обмена есть не везде (http, старый браузер):
+                   тогда ссылку видно и её можно выделить руками. */
+                void navigator.clipboard?.writeText(kopiya).then(
+                  () => setSkopirovano(true),
+                  () => setSkopirovano(false),
+                );
+              }}
+            >
+              {skopirovano ? t('tg.skopirovano') : t('tg.skopirovat')}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

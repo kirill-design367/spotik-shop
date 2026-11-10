@@ -451,6 +451,44 @@ const S = {
      в «Ценах». Подпись говорит про САЙТ, а не про право оператора:
      галочка у такой пары рабочая и сохраняется как любая другая. */
   'f.not_sold': ['не продаётся', 'not on sale'],
+  /* ── Привязка Telegram оператора (пятьдесят четвёртая итерация) ──
+     ⚠️ ТОКЕН И ССЫЛКА — ДАННЫЕ, а не надпись: команда с токеном
+     подставляется как `{kod}`, и `nadpis` ставит её под `translate="no"`
+     (закон 54). Ссылка рисуется отдельно, через `Bukvalno`. */
+  'tg.ne_nastroen': ['Telegram не настроен', 'Telegram not configured'],
+  'tg.privyazan': ['Telegram привязан', 'Telegram linked'],
+  'tg.ne_privyazan': ['Telegram не привязан', 'Telegram not linked'],
+  'tg.privyazat': ['Привязать Telegram', 'Link Telegram'],
+  'tg.otvyazat': ['Отвязать', 'Unlink'],
+  'tg.ssylka': [
+    'Одноразовая ссылка для оператора — действует 24 часа. Новая ссылка отменяет прежнюю.',
+    'One-time link for the operator — valid for 24 hours. A new link cancels the previous one.',
+  ],
+  'tg.komanda': [
+    'Имя бота ещё не известно. Пусть оператор откроет бота и отправит ему: {kod} — действует 24 часа.',
+    'The bot name is not known yet. Ask the operator to open the bot and send it: {kod} — valid for 24 hours.',
+  ],
+  'tg.skopirovat': ['Скопировать', 'Copy'],
+  'tg.skopirovano': ['Скопировано', 'Copied'],
+  'tg.otvyazan': ['Telegram отвязан: {email}', 'Telegram unlinked: {email}'],
+  'tg.e_ne_operator': ['Привязать Telegram можно только оператору.', 'Only an operator can link Telegram.'],
+  'tg.e_net_bota': [
+    'Telegram не настроен на сервере: токена бота нет.',
+    'Telegram is not configured on the server: there is no bot token.',
+  ],
+  /* Строка оператора о СВОЁМ состоянии в шапке очереди — без чужих
+     имён: оператор не знает, что есть другие (постановка). */
+  'tg.vash_net': ['Telegram не привязан — попросите администратора', 'Telegram not linked — ask the administrator'],
+
+  /* ── Раздача заказов: время на взятие ─────────────────────────── */
+  'rz.h': ['Раздача заказов', 'Order distribution'],
+  'rz.hint': [
+    'Новый оплаченный заказ предлагается операторам по очереди в Telegram. Если оператор не взял его за это время, заказ переходит к следующему.',
+    'A new paid order is offered to operators in turn in Telegram. If the operator does not take it within this time, it moves on to the next one.',
+  ],
+  'rz.minut': ['Время на взятие заказа, минут', 'Time to take an order, minutes'],
+  'rz.minut_saved': ['Время на взятие заказа сохранено: {n} мин.', 'Time to take an order saved: {n} min.'],
+  'rz.e_minut': ['Укажите целое число минут от {ot} до {do}.', 'Enter a whole number of minutes from {ot} to {do}.'],
 
   /* ── Сертификаты ─────────────────────────────────────────────── */
   's.h': ['Подарочные сертификаты', 'Gift certificates'],

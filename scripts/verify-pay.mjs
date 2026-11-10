@@ -83,7 +83,8 @@ const pool = new pg.Pool({ connectionString: URL_BAZY, max: 1 });
    таблицы» в Р-94). */
 await pool.query(`truncate balance_move, payment, order_slot, certificate, shop_order,
   session, login_code, cert_try, support_try, app_user, staff, plan_price, plan_discount,
-  plan_off, setting, notify_outbox, promo_try, otzyv restart identity cascade`);
+  plan_off, setting, notify_outbox, promo_try, otzyv, tg_obnovlenie, tg_privyazka, order_offer
+  restart identity cascade`);
 
 const server = await serveOut(PORT, {
   env: {

@@ -10,6 +10,7 @@ export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
   const { zavestiUborku } = await import('./lib/server/upkeep');
   const { zavestiOchered } = await import('./lib/server/notify');
+  const { zavestiBota } = await import('./lib/server/tgbot');
   const { bazaEst } = await import('./lib/server/db');
   const { zavestiPervyhAdminov } = await import('./lib/server/auth');
   const { log } = await import('./lib/server/log');
@@ -26,4 +27,7 @@ export async function register() {
   zavestiUborku();
   // Очередь уведомлений: минутный будильник, повтор неотправленного.
   zavestiOchered();
+  /* Бот принимает обновления (привязка оператора, кнопка «Take») —
+     только при заданном токене: без него спрашивать некого. */
+  zavestiBota();
 }

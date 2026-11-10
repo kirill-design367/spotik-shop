@@ -305,8 +305,16 @@ export async function soobshchitKomande(s: SobytieKomande): Promise<void> {
  * выборка и аренда — один `update`: взявший строку отодвигает её
  * срок на пять минут, и второму она уже не видна.
  */
+/* ⚠️ ПРОШЛЫЙ ХОД ЕЩЁ ИДЁТ — НОВЫЙ ПРОПУСКАЕТСЯ (поправка concurrency-14).
+   Двадцать строк по пятнадцать секунд срока — это пять минут, ровно
+   срок аренды строки; минутный будильник иначе начал бы второй ход
+   поверх первого, и строка с истёкшей арендой ушла бы дважды. */
+let ocheredIdyot = false;
+
 export async function razgrestiOchered(): Promise<void> {
   if (!bazaEst() || !telegramNastroen()) return;
+  if (ocheredIdyot) return;
+  ocheredIdyot = true;
   try {
     const stroki = await zapros<{
       id: string;
@@ -374,6 +382,8 @@ export async function razgrestiOchered(): Promise<void> {
     }
   } catch (e) {
     log.error('очередь уведомлений не разгреблась', { text: String((e as Error).message) });
+  } finally {
+    ocheredIdyot = false;
   }
 }
 

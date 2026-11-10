@@ -3,7 +3,7 @@ import Prices, { type Stroka } from '@/components/admin/Prices';
 import { ktoSotrudnik } from '@/lib/server/auth';
 import { bazaEst, zapros } from '@/lib/server/db';
 import { egipetskiePary, katalogPoUmolchaniyu, skidkiIVyklyuchennye, SROKI } from '@/lib/server/catalog';
-import { srokSertifikataDney } from '@/lib/server/settings';
+import { srokSertifikataDney, vremyaNaVzyatieMinut } from '@/lib/server/settings';
 import { DARIMYE, imyaTarifaIz, srokDlyaSotrudnika } from '@/lib/plans';
 import { imenaSyrye, imenaTarifov } from '@/lib/server/imena';
 import { yazykSotrudnika } from '@/lib/server/yazyk';
@@ -90,5 +90,13 @@ export default async function AdminSettings() {
     }
   }
 
-  return <Prices rows={rows} plany={plany} days={await srokSertifikataDney()} y={y} />;
+  return (
+    <Prices
+      rows={rows}
+      plany={plany}
+      days={await srokSertifikataDney()}
+      minut={await vremyaNaVzyatieMinut()}
+      y={y}
+    />
+  );
 }

@@ -231,6 +231,19 @@
 .ad__op-kto { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; margin: 0 0 10px; }
 .ad__op-set { display: grid; gap: 10px; }
 
+/* Привязка Telegram оператора (пятьдесят четвёртая итерация): строка
+   состояния, кнопка и — после «Привязать» — одноразовая ссылка.
+   ⚠️ `.ad__note` — ТИХАЯ СТРОКА СОСТОЯНИЯ, а не ответ действия: `p.ok`
+   у раздела остаётся только за ответами (поправка concurrency-11). */
+.ad__note { color: var(--dim); font-size: 13px; margin: 0; }
+/* Своё состояние оператора в шапке очереди — между подсказкой и сводкой. */
+.ad__note--moy { margin: -8px 0 16px; }
+.ad__op-tg { display: grid; gap: 8px; justify-items: start; margin: 0 0 12px; }
+.ad__op-tg .ad__note { overflow-wrap: anywhere; }
+.ad__op-tg .ok, .ad__op-tg .err { margin: 0; justify-self: stretch; }
+.ad__op-tg .ok p { margin: 0 0 8px; }
+.ad__op-tg-ssylka { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+
 /* Строка тарифа: имя слева, сроки справа. На узком экране сроки
    переезжают под имя — перенос, а не прокрутка. */
 .ad__op-row {
