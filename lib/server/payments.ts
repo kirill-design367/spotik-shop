@@ -11,7 +11,7 @@
 import { odna, zapros } from './db';
 import { env } from './env';
 import { nazvanieZakaza } from './orders';
-import { katalog, naytiTarif } from './catalog';
+import { katalog, naytiTarif, srokKratko } from './catalog';
 import { nastroyki, robokassaRabotaet, ssylkaOplaty } from './robokassa';
 import { log } from './log';
 import { rubli } from './money';
@@ -83,12 +83,21 @@ export async function vystavitSchet(zakaz: number, userId: number): Promise<Sche
 
   const spisok = await katalog();
   const tarif = naytiTarif(spisok, z.plan_id);
-  const nazvanie = nazvanieZakaza(tarif?.name ?? z.plan_id, z.period, z.kind);
+  const imya = tarif?.name ?? z.plan_id;
+  const nazvanie = nazvanieZakaza(imya, z.period, z.kind);
+  /* ⚠️ ОПИСАНИЕ ПЛАТЕЖА ВИДИТ КЛИЕНТ НА СТРАНИЦЕ РОБОКАССЫ, поэтому
+     номера заказа в нём нет (закон 48, решение по вопросу 128): тариф
+     и срок — «Spotik Shop, Индивидуальный, 1 мес». В подпись описание
+     не входит, номер счёта (`InvId`) по-прежнему `payment.id`. */
+  const opisanie =
+    z.kind === 'certificate'
+      ? `Spotik Shop, сертификат, ${imya}, ${srokKratko(z.period)}`
+      : `Spotik Shop, ${imya}, ${srokKratko(z.period)}`;
   const adres = ssylkaOplaty(
     n,
     platyozh,
     ostatok,
-    `Spotik Shop, заказ № ${zakaz}`,
+    opisanie,
     [{ name: nazvanie, sumKop: ostatok }],
     { recurring },
   );

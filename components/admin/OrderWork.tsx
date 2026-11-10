@@ -25,6 +25,7 @@ import { prichinaSotrudniku, prichinyDlya } from '@/lib/admin/prichiny';
 import { chasyPoMoskve, poMoskve } from '@/lib/admin/vremya';
 import Bukvalno, { NE_PEREVODIT, iliNadpis } from '@/components/Bukvalno';
 import { nadpis } from '@/components/admin/nadpis';
+import { oplataSlovami, vidPoSposobu } from '@/lib/oplata';
 
 /**
  * Рабочий экран оператора: ЗАКАЗ РАЗБИТ НА ШАГИ.
@@ -134,6 +135,12 @@ export default function OrderWork({
                       card: rub(z.moneyKop),
                     })}
               </dd>
+            </>
+          ) : null}
+          {z.sposobOplaty ? (
+            <>
+              <dt>{t('z.sposob')}</dt>
+              <dd>{oplataSlovami(t, z.sposobOplaty)}</dd>
             </>
           ) : null}
           {z.promoKod ? (
@@ -377,6 +384,7 @@ function AvtoBlokAdmin({
     prosrochen: 'av.p_prosrochen',
     testovaya: 'av.p_testovaya',
     zamenena: 'av.p_zamenena',
+    prodlen: 'av.p_prodlen',
     bez_recurring: 'av.p_bez_recurring',
   };
   const mozhno = a.status === 'vklyuchen' || a.status === 'zhdyot_oplaty';
@@ -400,14 +408,13 @@ function AvtoBlokAdmin({
         ) : null}
         <dt>{t('av.k_soglasie')}</dt>
         <dd className="tnum">{poMoskve(a.soglasieAt, en)}</dd>
-        {/* Способ оплаты — как пришёл из уведомления Робокассы: это ДАННЫЕ,
-            а не надпись, и переводу они не подлежат (закон 54). */}
+        {/* Способ первой оплаты — словами, как у заказа (решение
+            по вопросу 126): «Карта», «СБП». Сырую строку Робокассы
+            («BankCard/BankCardPSR») администратору читать незачем. */}
         {a.sposob ? (
           <>
             <dt>{t('av.k_sposob')}</dt>
-            <dd>
-              <Bukvalno>{a.sposob}</Bukvalno>
-            </dd>
+            <dd>{t(`op.${vidPoSposobu(a.sposob)}`)}</dd>
           </>
         ) : null}
         {a.matPaymentId !== null ? (

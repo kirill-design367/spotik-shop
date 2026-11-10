@@ -30,6 +30,7 @@ import { odna, zapros } from './db';
 import { otpechatokPochty } from './crypto';
 import type { Status } from './orders';
 import { nastoyashchayaData } from '../data';
+import { vidyOplaty, type VidOplaty } from '@/lib/oplata';
 
 export const NA_STRANICE = 50;
 
@@ -63,6 +64,8 @@ export type StrokaProdazhi = {
   otmenaPodpiski: boolean;
   staff: string | null;
   totalKop: number;
+  /** Чем заплачено, словами (решение по вопросу 126). Пусто — не оплачен. */
+  sposobOplaty: VidOplaty[];
   promoKod: string | null;
   /** Заказ создан автоплатежом. */
   avtoProdlenie: boolean;
@@ -169,11 +172,18 @@ export async function prodazhi(f: FiltrProdazh): Promise<{ vsego: number; stroki
     otmena: boolean;
     staff: string | null;
     total_kop: string;
+    balance_kop: string;
+    money_kop: string;
+    sposob: string | null;
     promo_kod: string | null;
     avto_vkl: boolean;
   }>(
     `select o.id, o.paid_at, o.created_at, o.plan_id, o.period, o.kind, o.source, u.email, o.status,
             (t.order_id is not null) as otmena, fs.email as staff, o.total_kop, o.promo_kod,
+            o.balance_kop, o.money_kop,
+            (select p.sposob from payment p
+              where p.order_id = o.id and p.status = 'paid'
+              order by p.paid_at desc nulls last, p.id desc limit 1) as sposob,
             exists (select 1 from avtoplatezh ap where ap.order_id = o.id and ap.status = 'vklyuchen') as avto_vkl
        ${IZ}
        ${SOTRUDNIK}
@@ -197,6 +207,13 @@ export async function prodazhi(f: FiltrProdazh): Promise<{ vsego: number; stroki
       otmenaPodpiski: r.otmena,
       staff: r.staff,
       totalKop: Number(r.total_kop),
+      sposobOplaty: vidyOplaty({
+        source: r.source,
+        balanceKop: Number(r.balance_kop),
+        moneyKop: Number(r.money_kop),
+        sposob: r.sposob,
+        oplachen: r.paid_at !== null,
+      }),
       promoKod: r.promo_kod,
       avtoProdlenie: r.source === 'avto',
       avtoVklyuchen: r.avto_vkl,

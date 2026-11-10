@@ -34,6 +34,7 @@ import { usloviyeVidimosti, usloviyeVidimostiOtmeny, usloviyeVidimostiSZadachey,
 import { METKI } from './utm';
 import { rabocheeVremya } from '@/lib/chasy';
 import type { PrichinaAvto, StatusAvto } from '@/lib/avtoplatezh';
+import { vidyOplaty, type VidOplaty } from '@/lib/oplata';
 
 export type SlotKlientu = {
   idx: number;
@@ -888,6 +889,12 @@ export type ZakazOperatoru = {
   balanceKop: number | null;
   moneyKop: number | null;
   /**
+   * Чем заплачено, словами (решение по вопросу 126): «Карта», «СБП»,
+   * «Баланс», «Сертификат» — `lib/oplata.ts`. Только администратору,
+   * как и сами суммы: это тот же ответ на «сколько и чем заплатил».
+   */
+  sposobOplaty: VidOplaty[] | null;
+  /**
    * Промокод заказа и скидка по нему (Р-167) — ТОЛЬКО АДМИНИСТРАТОРУ,
    * как и деньги заказа: это та же величина «сколько заплатил».
    * `null` у кода — промокода не было или смотрит не администратор.
@@ -1031,6 +1038,8 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
     utm_campaign: string | null;
     utm_term: string | null;
     utm_content: string | null;
+    sposob: string | null;
+    oplachen: boolean;
     expires_at: Date | null;
     t_order: string | null;
     t_operator_id: string | null;
@@ -1044,7 +1053,11 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
             o.cancel_reason, o.secrets_wiped_at,
             (o.closed_at is null or o.closed_at > now() - interval '7 days') as v_okne,
             (now() + (o.period || ' months')::interval)::date as raschyot,
-            o.utm_source, o.utm_medium, o.utm_campaign, o.utm_term, o.utm_content
+            o.utm_source, o.utm_medium, o.utm_campaign, o.utm_term, o.utm_content,
+            (o.paid_at is not null) as oplachen,
+            (select p.sposob from payment p
+              where p.order_id = o.id and p.status = 'paid'
+              order by p.paid_at desc nulls last, p.id desc limit 1) as sposob
        from shop_order o
        join app_user u on u.id = o.user_id
        left join staff f on f.id = o.operator_id
@@ -1124,6 +1137,15 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
     totalKop: admin ? Number(r.total_kop) : null,
     balanceKop: admin ? Number(r.balance_kop) : null,
     moneyKop: admin ? Number(r.money_kop) : null,
+    sposobOplaty: admin
+      ? vidyOplaty({
+          source: r.source,
+          balanceKop: Number(r.balance_kop),
+          moneyKop: Number(r.money_kop),
+          sposob: r.sposob,
+          oplachen: r.oplachen,
+        })
+      : null,
     promoKod: admin ? r.promo_kod : null,
     promoSkidkaKop: admin && r.promo_kod ? Number(r.promo_skidka_kop) : null,
     cancelReason: r.cancel_reason,

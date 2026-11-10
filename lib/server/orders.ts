@@ -34,7 +34,7 @@ import {
 } from './promokody';
 import { kodPromo, otkazSlovami, type OtkazPromo } from '@/lib/promokod';
 import { nastoyashchayaData } from '../data';
-import { otklyuchitPoZakazu, podpiskaProdlena, podtverditMat, zavestiPodpisku, type SposobOplaty } from './avtoplatezh';
+import { otklyuchitPoZakazu, podpiskaProdlena, podtverditMat, prodleniyaCikla, zavestiPodpisku, type SposobOplaty } from './avtoplatezh';
 import { avtoplatezhVklyuchen } from './settings';
 import { sposobStrokoy, tekstSoglasiyaAvto } from '@/lib/avtoplatezh';
 
@@ -530,6 +530,13 @@ export async function otmetitOplachennym(platyozh: number, prishloKop: number, s
          подписки, цикл уже продлён другим платежом, заказ цикла
          отменён — деньги ложатся на баланс владельца счёта.
 
+         ⚠️ И ТЕ ЖЕ АККАУНТЫ УЖЕ ПРОДЛЕНЫ ДРУГИМ ЗАКАЗОМ — тоже баланс
+         (доводка пятьдесят пятой): человек оплатил продление руками,
+         пока списание было в пути, и второе продление за тот же
+         период было бы двойной оплатой. Вопрос «продлено ли» задаёт
+         та же функция, что у часового хода (`prodleniyaCikla`): любой
+         оплаченный заказ на любой из аккаунтов цикла, на любой срок.
+
          ⚠️ ПОРЯДОК БЛОКИРОВОК: платёж → заказ цикла → подписка, тот же,
          что у отмены заказа и отмены подписки (заказ → подписка),
          и у часового хода. Владелец — `payment.user_id`: у дочернего
@@ -553,7 +560,8 @@ export async function otmetitOplachennym(platyozh: number, prishloKop: number, s
             )
           ).rows[0]
         : undefined;
-      if (a && co && Number(a.order_id) === cikl && co.status === 'done') {
+      const prodleno = cikl ? (await prodleniyaCikla(c, cikl)).length > 0 : false;
+      if (a && co && Number(a.order_id) === cikl && co.status === 'done' && !prodleno) {
         const novy = await zakazProdleniya(c, {
           avto: podpiska,
           userId: vladelec,
@@ -584,6 +592,7 @@ export async function otmetitOplachennym(platyozh: number, prishloKop: number, s
         cikl: cikl || '—',
         cikl_status: co?.status ?? '—',
         avto_status: a?.status ?? '—',
+        prodleno_drugim: prodleno,
         money_kop: prishloKop,
       });
       const kto = await c.query<{ email: string }>('select email from app_user where id = $1', [vladelec]);
@@ -895,8 +904,11 @@ export async function vzyatZakaz(
       period: number;
       razdacha: string | null;
       offer_staff_id: string | null;
+      offer_zhivo: boolean;
     }>(
-      'select status, operator_id, plan_id, period, razdacha, offer_staff_id from shop_order where id = $1 for update',
+      `select status, operator_id, plan_id, period, razdacha, offer_staff_id,
+              coalesce(offer_until > now(), false) as offer_zhivo
+         from shop_order where id = $1 for update`,
       [zakaz],
     );
     const row = r.rows[0];
@@ -914,6 +926,10 @@ export async function vzyatZakaz(
     if (zapreshcheno) {
       if (row.razdacha === 'zhdyot') return null;
       if (row.razdacha === 'predlozhen' && Number(row.offer_staff_id) !== staffId) return null;
+      /* Истёкшее предложение не берётся и своим (доводка пятьдесят
+         пятой): пятнадцать минут прошли — заказ ждёт следующего хода
+         раздачи, а тот предложит его другому. */
+      if (row.razdacha === 'predlozhen' && !row.offer_zhivo) return null;
     }
     await c.query(`update shop_order set status = 'in_work', operator_id = $2, taken_at = now() where id = $1`, [
       zakaz,

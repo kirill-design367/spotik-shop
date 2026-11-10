@@ -437,6 +437,22 @@ async function vGruppu(s: SobytieKomande, gotovo?: Promise<unknown>): Promise<vo
     .catch((e) => log.error('сообщение раздачи в группу не ушло', { text: String((e as Error).message) }));
 }
 
+/**
+ * Не привязан Telegram ни у одного из тех, кому пара разрешена, —
+ * сообщение в группу НЕ шлём (решение заказчика по вопросу 121): пока
+ * операторы не привязали бота, оно шло бы рядом с «New paid order»
+ * на каждый заказ. Заказ при этом в общей очереди, как и был, а строка
+ * журнала остаётся. «Пара никому не разрешена» — это правка галочек,
+ * и о ней пишем по-прежнему.
+ */
+function molchatONekomu(zakaz: number, prichina: 'para' | 'telegram'): boolean {
+  if (prichina !== 'telegram') return false;
+  log.info('заказ в общей очереди: у разрешённых операторов не привязан Telegram, в группу не пишем', {
+    order: zakaz,
+  });
+  return true;
+}
+
 /** Сообщение Льву, когда заказ ушёл в общую очередь. */
 async function soobshchitObObshchey(
   zakaz: number,
@@ -445,6 +461,7 @@ async function soobshchitObObshchey(
   gotovo?: Promise<unknown>,
 ): Promise<void> {
   if (r.pochemu === 'para' || r.pochemu === 'telegram') {
+    if (molchatONekomu(zakaz, r.pochemu)) return;
     await vGruppu({ vid: 'razdacha_nekomu', zakaz, ...(await tarifISrok(r.planId, r.period)), prichina: r.pochemu }, gotovo);
   } else if (r.pochemu === 'ne_dostavleno') {
     await vGruppu({ vid: 'razdacha_ne_dostavleno', zakaz }, gotovo);
@@ -600,6 +617,7 @@ export async function razdatNovyy(zakaz: number, gotovo?: Promise<unknown>): Pro
     if (!z) return;
     if (z.razdacha === 'obshchaya' && !z.bylo) {
       const prichina = await pochemuNekomu(null, z.plan_id, Number(z.period));
+      if (molchatONekomu(zakaz, prichina)) return;
       await vGruppu(
         { vid: 'razdacha_nekomu', zakaz, ...(await tarifISrok(z.plan_id, Number(z.period))), prichina },
         gotovo,

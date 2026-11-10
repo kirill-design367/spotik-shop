@@ -9,7 +9,7 @@ import { slovar, sostoyanie } from '@/lib/admin/slova';
 import { DARIMYE, imyaTarifaIz, srokKratkoDlyaSotrudnika } from '@/lib/plans';
 import { poMoskve } from '@/lib/admin/vremya';
 import { rubli } from '@/lib/server/money';
-import { NE_PEREVODIT, iliNadpis } from '@/components/Bukvalno';
+import { oplataSlovami } from '@/lib/oplata';
 
 export const dynamic = 'force-dynamic';
 
@@ -150,8 +150,28 @@ export default async function AdminSales({
       {!stroki.length ? (
         <p className="hint">{t('ss.none')}</p>
       ) : (
+        /* ⚠️ НА ШИРОКОМ ЭКРАНЕ ТАБЛИЦА РОВНО В КОНТЕЙНЕР (решение
+           по вопросу 125): ширины колонок заданы долями, а длинные почты
+           и промокоды сокращаются многоточием — полный текст в подсказке
+           по наведению. На узком экране раскладка прежняя, с прокруткой
+           вбок: одиннадцать колонок на телефон не встают ни при каких
+           долях. Подсказка стоит на элементе под `translate="no"`, и
+           переводчик её не трогает (закон 54). */
         <div className="ad__scroll">
-          <table>
+          <table className="ad__prodazhi">
+            <colgroup>
+              <col className="ad__k-nomer" />
+              <col className="ad__k-data" />
+              <col className="ad__k-tarif" />
+              <col className="ad__k-srok" />
+              <col className="ad__k-pochta" />
+              <col className="ad__k-sost" />
+              <col className="ad__k-pochta2" />
+              <col className="ad__k-summa" />
+              <col className="ad__k-oplata" />
+              <col className="ad__k-promo" />
+              <col className="ad__k-otkryt" />
+            </colgroup>
             <thead>
               <tr>
                 <th>{t('t.num')}</th>
@@ -162,6 +182,7 @@ export default async function AdminSales({
                 <th>{t('t.state')}</th>
                 <th>{t('t.staff')}</th>
                 <th>{t('sl.sum')}</th>
+                <th>{t('sl.oplata')}</th>
                 <th>{t('sl.promo')}</th>
                 <th />
               </tr>
@@ -183,14 +204,35 @@ export default async function AdminSales({
                     {r.avtoVklyuchen ? <span className="ad__tag ad__tag--avto-vkl">{t('av.tag_vkl')}</span> : null}
                   </td>
                   <td>{srokKratkoDlyaSotrudnika(r.period, en)}</td>
-                  <td {...NE_PEREVODIT}>{r.client}</td>
+                  <td>
+                    <span className="ad__obrez notranslate" translate="no" title={r.client}>
+                      {r.client}
+                    </span>
+                  </td>
                   <td>
                     {sostoyanie(t, r.status)}
                     {r.otmenaPodpiski ? <span className="ad__tag ad__tag--otmena">{t('sc.tag')}</span> : null}
                   </td>
-                  <td>{iliNadpis(r.staff, '—')}</td>
+                  <td>
+                    {r.staff ? (
+                      <span className="ad__obrez notranslate" translate="no" title={r.staff}>
+                        {r.staff}
+                      </span>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
                   <td className="tnum">{rubli(r.totalKop)}</td>
-                  <td>{iliNadpis(r.promoKod, '—')}</td>
+                  <td>{oplataSlovami(t, r.sposobOplaty)}</td>
+                  <td>
+                    {r.promoKod ? (
+                      <span className="ad__obrez notranslate" translate="no" title={r.promoKod}>
+                        {r.promoKod}
+                      </span>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
                   <td>
                     <a className="btn btn--ghost btn--sm" href={`/admin/orders/${r.id}/`}>
                       {t('q.open')}

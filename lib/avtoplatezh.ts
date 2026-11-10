@@ -32,7 +32,9 @@ export type PrichinaAvto =
   | 'prosrochen'
   | 'testovaya'
   | 'zamenena'
-  | 'bez_recurring';
+  | 'bez_recurring'
+  /** Аккаунт продлён другим заказом, и сдвинуть подписку на него нельзя (миграция 022). */
+  | 'prodlen';
 
 /** Срок в винительном падеже, после «на»: «на месяц», «на полгода». */
 export function srokNa(period: number): string {

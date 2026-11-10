@@ -115,11 +115,18 @@ export async function dostupSotrudnika(s: { id: number; role: 'admin' | 'operato
  * ⚠️ ЧИТАЕТ ТОЛЬКО КОЛОНКИ `shop_order` (поправка concurrency-9):
  * `order_offer` — история, и видимость на неё не опирается. Те же
  * правила повторены внутри `vzyatZakaz`, под `for update`.
+ *
+ * ⚠️ ПРЕДЛОЖЕНИЕ ВИДНО ТОЛЬКО ДО `offer_until` (доводка пятьдесят
+ * пятой): ход раздачи идёт раз в минуту, и между истечением и ходом
+ * прежний оператор видел заказ и брал его. Постановка: «после истечения
+ * 15 минут прежний оператор заказ не видит и взять не может». Пустой
+ * срок у предложения считается истёкшим — так же читает его ход.
  */
 function razdachaVidna(alias: string, s: number): string {
   return (
     `(${alias}.razdacha is null or ${alias}.razdacha = 'obshchaya'` +
-    ` or (${alias}.razdacha = 'predlozhen' and ${alias}.offer_staff_id = $${s}))`
+    ` or (${alias}.razdacha = 'predlozhen' and ${alias}.offer_staff_id = $${s}` +
+    ` and ${alias}.offer_until > now()))`
   );
 }
 

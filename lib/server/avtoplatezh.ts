@@ -376,6 +376,12 @@ type Podpiska = {
    * старше позавчерашнего дня — цикл брошен (см. `pismoOdnoy`).
    */
   zabroshen: boolean;
+  /**
+   * Об этом окончании клиенту уже писали (`shop_order.reminded_at`):
+   * письмом автоплатежа или прежним «Продлить». Защёлка ОДНА на оба
+   * письма — письмо об одном окончании одно (см. `pismoOdnoy`).
+   */
+  napomneno: boolean;
   email: string;
   balance_kop: number;
 };
@@ -413,6 +419,7 @@ async function vzyatPodpisku(c: PoolClient, id: number): Promise<Podpiska | null
     segodnya: string;
     vchera: string;
     zabroshen: boolean;
+    napomneno: boolean;
     email: string;
     balance_kop: string;
   }>(
@@ -428,6 +435,7 @@ async function vzyatPodpisku(c: PoolClient, id: number): Promise<Podpiska | null
                               (a.napomnil_at at time zone 'Europe/Moscow')::date,
                               (a.sleduyushchaya_popytka at time zone 'Europe/Moscow')::date)
                        < (now() at time zone 'Europe/Moscow')::date - 2, false) as zabroshen,
+            (o.reminded_at is not null) as napomneno,
             u.email, u.balance_kop
        from avtoplatezh a
        join shop_order o on o.id = a.order_id
@@ -485,7 +493,18 @@ async function otklyuchitKhodom(c: PoolClient, id: number, prichina: PrichinaAvt
  * напоминаний прислал бы его второй раз.
  */
 async function pismoProdlit(c: PoolClient, a: Podpiska, chto: string, stroka: string): Promise<void> {
-  await c.query('update shop_order set reminded_at = now() where id = $1', [a.order_id]);
+  /* ⚠️ ПИСЬМО ОБ ОДНОМ ОКОНЧАНИИ ОДНО (доводка после выкладки № 151).
+     Защёлка ставится, только если её ещё нет: об этом окончании уже
+     писали (письмо автоплатежа или прежнее «Продлить», пока выключатель
+     был выключен) — второго письма нет, а состояние подписки клиент
+     видит в кабинете словами. */
+  const r = await c.query('update shop_order set reminded_at = now() where id = $1 and reminded_at is null returning id', [
+    a.order_id,
+  ]);
+  if (!r.rows.length) {
+    log.info('письмо «Продлить» не шлём: об этом окончании уже писали', { avto: a.id, order: a.order_id });
+    return;
+  }
   if (!a.expires_at) return;
   await pismoSkoroKonec({
     komu: a.email,
@@ -496,64 +515,130 @@ async function pismoProdlit(c: PoolClient, a: Podpiska, chto: string, stroka: st
   });
 }
 
+/** Заказ, продливший хоть один аккаунт подписки, — что о нём нужно ходу. */
+type Prodlenie = { id: number; vypolnen: boolean; totZheNabor: boolean; drugoy: boolean; svoya: boolean };
+
 /**
- * РУЧНОЕ ПРОДЛЕНИЕ ТЕХ ЖЕ АККАУНТОВ (поправки money-10, product-4).
+ * Заказы, продлившие хоть один аккаунт цикла: другие заказы на тариф,
+ * оформленные ПОСЛЕ заказа цикла, оплаченные (`paid`, `in_work`, `done`),
+ * у которых хоть один слот несёт отпечаток почты аккаунта цикла.
+ * Самый новый — первым.
  *
- * Свой запрос, а не прежний из напоминаний: тот искал «хоть одну
- * совпавшую почту в любом заказе», а здесь продлением цикла считается
- * заказ ТОГО ЖЕ человека, ТОГО ЖЕ тарифа и срока, на ТОТ ЖЕ набор
- * аккаунтов целиком (`login_fp`), оплаченный (`paid`, `in_work`, `done`)
- * и созданный после закрытия заказа цикла. Неоплаченный `new` списание
- * не останавливает: брошенное оформление — не продление.
+ * ⚠️ ТАРИФ, СРОК И ДАЖЕ ПОКУПАТЕЛЬ НЕ ВАЖНЫ (доводка после выкладки
+ * № 151). Прежний запрос требовал того же тарифа и срока, и продление
+ * того же аккаунта на год списания за месяц не останавливало: оператор
+ * продлил бы аккаунт второй раз за тот же период. Покупатель не важен
+ * по той же причине — тот же аккаунт Spotify, оплаченный с другой
+ * учётной записи сайта, оплачен.
  *
- * Нашёлся и у него своя подписка — прежняя `otklyuchen/zamenena`.
- * Без своей — подписка переезжает на него, счётчики цикла обнуляются.
- * `true` — продление нашлось, дальше по этой подписке делать нечего.
+ * ⚠️ ОТСЧЁТ — ОТ `created_at` ЗАКАЗА ЦИКЛА, а не от `closed_at`:
+ * продление, оплаченное, пока заказ цикла ещё стоял в очереди, — тоже
+ * продление. Заказы автопродления этой же подписки старше заказа
+ * цикла, а сам заказ цикла исключён.
  */
-async function ruchnoeProdlenie(c: PoolClient, a: Podpiska): Promise<boolean> {
-  if (!a.closed_at) return false;
-  const r = await c.query<{ id: string; svoya: string | null }>(
-    `select o2.id, (select x.id from avtoplatezh x where x.order_id = o2.id) as svoya
-       from shop_order o2
-      where o2.user_id = $1
-        and o2.id <> $2
+export async function prodleniyaCikla(c: PoolClient, ciklZakaz: number): Promise<Prodlenie[]> {
+  const r = await c.query<{ id: string; status: string; tot_zhe: boolean; drugoy: boolean; svoya: boolean }>(
+    `select o2.id, o2.status,
+            (select array_agg(s.login_fp order by s.login_fp) from order_slot s where s.order_id = o2.id)
+              is not distinct from
+            (select array_agg(s.login_fp order by s.login_fp) from order_slot s where s.order_id = cz.id) as tot_zhe,
+            (o2.user_id <> cz.user_id) as drugoy,
+            exists (select 1 from avtoplatezh x where x.order_id = o2.id) as svoya
+       from shop_order cz
+       join shop_order o2 on o2.id <> cz.id and o2.created_at > cz.created_at
+      where cz.id = $1
+        and o2.kind = 'plan'
         and o2.status in ('paid', 'in_work', 'done')
-        and o2.plan_id = $3 and o2.period = $4
-        and o2.created_at > $5
-        and (select array_agg(s.login_fp order by s.login_fp) from order_slot s where s.order_id = o2.id)
-          = (select array_agg(s.login_fp order by s.login_fp) from order_slot s where s.order_id = $2)
-      order by o2.created_at desc
-      limit 1`,
-    [a.user_id, a.order_id, a.plan_id, a.period, a.closed_at],
+        and exists (select 1 from order_slot s2
+                     where s2.order_id = o2.id and s2.login_fp is not null
+                       and s2.login_fp in (select s.login_fp from order_slot s
+                                            where s.order_id = cz.id and s.login_fp is not null))
+      order by o2.created_at desc, o2.id desc`,
+    [ciklZakaz],
   );
-  const novy = r.rows[0];
-  if (!novy) return false;
+  return r.rows.map((x) => ({
+    id: Number(x.id),
+    vypolnen: x.status === 'done',
+    totZheNabor: x.tot_zhe,
+    drugoy: x.drugoy,
+    svoya: x.svoya,
+  }));
+}
+
+/**
+ * ПРОДЛЕНИЕ ТЕХ ЖЕ АККАУНТОВ ДРУГИМ ЗАКАЗОМ (поправки money-10, product-4;
+ * доводка после выкладки № 151).
+ *
+ * Постановка: «Любое оплаченное продление того же аккаунта должно
+ * сдвигать или отключать автоплатёж так, чтобы за один период не было
+ * двух списаний».
+ *
+ *   продление оплачено, но ещё не выполнено — ЖДЁМ: ни письма,
+ *     ни списания, подписка не тронута. Выполнят — решится ниже;
+ *     отменят — цикл пойдёт своим чередом;
+ *   выполнено тем же человеком на ТОТ ЖЕ набор аккаунтов — СДВИГ:
+ *     подписка переезжает на него (своей у него нет), счётчики цикла
+ *     обнуляются, следующее списание — от его окончания; тариф и срок
+ *     подписки — те, на которые давалось согласие. Своя подписка у него
+ *     есть — прежняя `zamenena`;
+ *   выполнено на ДРУГОЙ набор (часть аккаунтов «На двоих», аккаунты
+ *     в придачу) или другим человеком — подписка отключается (`prodlen`):
+ *     продлить часть набора нечем, а списание за весь набор оплатило бы
+ *     продлённый аккаунт второй раз. Письма нет: аккаунт продлён,
+ *     и в кабинете это сказано словами.
+ *
+ * `true` — продление нашлось, дальше по этой подписке в этот ход делать
+ * нечего.
+ */
+async function prodlenoDrugimZakazom(c: PoolClient, a: Podpiska): Promise<boolean> {
+  const vse = await prodleniyaCikla(c, a.order_id);
+  if (!vse.length) return false;
+  if (vse.some((x) => !x.vypolnen)) {
+    log.info('автоплатёж ждёт: аккаунт продлён заказом, который ещё не выполнен', { avto: a.id, order: a.order_id });
+    return true;
+  }
+  const novy = vse[0]!;
+  if (!novy.totZheNabor || novy.drugoy) {
+    await otklyuchitKhodom(c, a.id, 'prodlen');
+    log.info('автоплатёж отключён: аккаунт продлён другим заказом', { avto: a.id, order: novy.id });
+    return true;
+  }
   if (novy.svoya) {
     await otklyuchitKhodom(c, a.id, 'zamenena');
-    log.info('автоплатёж заменён подпиской ручного продления', { avto: a.id, order: Number(novy.id) });
+    log.info('автоплатёж заменён подпиской ручного продления', { avto: a.id, order: novy.id });
     return true;
   }
   await c.query(
     `update avtoplatezh set order_id = $2, neudach = 0, sleduyushchaya_popytka = null,
             napomnil_za_cikl = null, napomnil_at = null, napomnil_summa_kop = null, updated_at = now()
       where id = $1`,
-    [a.id, Number(novy.id)],
+    [a.id, novy.id],
   );
-  log.info('автоплатёж переехал на заказ ручного продления', { avto: a.id, s: a.order_id, na: Number(novy.id) });
+  log.info('автоплатёж переехал на заказ ручного продления', { avto: a.id, s: a.order_id, na: novy.id });
   return true;
 }
 
 /**
- * Мать прошла в другом режиме Робокассы, чем сейчас (поправка money-17):
- * тестовые операции Робокасса не помнит по номеру, и боевое списание
- * по тестовой матери невозможно. `null` у старых счетов — неизвестно,
- * и такая мать за чужую не считается.
+ * Мать прошла в другом режиме Робокассы, чем сейчас (поправка money-17).
+ *
+ *   `testovaya` — мать ТЕСТОВАЯ, а режим БОЕВОЙ: тестовые операции
+ *     Робокасса не помнит по номеру, и боевое списание по такой матери
+ *     невозможно никогда — подписка отключается;
+ *   `boevaya` — мать БОЕВАЯ, а режим ТЕСТОВЫЙ: это ВРЕМЕННО. Тестовый
+ *     режим включают на час-другой проверить оплату, и ломать им боевые
+ *     подписки нельзя (доводка после выкладки № 151: прежде такая
+ *     подписка отключалась НАВСЕГДА). Картой сейчас не списываем,
+ *     письмо и списание с баланса идут как обычно, а вернётся боевой
+ *     режим — списание картой уйдёт само;
+ *   `null` — режим тот же или неизвестен (`test` пуст у старых счетов,
+ *     и такая мать за чужую не считается).
  */
-async function matChuzhogoRezhima(c: PoolClient, a: Podpiska, n: Nastroyki): Promise<boolean> {
-  if (a.mat_payment_id === null) return false;
+async function matDrugogoRezhima(c: PoolClient, a: Podpiska, n: Nastroyki): Promise<'testovaya' | 'boevaya' | null> {
+  if (a.mat_payment_id === null) return null;
   const m = await c.query<{ test: boolean | null }>('select test from payment where id = $1', [a.mat_payment_id]);
   const test = m.rows[0]?.test;
-  return test !== null && test !== undefined && test !== n.test;
+  if (test === null || test === undefined || test === n.test) return null;
+  return test ? 'testovaya' : 'boevaya';
 }
 
 /** Раз в сутки на ключ: сигнал команде и повтор письма по отвергнутому адресу. */
@@ -569,13 +654,24 @@ async function razVSutki(klyuch: string): Promise<boolean> {
 /**
  * ПИСЬМО О СПИСАНИИ ОДНОЙ ПОДПИСКИ (поправки money-4…6, product-1).
  *
- *   письмо этого цикла есть и цена не выросла — делать нечего;
- *   цена выросла выше названной — новое письмо с новой суммой: списать
- *     можно не больше названного и не раньше суток после письма;
+ *   письмо этого цикла есть — делать нечего. Цена выросла после
+ *     письма — спишем названную в нём сумму (`nachatSpisanie` берёт
+ *     меньшую), второго письма нет;
  *   письма нет, а цикл кончился раньше вчерашнего дня — `prosrochen`
  *     и прежнее письмо «Продлить»: списывать без предупреждения нельзя;
+ *   письма нет, а об этом окончании уже писали прежним «Продлить»
+ *     (выключатель был выключен) — письма нет, и этот цикл картой
+ *     не списывается: без письма о списании ворот нет;
  *   письма нет — письмо сейчас, даже если до конца меньше трёх дней
  *     (заказ выполнили поздно, выключатель включили недавно).
+ *
+ * ⚠️ ПИСЬМО ОБ ОДНОМ ОКОНЧАНИИ ОДНО (доводка после выкладки № 151).
+ * Прежде у двух писем были две защёлки: `napomnil_*` у письма
+ * автоплатежа и `reminded_at` у прежнего «Продлить». Выключили
+ * и включили выключатель в эти три дня — приходили оба. Теперь письмо
+ * автоплатежа ставит и `reminded_at` заказа цикла, а прежнее «Продлить»
+ * (и при выключенном выключателе, и из `pismoProdlit`) уходит, только
+ * пока её нет.
  *
  * ⚠️ ЦИКЛ, БРОШЕННЫЙ НА ДНИ, ТОЖЕ `prosrochen`: последняя из его дат
  * (окончание, письмо, назначенный повтор) старше позавчерашней. Так
@@ -593,9 +689,11 @@ async function pismoOdnoy(id: number, spisok: TarifSCenami[], n: Nastroyki): Pro
     const a = await vzyatPodpisku(c, id);
     if (!a || a.status !== 'vklyuchen' || a.platezh_v_puti !== null) return null;
     if (a.o_status !== 'done' || !a.expires_at || !a.den) return null;
-    if (await ruchnoeProdlenie(c, a)) return null;
+    if (await prodlenoDrugimZakazom(c, a)) return null;
     const chto = chtoPodpiski(spisok, a);
-    if (await matChuzhogoRezhima(c, a, n)) {
+    // Боевая мать в тестовом режиме письму не мешает: списание картой
+    // подождёт боевого режима (`nachatSpisanie`).
+    if ((await matDrugogoRezhima(c, a, n)) === 'testovaya') {
       await otklyuchitKhodom(c, a.id, 'testovaya');
       await pismoProdlit(c, a, chto, 'Автоплатёж для этой подписки отключён.');
       return { vid: 'testovaya' as const, a };
@@ -617,7 +715,16 @@ async function pismoOdnoy(id: number, spisok: TarifSCenami[], n: Nastroyki): Pro
       );
       return null;
     }
-    if (estPismo && a.napomnil_summa_kop !== null && cena <= a.napomnil_summa_kop) return null;
+    // Письмо этого окончания уже ушло. Цена выросла после него — спишем
+    // названную в письме сумму, а не напишем второй раз.
+    if (estPismo) return null;
+    if (a.napomneno) {
+      log.info('письмо о списании не шлём: об этом окончании уже написали прежним «Продлить»', {
+        avto: a.id,
+        order: a.order_id,
+      });
+      return null;
+    }
     // Почтовый узел уже отверг этот адрес — повтор не чаще раза в сутки.
     const otvergnut = Number(await nastroyka(`avto_adres:${a.id}`, '0'));
     if (Number.isFinite(otvergnut) && Date.now() - otvergnut < SUTKI_MS) return null;
@@ -640,7 +747,10 @@ async function pismoOdnoy(id: number, spisok: TarifSCenami[], n: Nastroyki): Pro
           where id = $1`,
         [a.id, a.den, cena],
       );
-      log.info('письмо о списании автоплатежа ушло', { avto: a.id, order: a.order_id, kop: cena, novaya: estPismo });
+      // Та же защёлка, что у прежнего «Продлить»: выключат выключатель —
+      // прежний ход напоминаний второго письма об этом окончании не пришлёт.
+      await c.query('update shop_order set reminded_at = coalesce(reminded_at, now()) where id = $1', [a.order_id]);
+      log.info('письмо о списании автоплатежа ушло', { avto: a.id, order: a.order_id, kop: cena });
       return null;
     }
     if (ishod === 'adres') {
@@ -714,7 +824,7 @@ async function nachatSpisanie(id: number, spisok: TarifSCenami[], n: Nastroyki, 
     if (a.o_status !== 'done' || !a.den || a.den > a.segodnya) return { kak: 'nichego' };
     // Ворота: письмо ЭТОГО цикла и сутки после него (поправка money-4).
     if (a.napomnil_za_cikl !== a.den || !a.vorota || a.napomnil_summa_kop === null) return { kak: 'nichego' };
-    if (await ruchnoeProdlenie(c, a)) return { kak: 'nichego' };
+    if (await prodlenoDrugimZakazom(c, a)) return { kak: 'nichego' };
     const cena = cenaPodpiski(spisok, a);
     // Не продаётся — отключит проход писем со своим письмом.
     if (cena === null) return { kak: 'nichego' };
@@ -741,7 +851,13 @@ async function nachatSpisanie(id: number, spisok: TarifSCenami[], n: Nastroyki, 
       log.error('включённый автоплатёж без материнского счёта: картой не списать', { avto: a.id });
       return { kak: 'nichego' };
     }
-    if (await matChuzhogoRezhima(c, a, n)) {
+    const rezhim = await matDrugogoRezhima(c, a, n);
+    // Боевая мать, а режим тестовый — временно: картой не сейчас.
+    if (rezhim === 'boevaya') {
+      log.info('автоплатёж: мать боевая, режим тестовый — картой спишем, когда вернётся боевой', { avto: a.id });
+      return { kak: 'ne_kartoy' };
+    }
+    if (rezhim === 'testovaya') {
       await otklyuchitKhodom(c, a.id, 'testovaya');
       await pismoProdlit(c, a, chtoPodpiski(spisok, a), 'Автоплатёж для этой подписки отключён.');
       return { kak: 'testovaya', a };
