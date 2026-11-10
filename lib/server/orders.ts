@@ -19,7 +19,7 @@ import { log } from './log';
 import { soobshchitKomande } from './notify';
 import { nachatRazdachu, popravitZakrytoe, razdatNovyyPervym, snyatRazdachu } from './razdacha';
 import { utmVRyad, type Utm } from './utm';
-import { pismoPochtaZanyata, pismoZakazGotov, pismoZakazOplachen, pismoZakazOtmenyon } from './letters';
+import { pismoAvtoNaBalans, pismoPochtaZanyata, pismoZakazGotov, pismoZakazOplachen, pismoZakazOtmenyon } from './letters';
 import { vydatSertifikat } from './certificates';
 import { cenaTarifa, katalog, naytiTarif, srokKratko } from './catalog';
 import { imyaTarifaIz, srokDlyaSotrudnika } from '@/lib/plans';
@@ -34,7 +34,7 @@ import {
 } from './promokody';
 import { kodPromo, otkazSlovami, type OtkazPromo } from '@/lib/promokod';
 import { nastoyashchayaData } from '../data';
-import { otklyuchitPoZakazu, podtverditMat, zavestiPodpisku, type SposobOplaty } from './avtoplatezh';
+import { otklyuchitPoZakazu, podpiskaProdlena, podtverditMat, zavestiPodpisku, type SposobOplaty } from './avtoplatezh';
 import { avtoplatezhVklyuchen } from './settings';
 import { sposobStrokoy, tekstSoglasiyaAvto } from '@/lib/avtoplatezh';
 
@@ -344,6 +344,99 @@ async function oplatitVnutri(c: PoolClient, zakaz: number, dengiKop: number): Pr
  */
 export const PRICHINA_POPOLNENIYA = 'пополнение баланса';
 
+/** Движения по балансу автоплатежа — словами, их видит человек в истории баланса. */
+export const PRICHINA_AVTO_SPISANIE = 'оплата заказа (автоплатёж)';
+export const PRICHINA_AVTO_NA_BALANS = 'Списание автоплатежа, которому нечего было продлевать';
+
+/**
+ * ЗАКАЗ ПРОДЛЕНИЯ, СОЗДАННЫЙ АВТОПЛАТЕЖОМ (пятьдесят четвёртая итерация).
+ *
+ * Постановка: «После успеха автоматически создаётся заказ на продление
+ * того же аккаунта (почта и пароль из прошлого заказа) и уходит
+ * оператору, как обычный заказ».
+ *
+ * ⚠️ ОДНА ФУНКЦИЯ НА ОБЕ ВЕТКИ (поправка money-12): списание с баланса
+ * в часовом ходе и проверенное уведомление о дочернем списании картой.
+ * Обе — внутри уже открытой транзакции вызывающего, и обе проходят
+ * через ту же `oplatitVnutri`, что и любая оплата: заказ рождается
+ * `new` и становится `paid` только там. Так у закона 34 появляется
+ * третий вход — автопродление с баланса, — но дверь остаётся одной.
+ *
+ * ⚠️ СЛОТЫ — КОПИИ ШИФРОТЕКСТОВ, А НЕ РАСШИФРОВКА: ключ тот же,
+ * почта и пароль не выходят из базы открытым текстом ни на миг
+ * (закон 35). Режим у копий — `renew`: аккаунт уже существует, даже
+ * если в прошлый раз его заводили с нуля.
+ *
+ * ⚠️ БАЛАНС СРАВНИВАЕТСЯ С СУММОЙ ТОЛЬКО ПОСЛЕ `for update` СТРОКИ
+ * ЧЕЛОВЕКА: две подписки одного человека в один день (или подписка
+ * и оформление) иначе увели бы баланс в минус. Не хватает — `null`,
+ * и ничего не создано: вызывающий пойдёт списывать с карты.
+ *
+ * `posleOplaty` — после транзакции, у вызывающего.
+ */
+export async function zakazProdleniya(
+  c: PoolClient,
+  o: {
+    avto: number;
+    userId: number;
+    planId: string;
+    period: number;
+    /** Заказ, срок которого продлеваем: из него копируются слоты. */
+    ciklZakaz: number;
+    oplata: { kak: 'balans'; summaKop: number } | { kak: 'karta'; prishloKop: number };
+  },
+): Promise<number | null> {
+  if (o.oplata.kak === 'balans') {
+    const u = await c.query<{ balance_kop: string }>('select balance_kop from app_user where id = $1 for update', [
+      o.userId,
+    ]);
+    if (Number(u.rows[0]?.balance_kop ?? 0) < o.oplata.summaKop) return null;
+  }
+  const summa = o.oplata.kak === 'balans' ? o.oplata.summaKop : o.oplata.prishloKop;
+  const z = await c.query<{ id: string }>(
+    `insert into shop_order (user_id, kind, plan_id, period, status, total_kop, balance_kop, money_kop, source,
+                             avtoplatezh_id, consent_at)
+     values ($1, 'plan', $2, $3, 'new', $4, 0, 0, 'avto', $5, now())
+     returning id`,
+    [o.userId, o.planId, o.period, summa, o.avto],
+  );
+  const zakaz = Number(z.rows[0]!.id);
+  /* ⚠️ У ЗАКАЗОВ ДО ТРИДЦАТЬ ЧЕТВЁРТОЙ ИТЕРАЦИИ данные аккаунта лежали
+     в `out_*` — их выдавал оператор. Цепочки автоплатежа моложе, но
+     копия честная в обоих случаях. */
+  const sloty = await c.query(
+    `insert into order_slot (order_id, idx, mode, in_login_enc, in_password_enc, login_fp)
+     select $1, idx, 'renew', coalesce(in_login_enc, out_login_enc), coalesce(in_password_enc, out_password_enc), login_fp
+       from order_slot where order_id = $2 order by idx`,
+    [zakaz, o.ciklZakaz],
+  );
+  if (!sloty.rowCount) {
+    // Продлевать без единого аккаунта нечего; откат — и вызывающий
+    // разберётся (у ResultURL это повтор уведомления, а не потеря денег).
+    throw new Error('у заказа цикла нет слотов для продления');
+  }
+  if (o.oplata.kak === 'balans') {
+    await c.query('update shop_order set balance_kop = $2 where id = $1', [zakaz, summa]);
+    await c.query('update app_user set balance_kop = balance_kop - $1 where id = $2', [summa, o.userId]);
+    await c.query('insert into balance_move (user_id, delta_kop, reason, order_id) values ($1, $2, $3, $4)', [
+      o.userId,
+      -summa,
+      PRICHINA_AVTO_SPISANIE,
+      zakaz,
+    ]);
+  }
+  const oplachen = await oplatitVnutri(c, zakaz, o.oplata.kak === 'karta' ? o.oplata.prishloKop : 0);
+  if (!oplachen) throw new Error('заказ продления не оплатился');
+  log.info('заказ продления создан автоплатежом', {
+    order: zakaz,
+    avto: o.avto,
+    cikl: o.ciklZakaz,
+    kak: o.oplata.kak,
+    kop: summa,
+  });
+  return zakaz;
+}
+
 /**
  * Дверь «оплачено».
  *
@@ -369,9 +462,13 @@ export async function otmetitOplachennym(platyozh: number, prishloKop: number, s
       amount_kop: string;
       status: string;
       recurring: boolean;
-    }>('select id, order_id, user_id, kind, amount_kop, status, recurring from payment where id = $1 for update', [
-      platyozh,
-    ]);
+      avtoplatezh_id: string | null;
+      avto_cikl_order_id: string | null;
+    }>(
+      `select id, order_id, user_id, kind, amount_kop, status, recurring, avtoplatezh_id, avto_cikl_order_id
+         from payment where id = $1 for update`,
+      [platyozh],
+    );
     const row = p.rows[0];
     if (!row) {
       log.warn('уведомление о неизвестном платеже', { payment: platyozh });
@@ -419,14 +516,86 @@ export async function otmetitOplachennym(platyozh: number, prishloKop: number, s
     }
 
     if (row.kind === 'avto') {
-      /* ⚠️ ДОЧЕРНЕЕ СПИСАНИЕ АВТОПЛАТЕЖА: по маркеру цикла
-         (`payment.avto_cikl_order_id`) создаётся заказ продления —
-         либо, если продлевать уже нечего, деньги ложатся на баланс
-         владельца (`payment.user_id`). Порядок блокировок: платёж →
-         подписка. Ветка не заведена — откат и повтор уведомления:
-         деньги не пропадут, Робокасса придёт ещё раз. */
-      log.error('уведомление о списании автоплатежа, а ветка списаний не заведена', { payment: platyozh });
-      throw new Error('ветка списаний автоплатежа не заведена');
+      /* ⚠️ ДОЧЕРНЕЕ СПИСАНИЕ АВТОПЛАТЕЖА (поправка money-2). Какой цикл
+         оно продлевает, говорит МАРКЕР В САМОМ ПЛАТЕЖЕ
+         (`avto_cikl_order_id` — заказ подписки на момент списания),
+         а не `platezh_v_puti`: уведомление может прийти раньше, чем
+         запишется отправка, а подписка к тому времени — переехать.
+
+         Продление создаётся, если подписка есть, она всё ещё стоит
+         на заказе этого цикла и заказ цикла всё ещё выполнен. СТАТУС
+         ПОДПИСКИ ПРИ ЭТОМ НЕ ВАЖЕН: запрос ушёл по действующему
+         согласию, и человек, нажавший «Отключить», пока он был в пути,
+         продление получает (отключено оно от следующих). Иначе — нет
+         подписки, цикл уже продлён другим платежом, заказ цикла
+         отменён — деньги ложатся на баланс владельца счёта.
+
+         ⚠️ ПОРЯДОК БЛОКИРОВОК: платёж → заказ цикла → подписка, тот же,
+         что у отмены заказа и отмены подписки (заказ → подписка),
+         и у часового хода. Владелец — `payment.user_id`: у дочернего
+         списания заказа нет, искать владельца через `shop_order` было
+         бы нечем (поправка money-11). */
+      const vladelec = Number(row.user_id ?? 0);
+      if (!vladelec) {
+        log.error('списание автоплатежа без владельца', { payment: platyozh, money_kop: prishloKop });
+        throw new Error('списание автоплатежа без владельца');
+      }
+      const cikl = Number(row.avto_cikl_order_id ?? 0);
+      const podpiska = Number(row.avtoplatezh_id ?? 0);
+      const co = cikl
+        ? (await c.query<{ status: Status }>('select status from shop_order where id = $1 for update', [cikl])).rows[0]
+        : undefined;
+      const a = podpiska
+        ? (
+            await c.query<{ id: string; status: string; order_id: string; plan_id: string; period: number; platezh_v_puti: string | null }>(
+              'select id, status, order_id, plan_id, period, platezh_v_puti from avtoplatezh where id = $1 for update',
+              [podpiska],
+            )
+          ).rows[0]
+        : undefined;
+      if (a && co && Number(a.order_id) === cikl && co.status === 'done') {
+        const novy = await zakazProdleniya(c, {
+          avto: podpiska,
+          userId: vladelec,
+          planId: a.plan_id,
+          period: Number(a.period),
+          ciklZakaz: cikl,
+          oplata: { kak: 'karta', prishloKop },
+        });
+        await podpiskaProdlena(c, { avto: podpiska, novy, platyozh });
+        return { zakaz: novy!, naBalans: 0 };
+      }
+      await c.query('update app_user set balance_kop = balance_kop + $1 where id = $2', [prishloKop, vladelec]);
+      await c.query('insert into balance_move (user_id, delta_kop, reason, order_id) values ($1, $2, $3, $4)', [
+        vladelec,
+        prishloKop,
+        PRICHINA_AVTO_NA_BALANS,
+        cikl || null,
+      ]);
+      if (a && a.platezh_v_puti !== null && Number(a.platezh_v_puti) === platyozh) {
+        await c.query(
+          'update avtoplatezh set platezh_v_puti = null, otpravlen_at = null, updated_at = now() where id = $1',
+          [podpiska],
+        );
+      }
+      log.error('списание автоплатежа пришло, а продлевать нечего: деньги на баланс', {
+        payment: platyozh,
+        avto: podpiska || '—',
+        cikl: cikl || '—',
+        cikl_status: co?.status ?? '—',
+        avto_status: a?.status ?? '—',
+        money_kop: prishloKop,
+      });
+      const kto = await c.query<{ email: string }>('select email from app_user where id = $1', [vladelec]);
+      return {
+        avtoNaBalans: {
+          platyozh,
+          avto: podpiska || null,
+          zakaz: cikl || null,
+          summaKop: prishloKop,
+          email: kto.rows[0]?.email ?? null,
+        },
+      };
     }
 
     if (row.kind !== 'order') {
@@ -479,6 +648,12 @@ export async function otmetitOplachennym(platyozh: number, prishloKop: number, s
   });
 
   if (!itog || 'popolnenie' in itog) return;
+  if ('avtoNaBalans' in itog && itog.avtoNaBalans) {
+    const b = itog.avtoNaBalans;
+    await soobshchitKomande({ vid: 'avto_na_balans', platyozh: b.platyozh, avto: b.avto, zakaz: b.zakaz, summaKop: b.summaKop });
+    if (b.email) await pismoAvtoNaBalans({ komu: b.email, summaKop: b.summaKop });
+    return;
+  }
   /* ⚠️ СООБЩИТЬ КОМАНДЕ ОБЯЗАТЕЛЬНО, и это не «ещё одно
      уведомление»: деньги легли на баланс, а не в заказ, и без человека
      дальше ничего не произойдёт. */
@@ -489,8 +664,16 @@ export async function otmetitOplachennym(platyozh: number, prishloKop: number, s
   await posleOplaty(itog.zakaz);
 }
 
-/** Что происходит ПОСЛЕ оплаты: письмо, сертификат, сигнал команде. */
-async function posleOplaty(zakaz: number): Promise<void> {
+/**
+ * Что происходит ПОСЛЕ оплаты: письмо, сертификат, сигнал команде.
+ *
+ * ⚠️ ЗОВЁТСЯ ТОЛЬКО ПОСЛЕ ТРАНЗАКЦИИ, СДЕЛАВШЕЙ ЗАКАЗ ОПЛАЧЕННЫМ.
+ * Наружу она отдана ради одного вызывающего — автопродления с баланса
+ * в часовом ходе (`avtoplatezh.ts`): тот оплачивает заказ в своей
+ * транзакции через `zakazProdleniya` и обязан дальше пройти тот же
+ * путь, что любая оплата.
+ */
+export async function posleOplaty(zakaz: number): Promise<void> {
   const z = await odna<{
     id: string;
     kind: 'plan' | 'certificate';
@@ -498,8 +681,9 @@ async function posleOplaty(zakaz: number): Promise<void> {
     period: number;
     user_id: string;
     email: string;
+    source: string;
   }>(
-    `select o.id, o.kind, o.plan_id, o.period, o.user_id, u.email
+    `select o.id, o.kind, o.plan_id, o.period, o.user_id, u.email, o.source
        from shop_order o join app_user u on u.id = o.user_id where o.id = $1`,
     [zakaz],
   );
@@ -544,6 +728,7 @@ async function posleOplaty(zakaz: number): Promise<void> {
       srok: srokDlyaSotrudnika(z.period, true),
       mest: tarif?.people ?? 1,
       podarok: false,
+      avto: z.source === 'avto',
     });
   } finally {
     gotovo.otpustit();

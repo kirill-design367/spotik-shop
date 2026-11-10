@@ -5,6 +5,8 @@
  *   1. собрать ссылку на оплату и подписать её ПАРОЛЕМ №1;
  *   2. проверить уведомление на ResultURL подписью с ПАРОЛЕМ №2;
  *   3. проверить возврат человека на SuccessURL подписью с ПАРОЛЕМ №1.
+ * С пятьдесят четвёртой итерации к ним добавились два запроса
+ * автоплатежа — дочернее списание и опрос состояния (в конце файла).
  *
  * ⚠️ ТРИ РАЗНЫЕ ПОДПИСИ И ДВА РАЗНЫХ ПАРОЛЯ, и путать их нельзя.
  * Пароль №2 знает только наш сервер и Робокасса; именно поэтому
@@ -25,6 +27,8 @@
  */
 
 import { createHash } from 'node:crypto';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { env } from './env';
 import { log } from './log';
 import { rubliStrokoy } from './money';
@@ -336,3 +340,192 @@ export const POCHEMU_SLOVAMI: Record<PochemuNeVzyali, string> = {
   summa_ne_chislo: 'ПОДПИСЬ СОШЛАСЬ, а сумму прочесть не удалось — разбирать руками',
   podpis_ne_soshlas: 'поля на месте, подпись не сошлась: пароль №2, алгоритм или формула',
 };
+
+/* ── Автоплатёж: дочернее списание и опрос состояния ─────────────────
+ *
+ * Пятьдесят четвёртая итерация. Два запроса СЕРВЕР → РОБОКАССА, оба
+ * без браузера:
+ *   • `Merchant/Recurring` — списать с карты по согласию, данному
+ *     при материнском платеже (`PreviousInvoiceID` — номер ПЕРВОГО
+ *     платежа серии, а не прошлого дочернего);
+ *   • `OpStateExt` — что стало с операцией, о которой ResultURL молчит.
+ *
+ * ⚠️ «OK» ОТ `Recurring` ЗНАЧИТ «ОПЕРАЦИЯ СОЗДАНА», А НЕ «ДЕНЬГИ
+ * СПИСАНЫ». Оплата подтверждается только проверенным уведомлением
+ * на ResultURL (закон 34); отказ банка уведомления не присылает
+ * вовсе и виден только опросом.
+ */
+
+/** Чем кончился HTTP-запрос — с различением «ушёл ли он вообще». */
+type HttpItog =
+  | { kak: 'otvet'; kod: number; telo: string }
+  /** Соединения не было: отказ, имя не разрешилось, срок вышел ДО него. Запрос не ушёл. */
+  | { kak: 'ne_doshlo'; pochemu: string }
+  /** Соединение было, а ответа нет: срок, обрыв. Запрос МОГ уйти. */
+  | { kak: 'obryv'; pochemu: string };
+
+/** Потолок на запрос — тот же, что у Telegram (поправка money-9: держим блокировку подписки). */
+const SROK_ZAPROSA_MS = 15_000;
+
+/**
+ * HTTP без библиотек и БЕЗ общего пула соединений (`agent: false`).
+ *
+ * ⚠️ ЧУЖОЕ СОЕДИНЕНИЕ ИЗ ПУЛА СТЁРЛО БЫ ГРАНИЦУ «ДО ОТПРАВКИ / ПОСЛЕ».
+ * По ней решается, можно ли тихо повторить списание: тело запроса
+ * уходит только после установленного соединения (для https — после
+ * рукопожатия TLS), значит отказ ДО него — запрос не ушёл, а обрыв
+ * ПОСЛЕ — мог уйти, и исход решает опрос (поправка money-3).
+ */
+function http(adres: string, metod: 'GET' | 'POST', telo: string | null): Promise<HttpItog> {
+  return new Promise((resolve) => {
+    let gotovo = false;
+    let soedinilis = false;
+    let u: URL;
+    try {
+      u = new URL(adres);
+    } catch {
+      resolve({ kak: 'ne_doshlo', pochemu: 'адрес не разобрался' });
+      return;
+    }
+    const prostoy = u.protocol === 'http:';
+    const konec = (x: HttpItog): void => {
+      if (gotovo) return;
+      gotovo = true;
+      clearTimeout(budilnik);
+      resolve(x);
+    };
+    const zagolovki: Record<string, string | number> = {};
+    if (telo !== null) {
+      zagolovki['content-type'] = 'application/x-www-form-urlencoded';
+      zagolovki['content-length'] = Buffer.byteLength(telo);
+    }
+    const req = (prostoy ? httpRequest : httpsRequest)(
+      u,
+      { method: metod, agent: false, headers: zagolovki },
+      (res) => {
+        const kuski: Buffer[] = [];
+        let dlina = 0;
+        res.on('data', (b: Buffer) => {
+          if (dlina < 65_536) {
+            kuski.push(b);
+            dlina += b.length;
+          }
+        });
+        res.on('end', () => konec({ kak: 'otvet', kod: res.statusCode ?? 0, telo: Buffer.concat(kuski).toString('utf8') }));
+        res.on('error', (e) => konec({ kak: 'obryv', pochemu: String(e.message).slice(0, 120) }));
+      },
+    );
+    req.on('socket', (s) => {
+      s.once(prostoy ? 'connect' : 'secureConnect', () => {
+        soedinilis = true;
+      });
+    });
+    req.on('error', (e: NodeJS.ErrnoException) => {
+      const pochemu = `${e.code ?? 'ошибка'}: ${String(e.message).slice(0, 120)}`;
+      konec(soedinilis ? { kak: 'obryv', pochemu } : { kak: 'ne_doshlo', pochemu });
+    });
+    const budilnik = setTimeout(() => req.destroy(new Error('срок ответа вышел')), SROK_ZAPROSA_MS);
+    if (telo !== null) req.write(telo);
+    req.end();
+  });
+}
+
+export type IshodSpisaniya =
+  | { kak: 'ok' }
+  /** Робокасса ответила, и не OK: почти всегда настройка (34, 35, 29), а не отказ карты. */
+  | { kak: 'ne_ok'; otvet: string }
+  | { kak: 'ne_doshlo'; pochemu: string }
+  | { kak: 'obryv'; pochemu: string };
+
+export type ZaprosSpisaniya = {
+  /** Новый номер счёта — `payment.id` дочернего списания. */
+  invoiceId: number;
+  /** Номер МАТЕРИНСКОГО счёта серии. */
+  previousInvoiceId: number;
+  summaKop: number;
+  opisanie: string;
+  pozicii: { name: string; sumKop: number }[];
+};
+
+/**
+ * Тело запроса `Merchant/Recurring` — ровно так, как его собирают
+ * официальные SDK Робокассы (PHP, .NET) и плагин WooCommerce
+ * (поправка money-13).
+ *
+ * ⚠️ ЧЕК ЗДЕСЬ КОДИРУЕТСЯ ИНАЧЕ, ЧЕМ В ССЫЛКЕ НА ОПЛАТУ, И ЭТО НЕ
+ * РАСХОЖДЕНИЕ. Значение поля `Receipt` — это `urlencode(json)`, подпись
+ * считается ОТ НЕГО ЖЕ, а тело формы кодирует его ещё раз (на проводе
+ * `%257B…`). Робокасса после одного разбора формы видит ровно ту
+ * строку, что подписана. В ссылке правило то же, только уровнем ниже:
+ * там браузер сам разбирает строку запроса один раз.
+ *
+ * `PreviousInvoiceID` и `Description` в подпись не входят; `IsTest`,
+ * `Recurring` и `IncCurrLabel` в этом запросе запрещены вовсе.
+ */
+export function teloSpisaniya(n: Nastroyki, z: ZaprosSpisaniya): string {
+  const outSum = rubliStrokoy(z.summaKop);
+  const r = encodeURIComponent(JSON.stringify(chek(n, z.pozicii)));
+  const podpis = hesh(n.algoritm, `${n.login}:${outSum}:${z.invoiceId}:${r}:${n.parol1}`);
+  const opisanie = z.opisanie.length <= 100 ? z.opisanie : `${z.opisanie.slice(0, 99)}…`;
+  return new URLSearchParams({
+    MerchantLogin: n.login,
+    InvoiceID: String(z.invoiceId),
+    PreviousInvoiceID: String(z.previousInvoiceId),
+    OutSum: outSum,
+    Description: opisanie,
+    Receipt: r,
+    SignatureValue: podpis,
+  }).toString();
+}
+
+/**
+ * Дочернее списание.
+ *
+ * ⚠️ 502/503/504 — ЭТО «ОБРЫВ», А НЕ «ОТКАЗ». Такой ответ даёт
+ * промежуточный узел, и дошёл ли запрос до Робокассы, по нему
+ * не понять: исход решает опрос. Собственный отказ Робокассы —
+ * 500 с описанием или текст без `OK`.
+ */
+export async function zaprositSpisanie(n: Nastroyki, z: ZaprosSpisaniya): Promise<IshodSpisaniya> {
+  const itog = await http(env.rkRecurringUrl, 'POST', teloSpisaniya(n, z));
+  if (itog.kak !== 'otvet') return itog;
+  const telo = itog.telo.trim();
+  const ok = /^OK\+?(\d+)$/i.exec(telo);
+  if (itog.kod === 200 && ok && Number(ok[1]) === z.invoiceId) return { kak: 'ok' };
+  if ([502, 503, 504].includes(itog.kod)) return { kak: 'obryv', pochemu: `HTTP ${itog.kod}` };
+  return { kak: 'ne_ok', otvet: `HTTP ${itog.kod}: ${telo.replace(/\s+/g, ' ').slice(0, 200)}` };
+}
+
+export type SostoyanieOperacii =
+  /** `result` — Result.Code (0 — ответ есть); `state` — State.Code или `null`, если его нет. */
+  | { kak: 'otvet'; result: number; state: number | null }
+  | { kak: 'net'; pochemu: string };
+
+/** Подпись опроса: `MerchantLogin:InvoiceID:пароль2` тем же алгоритмом, что ссылка. */
+export function podpisOpStateExt(n: Nastroyki, invoiceId: number): string {
+  return hesh(n.algoritm, `${n.login}:${invoiceId}:${n.parol2}`);
+}
+
+/**
+ * Что стало с операцией: `OpStateExt`.
+ *
+ * Ответ — XML, и ошибки приложения приходят тоже с HTTP 200: смысл
+ * в `Result/Code` (0 — нашли, 3 — операции нет, 1/2/4/1000 — наша
+ * или их беда) и в `State/Code` (5 — создана, 10 — отменена, 50 —
+ * деньги получены, 100 — оплачена; 20, 60, 80 — руками).
+ */
+export async function sprositSostoyanie(n: Nastroyki, invoiceId: number): Promise<SostoyanieOperacii> {
+  const q = new URLSearchParams({
+    MerchantLogin: n.login,
+    InvoiceID: String(invoiceId),
+    Signature: podpisOpStateExt(n, invoiceId),
+  }).toString();
+  const sep = env.rkOpStateUrl.includes('?') ? '&' : '?';
+  const itog = await http(`${env.rkOpStateUrl}${sep}${q}`, 'GET', null);
+  if (itog.kak !== 'otvet') return { kak: 'net', pochemu: itog.pochemu };
+  if (itog.kod !== 200) return { kak: 'net', pochemu: `HTTP ${itog.kod}` };
+  const result = /<Result>[\s\S]*?<Code>\s*(\d+)\s*<\/Code>/i.exec(itog.telo);
+  if (!result) return { kak: 'net', pochemu: 'в ответе нет Result/Code' };
+  const state = /<State>[\s\S]*?<Code>\s*(\d+)\s*<\/Code>/i.exec(itog.telo);
+  return { kak: 'otvet', result: Number(result[1]), state: state ? Number(state[1]) : null };
+}

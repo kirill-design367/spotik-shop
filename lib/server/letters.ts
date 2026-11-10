@@ -10,7 +10,7 @@
  */
 
 import { env } from './env';
-import { otpravit } from './mail';
+import { otpravit, type Itog } from './mail';
 import { rubli } from './money';
 
 const PODPIS = '\n—\nSpotik Shop\nspotik.shop\n';
@@ -24,8 +24,8 @@ const PODPIS = '\n—\nSpotik Shop\nspotik.shop\n';
  * в админке и в служебном чате.
  */
 
-export async function pismoZakazOplachen(komu: string, nazvanie: string): Promise<void> {
-  await otpravit({
+export async function pismoZakazOplachen(komu: string, nazvanie: string): Promise<Itog> {
+  return otpravit({
     komu,
     tema: 'Заказ оплачен',
     telo:
@@ -37,8 +37,8 @@ export async function pismoZakazOplachen(komu: string, nazvanie: string): Promis
   });
 }
 
-export async function pismoZakazGotov(komu: string, chto: string): Promise<void> {
-  await otpravit({
+export async function pismoZakazGotov(komu: string, chto: string): Promise<Itog> {
+  return otpravit({
     komu,
     tema: 'Заказ готов',
     telo:
@@ -54,8 +54,8 @@ export async function pismoZakazGotov(komu: string, chto: string): Promise<void>
  * полгода». С двадцать восьмой итерации сертификат несёт тариф
  * вместе со сроком, и письмо обязано называть оба (Р-93).
  */
-export async function pismoSertifikatKuplen(komu: string, kod: string, srokDo: Date, chto: string): Promise<void> {
-  await otpravit({
+export async function pismoSertifikatKuplen(komu: string, kod: string, srokDo: Date, chto: string): Promise<Itog> {
+  return otpravit({
     komu,
     tema: 'Сертификат Spotik Shop',
     telo:
@@ -68,8 +68,8 @@ export async function pismoSertifikatKuplen(komu: string, kod: string, srokDo: D
   });
 }
 
-export async function pismoZakazOtmenyon(komu: string, chto: string, naBalans: number, pochemu: string): Promise<void> {
-  await otpravit({
+export async function pismoZakazOtmenyon(komu: string, chto: string, naBalans: number, pochemu: string): Promise<Itog> {
+  return otpravit({
     komu,
     tema: 'Заказ отменён',
     telo:
@@ -102,8 +102,8 @@ export async function pismoPochtaZanyata(
      понять, к какому из них относится отказ. Адреса нет — остаётся
      прежняя фраза, письмо обязано уйти в любом случае. */
   pochtaAkkaunta: string | null = null,
-): Promise<void> {
-  await otpravit({
+): Promise<Itog> {
+  return otpravit({
     komu,
     tema: 'На эту почту уже есть аккаунт Spotify',
     telo:
@@ -135,15 +135,148 @@ export async function pismoSkoroKonec(opts: {
   chto: string;
   kogda: Date;
   ssylka: string;
-}): Promise<void> {
-  await otpravit({
+  /**
+   * Строка об автоплатеже, который только что отключился (пятьдесят
+   * четвёртая итерация): тариф больше не продаётся или списать в срок
+   * не вышло. Постановка: «прежнее письмо „Продлить" с одной строкой
+   * о том, что автоплатёж отключён». Пусто — письмо ровно прежнее.
+   */
+  avto?: string;
+}): Promise<Itog> {
+  return otpravit({
     komu: opts.komu,
-    tema: `Подписка Spotify Premium заканчивается ${opts.kogda.toLocaleDateString('ru-RU')}`,
+    tema: `Подписка Spotify Premium заканчивается ${dataMsk(opts.kogda)}`,
     telo:
       `Доступ (${opts.chto}) заканчивается ` +
-      `${opts.kogda.toLocaleDateString('ru-RU')}.\n\n` +
+      `${dataMsk(opts.kogda)}.\n\n` +
+      (opts.avto ? `${opts.avto}\n\n` : '') +
       `Продлить на тот же аккаунт можно здесь — тариф, срок и почта уже подставлены:\n` +
       `${opts.ssylka}\n` +
+      PODPIS,
+  });
+}
+
+/**
+ * Ссылка «Продлить»: оформление с тарифом, сроком и режимом «продлить
+ * существующий». ⚠️ НЕСЁТ НОМЕР ЗАКАЗА, А НЕ ПОЧТУ (закон 44): письмо
+ * живёт в ящике вечно, а почта аккаунта у нас — шифротекст; оформление
+ * подставит её само, владельцу. ОДНО место: им пользуются напоминание
+ * и письма автоплатежа.
+ */
+export function ssylkaProdlit(planId: string, period: number, zakaz: number): string {
+  return `${env.siteUrl}/checkout/?plan=${encodeURIComponent(planId)}&period=${period}&renew=${zakaz}`;
+}
+
+/**
+ * Дата по-московски, «10.12.2026». ⚠️ НЕ `toLocaleDateString` БЕЗ ЗОНЫ:
+ * сервер живёт в UTC, и подписка, кончающаяся в 01:30 по Москве,
+ * в письме оказалась бы на день раньше.
+ */
+export function dataMsk(d: Date): string {
+  return d.toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow' });
+}
+
+/* ── Письма автоплатежа (пятьдесят четвёртая итерация) ──────────────
+ *
+ * Постановка: «За 3 дня до окончания подписки — письмо: когда и какая
+ * сумма будет списана, ссылка на отключение. Объедини с нынешним
+ * напоминанием», «Неудача: письмо клиенту, одна повторная попытка
+ * на следующий день, после второй неудачи автоплатёж отключается
+ * с письмом».
+ *
+ * ⚠️ ПИСЬМО О СПИСАНИИ — ЭТО ВОРОТА СПИСАНИЯ, а не вежливость: без
+ * ушедшего письма за этот цикл автоплатёж не спишет ничего, и сумма
+ * в письме — потолок суммы списания. Поэтому все эти функции отдают
+ * исход отправки (`Itog`): «письмо легло в журнал/ящик» решает,
+ * открыты ли ворота.
+ */
+
+/** Откуда спишем — словами, одинаково в письме и в кабинете. */
+function otkuda(sBalansa: boolean): string {
+  return sBalansa
+    ? 'с баланса в личном кабинете — на нём сейчас хватает; если к тому дню на балансе будет меньше, спишем с карты, которой вы платили'
+    : 'с карты, которой вы платили';
+}
+
+/** Напоминание с автоплатежом — вместо письма «Продлить». */
+export async function pismoAvtoSkoro(opts: {
+  komu: string;
+  chto: string;
+  /** Конец доступа (`expires_at` заказа). */
+  kogda: Date;
+  /** Когда спишем: день окончания, но не раньше суток после письма. */
+  spisanie: Date;
+  summaKop: number;
+  sBalansa: boolean;
+  ssylkaOtklyuchit: string;
+}): Promise<Itog> {
+  const proshlo = opts.kogda.getTime() <= Date.now();
+  return otpravit({
+    komu: opts.komu,
+    tema: `Автоплатёж: ${dataMsk(opts.spisanie)} спишем ${rubli(opts.summaKop)} за продление Spotify Premium`,
+    telo:
+      `Доступ (${opts.chto}) ${proshlo ? 'закончился' : 'заканчивается'} ${dataMsk(opts.kogda)}.\n\n` +
+      `Автоплатёж включён: ${dataMsk(opts.spisanie)} спишем ${rubli(opts.summaKop)} — ${otkuda(opts.sBalansa)}.\n` +
+      `Продлим тот же аккаунт с теми же почтой и паролем, заказ уйдёт исполнителю сам.\n\n` +
+      `Если продлевать не нужно — отключите автоплатёж (ссылка действует 30 дней):\n` +
+      `${opts.ssylkaOtklyuchit}\n` +
+      `Отключить можно и в личном кабинете: ${env.siteUrl}/cabinet/\n` +
+      PODPIS,
+  });
+}
+
+/** Первая неудача списания: повторим завтра. */
+export async function pismoAvtoNeudacha(opts: {
+  komu: string;
+  chto: string;
+  summaKop: number;
+  povtor: Date;
+  ssylkaOtklyuchit: string;
+}): Promise<Itog> {
+  return otpravit({
+    komu: opts.komu,
+    tema: 'Не удалось списать оплату за продление Spotify Premium',
+    telo:
+      `Не удалось списать ${rubli(opts.summaKop)} за продление: ${opts.chto}.\n\n` +
+      `Попробуем ещё раз ${dataMsk(opts.povtor)}. Пополните баланс — спишем с него:\n` +
+      `${env.siteUrl}/cabinet/\n\n` +
+      `Если продлевать не нужно — отключите автоплатёж (ссылка действует 30 дней):\n` +
+      `${opts.ssylkaOtklyuchit}\n` +
+      PODPIS,
+  });
+}
+
+/** Вторая неудача: автоплатёж отключён, продлить можно руками. */
+export async function pismoAvtoOtklyuchen(opts: {
+  komu: string;
+  chto: string;
+  summaKop: number;
+  ssylkaProdlit: string;
+}): Promise<Itog> {
+  return otpravit({
+    komu: opts.komu,
+    tema: 'Автоплатёж отключён',
+    telo:
+      `Автоплатёж отключён: два раза не удалось списать оплату (${rubli(opts.summaKop)}) за продление: ${opts.chto}.\n\n` +
+      `Продлить вручную — тариф, срок и почта уже подставлены:\n` +
+      `${opts.ssylkaProdlit}\n` +
+      PODPIS,
+  });
+}
+
+/**
+ * Списание прошло, а продлевать было уже нечего (заказ отменён,
+ * автоплатёж отключили, пока запрос был в пути, или цикл уже продлён
+ * другим платежом): деньги на балансе. Поправки money-2 и product-6.
+ */
+export async function pismoAvtoNaBalans(opts: { komu: string; summaKop: number }): Promise<Itog> {
+  return otpravit({
+    komu: opts.komu,
+    tema: 'Деньги автоплатежа — на балансе',
+    telo:
+      `Списание автоплатежа ${rubli(opts.summaKop)} прошло, но продлевать было уже нечего — ` +
+      `деньги лежат на балансе в личном кабинете:\n${env.siteUrl}/cabinet/\n\n` +
+      `Их можно потратить на следующий заказ. Вернуть на карту — напишите в поддержку.\n` +
       PODPIS,
   });
 }
@@ -162,8 +295,8 @@ export async function pismoSkoroKonec(opts: {
  * копирует её и открывает форму восстановления. Остальные три шага
  * не тронуты — постановка просила поменять только первый.
  */
-export async function pismoParolNePodoshyol(komu: string, ssylka: string): Promise<void> {
-  await otpravit({
+export async function pismoParolNePodoshyol(komu: string, ssylka: string): Promise<Itog> {
+  return otpravit({
     komu,
     tema: 'Не подошёл пароль от аккаунта Spotify',
     telo:

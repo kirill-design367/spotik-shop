@@ -148,6 +148,33 @@ export const env = {
   get rkSno() {
     return str('ROBOKASSA_SNO');
   },
+  /**
+   * Адреса дочернего списания автоплатежа и опроса состояния операции
+   * (пятьдесят четвёртая итерация).
+   *
+   * ⚠️ ЭТО ЩЕЛИ ДЛЯ СТЕНДА, КАК `TELEGRAM_API_BASE`. На бою они
+   * не задаются вовсе, и работают адреса Робокассы. У `Merchant/Recurring`
+   * нет тестового режима (а `OpStateExt` не видит тестовых операций):
+   * при `ROBOKASSA_TEST=1` запросы не уходят никуда, КРОМЕ случая,
+   * когда адрес задан явно — так поддельная Робокасса стенда получает
+   * ровно тот запрос, который получила бы настоящая. Поэтому рядом
+   * с адресом — признак «задан ли он руками».
+   *
+   * В прогон настройки сервера (`server-setup.yml`) они не добавлены
+   * намеренно: боевому серверу задавать их нельзя.
+   */
+  get rkRecurringUrl() {
+    return str('ROBOKASSA_RECURRING_URL', 'https://auth.robokassa.ru/Merchant/Recurring');
+  },
+  get rkRecurringZadan() {
+    return Boolean(str('ROBOKASSA_RECURRING_URL'));
+  },
+  get rkOpStateUrl() {
+    return str('ROBOKASSA_OPSTATE_URL', 'https://auth.robokassa.ru/Merchant/WebService/Service.asmx/OpStateExt');
+  },
+  get rkOpStateZadan() {
+    return Boolean(str('ROBOKASSA_OPSTATE_URL'));
+  },
   /* ── Телеграм ──────────────────────────────────────────────── */
   get telegramToken() {
     return str('TELEGRAM_BOT_TOKEN');

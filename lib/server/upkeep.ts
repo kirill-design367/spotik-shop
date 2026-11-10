@@ -28,6 +28,7 @@
 import { bazaEst, zapros } from './db';
 import { log } from './log';
 import { napomnitObOkonchanii } from './napominaniya';
+import { avtoplatezhChas } from './avtoplatezh';
 import { ubratSoobshcheniyaSParolem } from './notify';
 
 const CHAS = 3_600_000;
@@ -69,6 +70,13 @@ export async function ubrat(): Promise<void> {
     // Ссылки «Отключить автоплатёж» из писем: живут тридцать дней,
     // дальше отключают из кабинета (пятьдесят четвёртая итерация).
     await zapros('delete from avto_token where expires_at < now()');
+    // Отметки «раз в сутки» автоплатежа (сигналы команде по одному
+    // счёту, повтор письма по отвергнутому адресу): старше недели
+    // не значат ничего.
+    await zapros(
+      `delete from setting where (key like 'avto\\_signal:%' or key like 'avto\\_adres:%')
+                             and updated_at < now() - interval '7 days'`,
+    );
   } catch (e) {
     log.error('уборка не прошла', { text: String((e as Error).message) });
   }
@@ -83,6 +91,11 @@ export async function ubrat(): Promise<void> {
      незачем. Стоит ПОСЛЕ уборки и в своём `try`: упавшая рассылка
      не должна отменять уборку. */
   await napomnitObOkonchanii();
+  /* ⚠️ АВТОПЛАТЁЖ — ПОСЛЕ НАПОМИНАНИЙ И СВОИМ ХОДОМ (пятьдесят
+     четвёртая итерация): разбор списаний в пути, письма о списании,
+     сами списания. Наружу он не бросает ничего, а каждый проход
+     у него в своём `try`. */
+  await avtoplatezhChas();
 }
 
 type Global = typeof globalThis & { __spotikUpkeep?: NodeJS.Timeout };

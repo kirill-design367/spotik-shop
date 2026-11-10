@@ -49,7 +49,16 @@ import { rubli } from './money';
 import { ispravitVChate, nomerSoobshcheniya, poslatVChat, telegramNastroen, udalitIzChata, type Itog } from './telegram';
 
 export type SobytieKomande =
-  | { vid: 'zakaz_oplachen'; zakaz: number; tarif: string; srok: string; mest: number; podarok: boolean }
+  | {
+      vid: 'zakaz_oplachen';
+      zakaz: number;
+      tarif: string;
+      srok: string;
+      mest: number;
+      podarok: boolean;
+      /** Заказ создал автоплатёж (пятьдесят четвёртая итерация). */
+      avto?: boolean;
+    }
   | { vid: 'zakaz_vzyat'; zakaz: number; kto: string }
   | { vid: 'zakaz_zakryt'; zakaz: number; kto: string }
   | { vid: 'zakaz_otmenyon'; zakaz: number }
@@ -86,6 +95,30 @@ export type SobytieKomande =
   | { vid: 'razdacha_otvyazan'; kto: string }
   /* «Вернуть в очередь»: заказ в общей очереди и заново не раздаётся. */
   | { vid: 'zakaz_vozvrashchyon'; zakaz: number }
+  /* ── Автоплатёж (пятьдесят четвёртая итерация) ──
+     ⚠️ ВСЕ — ПРОИСШЕСТВИЯ, А НЕ РЯДОВЫЕ СОБЫТИЯ: удачное продление
+     идёт обычным «New paid order» с пометкой. Номера — платежа
+     и подписки (у дочернего списания заказа нет, пока его не создало
+     уведомление); персональных данных клиента нет ни в одном. */
+  /* Списание прошло, а продлевать нечего: деньги легли на баланс. */
+  | {
+      vid: 'avto_na_balans';
+      platyozh: number;
+      avto: number | null;
+      summaKop: number;
+      /** Заказ цикла, если он есть, — для ссылки. */
+      zakaz: number | null;
+    }
+  /* Робокасса ответила на `Recurring` не OK: почти всегда настройка. */
+  | { vid: 'avto_ne_ok'; platyozh: number; avto: number; zakaz: number; otvet: string }
+  /* Три «не OK» подряд — списания картой остановлены целиком. */
+  | { vid: 'avto_stop'; otvet: string }
+  /* Состояние списания нужно разобрать руками. */
+  | { vid: 'avto_rukami'; platyozh: number; avto: number; zakaz: number | null; pochemu: string }
+  /* Письмо о списании почтовый узел отверг: без письма не списываем. */
+  | { vid: 'avto_pismo_adres'; avto: number; zakaz: number }
+  /* Мать прошла в тестовом режиме — на бою цепочку не начать. */
+  | { vid: 'avto_testovaya'; avto: number; zakaz: number }
   | {
       vid: 'otmena_podpiski';
       zakaz: number;
@@ -128,7 +161,51 @@ function tekstDlyaChata(s: SobytieKomande, netDannyh: string = STYORT): string |
       `Participants: ${s.mest}`,
       s.podarok
         ? 'Payment: gift certificate — no money on this order, it was taken when the certificate was bought'
-        : 'Payment: card or balance',
+        : s.avto
+          ? 'Payment: auto-renewal — charged automatically from the card or balance'
+          : 'Payment: card or balance',
+      ssylka(s.zakaz),
+    ].join('\n');
+  }
+  if (s.vid === 'avto_na_balans') {
+    return [
+      `Auto-renewal charge #${s.platyozh}${s.avto ? ` (subscription #${s.avto})` : ''} came in, ${rubli(s.summaKop)}, ` +
+        'but there was nothing left to renew: the order was cancelled, auto-renewal was turned off ' +
+        'while the charge was on its way, or this term was already renewed.',
+      'The amount went to the buyer’s balance. Needs a look by hand.',
+      ...(s.zakaz ? [ssylka(s.zakaz)] : []),
+    ].join('\n');
+  }
+  if (s.vid === 'avto_ne_ok') {
+    return [
+      `Robokassa refused auto-renewal charge #${s.platyozh} (subscription #${s.avto}): ${s.otvet}`,
+      'This is usually a shop setting, not the client’s card: no letter to the client, retry tomorrow.',
+      ssylka(s.zakaz),
+    ].join('\n');
+  }
+  if (s.vid === 'avto_stop') {
+    return [
+      'Auto-renewal card charges are stopped: Robokassa refused three charges in a row.',
+      `Last answer: ${s.otvet}`,
+      'Check that recurring payments are enabled for the shop, then turn Auto-payment off and on in Prices to resume.',
+    ].join('\n');
+  }
+  if (s.vid === 'avto_rukami') {
+    return [
+      `Auto-renewal charge #${s.platyozh} (subscription #${s.avto}) needs a look by hand: ${s.pochemu}`,
+      ...(s.zakaz ? [ssylka(s.zakaz)] : []),
+    ].join('\n');
+  }
+  if (s.vid === 'avto_pismo_adres') {
+    return [
+      `The auto-renewal notice for subscription #${s.avto} was rejected by the mail server.`,
+      'Nothing will be charged without the notice. Needs a look by hand.',
+      ssylka(s.zakaz),
+    ].join('\n');
+  }
+  if (s.vid === 'avto_testovaya') {
+    return [
+      `Subscription #${s.avto} was set up in Robokassa test mode, so live charges can’t use it. Auto-renewal for it is off.`,
       ssylka(s.zakaz),
     ].join('\n');
   }

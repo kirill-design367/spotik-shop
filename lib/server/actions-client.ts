@@ -28,7 +28,7 @@ import { nayti, POCHEMU_KOD } from './certificates';
 import { katalog, naytiTarif } from './catalog';
 import { prinyatObrashchenie } from './podderzhka';
 import { ostavitOtzyv } from './otzyvy';
-import { otklyuchitPodpisku } from './avtoplatezh';
+import { otklyuchitPodpisku, otklyuchitPoTokenu } from './avtoplatezh';
 
 export type Otvet = {
   oshibka?: string;
@@ -328,6 +328,21 @@ export async function deystvieOtklyuchitAvto(fd: FormData): Promise<void> {
   if (Number.isInteger(id) && id > 0) await otklyuchitPodpisku(id, kto.userId, 'klient');
   revalidatePath('/cabinet');
   redirect('/cabinet/');
+}
+
+/**
+ * ОТКЛЮЧИТЬ АВТОПЛАТЁЖ ПО ССЫЛКЕ ИЗ ПИСЬМА — без входа, на силу токена.
+ *
+ * ⚠️ ТОЛЬКО POST: страница по ссылке не меняет ничего (её открывают
+ * и сканеры почты), отключает нажатие. Работает при любом положении
+ * выключателя (поправка money-7). Возвращает на ту же страницу: она
+ * сама скажет, что автоплатёж отключён.
+ */
+export async function deystvieOtklyuchitAvtoPoTokenu(fd: FormData): Promise<void> {
+  const t = String(fd.get('t') ?? '').slice(0, 200);
+  if (bazaEst() && t) await otklyuchitPoTokenu(t);
+  revalidatePath('/cabinet');
+  redirect(`/cabinet/avtoplatezh/?t=${encodeURIComponent(t)}`);
 }
 
 /**

@@ -27,10 +27,10 @@
  */
 
 import { bazaEst, zapros } from './db';
-import { env } from './env';
 import { log } from './log';
 import { katalog, naytiTarif, srokPolno } from './catalog';
-import { pismoSkoroKonec } from './letters';
+import { pismoSkoroKonec, ssylkaProdlit } from './letters';
+import { avtoplatezhVklyuchen } from './settings';
 
 /** За сколько дней до конца предупреждаем. */
 export const ZA_DNEY = 3;
@@ -38,6 +38,15 @@ export const ZA_DNEY = 3;
 export async function napomnitObOkonchanii(): Promise<void> {
   if (!bazaEst()) return;
   try {
+    /* ⚠️ У ЗАКАЗА С ВКЛЮЧЁННЫМ АВТОПЛАТЕЖОМ ПРЕЖНЕГО ПИСЬМА НЕТ
+       (пятьдесят четвёртая итерация): вместо «Продлить» уходит ОДНО
+       письмо автоплатежа — когда и сколько спишем, и ссылка «Отключить»
+       (`avtoplatezh.ts`). У него своя защёлка (`napomnil_*`), а эта,
+       `reminded_at`, остаётся прежнему письму (поправка money-4).
+       Выключатель выключен — клиент об автоплатеже не знает ничего,
+       и письмо ему прежнее. Отключил человек автоплатёж сам — прежнее
+       письмо придёт на следующем часу: продлевать теперь ему руками. */
+    const avto = await avtoplatezhVklyuchen();
     const stroki = await zapros<{
       id: string;
       plan_id: string;
@@ -53,9 +62,11 @@ export async function napomnitObOkonchanii(): Promise<void> {
           and o.reminded_at is null
           and o.expires_at > now()
           and o.expires_at <= now() + ($1 || ' days')::interval
+          and not ($2::boolean and exists (
+                select 1 from avtoplatezh a where a.order_id = o.id and a.status = 'vklyuchen'))
         order by o.expires_at
         limit 200`,
-      [String(ZA_DNEY)],
+      [String(ZA_DNEY), avto],
     );
     if (!stroki.length) return;
     const spisok = await katalog();
@@ -92,7 +103,7 @@ export async function napomnitObOkonchanii(): Promise<void> {
         komu: z.email,
         chto: `${tarif?.name ?? z.plan_id}, ${srokPolno(z.period).toLowerCase()}`,
         kogda: new Date(z.expires_at),
-        ssylka: `${env.siteUrl}/checkout/?plan=${encodeURIComponent(z.plan_id)}&period=${z.period}&renew=${zakaz}`,
+        ssylka: ssylkaProdlit(z.plan_id, z.period, zakaz),
       });
       log.info('напоминание об окончании отправлено', { order: zakaz });
     }

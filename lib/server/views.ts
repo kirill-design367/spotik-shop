@@ -21,7 +21,14 @@
 
 import { odna, zapros } from './db';
 import { poprobovatRasshifrovat } from './crypto';
-import { PRICHINA_POPOLNENIYA, STATUS_SLOVAMI, type Rezhim, type Status } from './orders';
+import {
+  PRICHINA_AVTO_NA_BALANS,
+  PRICHINA_AVTO_SPISANIE,
+  PRICHINA_POPOLNENIYA,
+  STATUS_SLOVAMI,
+  type Rezhim,
+  type Status,
+} from './orders';
 import { katalog, naytiTarif, srokKratko } from './catalog';
 import { usloviyeVidimosti, usloviyeVidimostiOtmeny, usloviyeVidimostiSZadachey, type Dostup } from './dostup';
 import { METKI } from './utm';
@@ -369,7 +376,11 @@ export async function istoriyaBalansa(userId: number, skolko = 20): Promise<Dviz
                    оплаченный счёт по заказу, который никто не отменял
                    (кнопка «Оплатить» заводит новый счёт каждым нажатием). */
                 `Деньги по заказу, который их уже не ждал${zakaz ? ` — ${zakaz}` : ''}`
-              : r.reason;
+              : r.reason === PRICHINA_AVTO_SPISANIE
+                ? `Автоплатёж${zakaz ? ` — ${zakaz}` : ''}`
+                : r.reason === PRICHINA_AVTO_NA_BALANS
+                  ? `${PRICHINA_AVTO_NA_BALANS}${zakaz ? ` — ${zakaz}` : ''}`
+                  : r.reason;
     return { kogda: new Date(r.created_at).toISOString(), deltaKop: Number(r.delta_kop), chto };
   });
 }
