@@ -34,6 +34,9 @@ import {
 } from './promokody';
 import { kodPromo, otkazSlovami, type OtkazPromo } from '@/lib/promokod';
 import { nastoyashchayaData } from '../data';
+import { otklyuchitPoZakazu, podtverditMat, zavestiPodpisku, type SposobOplaty } from './avtoplatezh';
+import { avtoplatezhVklyuchen } from './settings';
+import { sposobStrokoy, tekstSoglasiyaAvto } from '@/lib/avtoplatezh';
 
 export type Status = 'new' | 'paid' | 'in_work' | 'done' | 'cancelled';
 export type Rezhim = 'new' | 'renew';
@@ -125,6 +128,12 @@ export async function sozdatZakaz(opts: {
   utm?: Utm;
   /** Промокод, как его набрал человек; пусто — без промокода (Р-167). */
   promo?: string;
+  /**
+   * Галочка «Продлевать автоматически» (пятьдесят четвёртая итерация).
+   * Подписка заводится, только если выключатель включён и это заказ
+   * тарифа, а не покупка сертификата: поле формы правится в браузере.
+   */
+  avto?: boolean;
 }): Promise<ItogSozdaniya> {
   if (!opts.soglasie) return { ok: false, pochemu: 'Нужно согласие на обработку персональных данных.' };
 
@@ -166,6 +175,15 @@ export async function sozdatZakaz(opts: {
     const kak = await promoPredel(opts.userId);
     if (kak) return { ok: false, pochemu: `${otkazSlovami(kak)} Заказ не оформлен.` };
   }
+  /* ⚠️ ВЫКЛЮЧАТЕЛЬ СПРАШИВАЕТСЯ ЗДЕСЬ, А НЕ ТОЛЬКО НА СТРАНИЦЕ: галочку
+     можно дописать в форму руками, а пока он выключен, клиент про
+     автоплатёж не видит и не получает ничего. Текст согласия собирает
+     СЕРВЕР той же функцией, что форма, и из того, что знает сам: цены
+     тарифа без промокода, имени тарифа и числа мест (поправка money-15). */
+  const avtoNado = Boolean(opts.avto) && opts.kind === 'plan' && (await avtoplatezhVklyuchen());
+  const avtoTekst = avtoNado
+    ? tekstSoglasiyaAvto({ cenaKop: cena, tarif: tarif.name, period: opts.period, mest: tarif.people, promo: Boolean(promoVvod) })
+    : '';
   const itog = await vTranzakcii(async (c) => {
     const u = await c.query<{ balance_kop: string }>('select balance_kop from app_user where id = $1 for update', [
       opts.userId,
@@ -237,6 +255,22 @@ export async function sozdatZakaz(opts: {
       ]);
     }
 
+    /* ⚠️ ПОДПИСКА ЗАВОДИТСЯ В ТОЙ ЖЕ ТРАНЗАКЦИИ, ЧТО И ЗАКАЗ: заказа
+       без своей подписки при отмеченной галочке не бывает, и наоборот.
+       Заказ закрыт балансом целиком — первый платёж прошёл не картой,
+       материнского счёта у цепочки не будет, и подписка сразу
+       `ne_karta` (форма в этом случае галочку и не даёт). */
+    if (avtoNado) {
+      await zavestiPodpisku(c, {
+        userId: opts.userId,
+        zakaz,
+        planId: opts.planId,
+        period: opts.period,
+        status: kDoplate === 0 ? 'ne_karta' : 'zhdyot_oplaty',
+        soglasieTekst: avtoTekst,
+      });
+    }
+
     const oplachen = kDoplate === 0 ? await oplatitVnutri(c, zakaz, 0) : false;
 
     log.info('заказ создан', {
@@ -246,6 +280,7 @@ export async function sozdatZakaz(opts: {
       balance_kop: sBalansa,
       rest_kop: kDoplate,
       promo: promoVvod || '—',
+      avto: avtoNado,
     });
     return { ok: true as const, zakaz, sBalansa, kDoplate, oplachen };
   }).catch((e: unknown) => {
@@ -309,16 +344,34 @@ async function oplatitVnutri(c: PoolClient, zakaz: number, dengiKop: number): Pr
  */
 export const PRICHINA_POPOLNENIYA = 'пополнение баланса';
 
-export async function otmetitOplachennym(platyozh: number, prishloKop: number): Promise<void> {
+/**
+ * Дверь «оплачено».
+ *
+ * `sposob` — способ оплаты из уведомления Робокассы (`PaymentMethod`
+ * и `IncCurrLabel`, пятьдесят четвёртая итерация). Необязателен:
+ * имитатор и прежние вызовы его не знают. В подпись уведомления эти поля
+ * не входят — по ним решается только одно: включается ли автоплатёж.
+ *
+ * ⚠️ ВЕТКИ ПО ВИДУ ПЛАТЕЖА ЯВНЫЕ (поправка money-11): `order`, `topup`,
+ * `avto`. Незнакомый вид и платёж без владельца — `throw`: транзакция
+ * откатывается, ResultURL отвечает 500, и Робокасса повторит уведомление.
+ * Прежде всё, что не пополнение, шло веткой заказа: платёж помечался
+ * оплаченным, заказа с номером 0 не находилось, деньги не ложились
+ * никуда, а Робокасса получала `OK` и больше не повторяла.
+ */
+export async function otmetitOplachennym(platyozh: number, prishloKop: number, sposob?: SposobOplaty): Promise<void> {
   const itog = await vTranzakcii(async (c) => {
     const p = await c.query<{
       id: string;
       order_id: string | null;
       user_id: string | null;
-      kind: 'order' | 'topup';
+      kind: string;
       amount_kop: string;
       status: string;
-    }>('select id, order_id, user_id, kind, amount_kop, status from payment where id = $1 for update', [platyozh]);
+      recurring: boolean;
+    }>('select id, order_id, user_id, kind, amount_kop, status, recurring from payment where id = $1 for update', [
+      platyozh,
+    ]);
     const row = p.rows[0];
     if (!row) {
       log.warn('уведомление о неизвестном платеже', { payment: platyozh });
@@ -333,7 +386,13 @@ export async function otmetitOplachennym(platyozh: number, prishloKop: number): 
       log.error('оплачено меньше выставленного', { payment: platyozh, want_kop: zhdali, got_kop: prishloKop });
       return null;
     }
-    await c.query(`update payment set status = 'paid', paid_at = now() where id = $1`, [platyozh]);
+    /* Способ оплаты пишется у ЛЮБОГО платежа: по нему разбирают
+       и пополнения, и заказы. Нет полей — прежнее значение не трогаем. */
+    const sposobStroka = sposob ? sposobStrokoy(sposob.paymentMethod, sposob.incCurrLabel) : null;
+    await c.query(`update payment set status = 'paid', paid_at = now(), sposob = coalesce($2, sposob) where id = $1`, [
+      platyozh,
+      sposobStroka,
+    ]);
 
     /* ⚠️ ПОПОЛНЕНИЕ БАЛАНСА (Р-168): заказа нет, деньги ложатся
        на баланс владельца счёта В ЭТОЙ ЖЕ ТРАНЗАКЦИИ, и движение
@@ -344,8 +403,10 @@ export async function otmetitOplachennym(platyozh: number, prishloKop: number): 
     if (row.kind === 'topup') {
       const vladelec = Number(row.user_id ?? 0);
       if (!vladelec) {
+        // Ограничение `payment_kind_check` такого не пускает; дошло
+        // сюда — откат и повтор, а не «принято» в никуда.
         log.error('пополнение без владельца', { payment: platyozh, money_kop: prishloKop });
-        return null;
+        throw new Error('пополнение без владельца');
       }
       await c.query('update app_user set balance_kop = balance_kop + $1 where id = $2', [prishloKop, vladelec]);
       await c.query('insert into balance_move (user_id, delta_kop, reason, order_id) values ($1, $2, $3, null)', [
@@ -357,8 +418,29 @@ export async function otmetitOplachennym(platyozh: number, prishloKop: number): 
       return { popolnenie: true as const };
     }
 
+    if (row.kind === 'avto') {
+      /* ⚠️ ДОЧЕРНЕЕ СПИСАНИЕ АВТОПЛАТЕЖА: по маркеру цикла
+         (`payment.avto_cikl_order_id`) создаётся заказ продления —
+         либо, если продлевать уже нечего, деньги ложатся на баланс
+         владельца (`payment.user_id`). Порядок блокировок: платёж →
+         подписка. Ветка не заведена — откат и повтор уведомления:
+         деньги не пропадут, Робокасса придёт ещё раз. */
+      log.error('уведомление о списании автоплатежа, а ветка списаний не заведена', { payment: platyozh });
+      throw new Error('ветка списаний автоплатежа не заведена');
+    }
+
+    if (row.kind !== 'order') {
+      log.error('уведомление о платеже незнакомого вида', { payment: platyozh, kind: row.kind.slice(0, 32) });
+      throw new Error(`платёж незнакомого вида: ${row.kind.slice(0, 32)}`);
+    }
+
     const zakaz = Number(row.order_id);
-    if (await oplatitVnutri(c, zakaz, prishloKop)) return { zakaz, naBalans: 0 };
+    if (await oplatitVnutri(c, zakaz, prishloKop)) {
+      /* ⚠️ ЗАКАЗ ОПЛАЧЕН ИМЕННО ЭТИМ ПЛАТЕЖОМ — только тогда решается
+         судьба подписки, той же транзакцией (поправка money-16). */
+      await podtverditMat(c, { zakaz, platyozh, recurring: row.recurring, sposob: sposob ?? null });
+      return { zakaz, naBalans: 0 };
+    }
 
     /* ⚠️ ДЕНЬГИ ПРИШЛИ, А ЗАКАЗ ИХ УЖЕ НЕ ЖДЁТ — И ДЕТЬ ИХ НЕКУДА,
        КРОМЕ БАЛАНСА. Случай не выдуманный, и путей к нему два:
@@ -377,8 +459,10 @@ export async function otmetitOplachennym(platyozh: number, prishloKop: number): 
     );
     const vladelec = Number(o.rows[0]?.user_id ?? 0);
     if (!vladelec) {
+      // Внешний ключ такого не пускает; дошло сюда — откат и повтор:
+      // «принято» без владельца значило бы деньги, не лёгшие никуда.
       log.error('деньги пришли по заказу, которого нет', { payment: platyozh, order: zakaz, money_kop: prishloKop });
-      return null;
+      throw new Error('деньги пришли по заказу, которого нет');
     }
     await c.query('update app_user set balance_kop = balance_kop + $1 where id = $2', [prishloKop, vladelec]);
     await c.query(
@@ -954,6 +1038,9 @@ export async function otmenitZakaz(
        единственный путь сюда без сотрудника лежит из кабинета
        (`deystvieOtmenitSvoy`, kem = 'klient'). */
     await zapisatSobytie(c, zakaz, staffId, 'otmenil');
+    /* Заказ подписки отменён — подписка отключается той же транзакцией:
+       продлевать отменённое нечего. */
+    await otklyuchitPoZakazu(c, zakaz);
     /* Отмена снимает предложение раздачи той же транзакцией. */
     const zp = row.razdacha === null ? null : await snyatRazdachu(c, zakaz, { ishod: 'snyat', stanet: null });
     return {
@@ -1053,6 +1140,9 @@ export async function zaprositOtmenuPodpiski(zakaz: number, adminId: number): Pr
       operatorId,
     ]);
     await zapisatSobytie(c, zakaz, adminId, 'otmena_zaproshena');
+    /* Подписку Spotify снимают — значит и продлевать её автоплатежом
+       больше нечего. */
+    await otklyuchitPoZakazu(c, zakaz);
     return { ok: true as const, operatorId };
   });
 }

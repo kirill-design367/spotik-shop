@@ -14,6 +14,7 @@ import { VPN_OPLATA_TEKST, procentSkidki } from '@/lib/plans';
 import { KUKA_PROMO, kodPromo, PREDEL_KODA, skidkaKop } from '@/lib/promokod';
 import CenaSoSkidkoy from './CenaSoSkidkoy';
 import Bukvalno, { frazaSDannymi } from '@/components/Bukvalno';
+import { tekstSoglasiyaAvto } from '@/lib/avtoplatezh';
 
 export type SrokVybor = {
   period: number;
@@ -59,6 +60,11 @@ export type Vvod = {
    * уже приведённый к правилу кода. Пусто — ссылки не было.
    */
   promoIzSsylki: string;
+  /**
+   * Показывать ли галочку «Продлевать автоматически»: выключатель
+   * автоплатежа включён и это заказ тарифа, а не сертификат.
+   */
+  avtoDostupen: boolean;
 };
 
 /**
@@ -133,6 +139,10 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
     Array.from({ length: vvod.sertifikat ? 0 : vvod.people }, () => vvod.rezhimPoUmolchaniyu),
   );
   const [tratit, setTratit] = useState(vvod.balansKop > 0);
+  /* ⚠️ ГАЛОЧКА АВТОПЛАТЕЖА ПО УМОЛЧАНИЮ СНЯТА — и это закон, а не вкус
+     (69-ФЗ: согласие на повторные списания не навязывается). Она
+     отдельна от согласия с офертой. */
+  const [avto, setAvto] = useState(false);
   const [dannye, setDannye] = useState<{ login: string; password: string }[]>(
     Array.from({ length: vvod.sertifikat ? 0 : vvod.people }, (_, i) => ({
       login: vvod.pochtyPoUmolchaniyu[i] ?? '',
@@ -304,6 +314,22 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
   const itogo = cena - skidkaPromo;
   const sBalansa = tratit ? Math.min(vvod.balansKop, itogo) : 0;
   const kOplate = itogo - sBalansa;
+  /* ⚠️ АВТОПЛАТЁЖ ВКЛЮЧАЕТСЯ ТОЛЬКО ОПЛАТОЙ КАРТОЙ (поправка product-3):
+     заказ, закрытый балансом целиком, материнского счёта не даст,
+     и подписка родилась бы мёртвой — «не включился». Поэтому при
+     `kOplate === 0` галочка выключена и сказано, что сделать. Отмеченная
+     до этого — не уезжает в форму: выключенное поле браузер не шлёт. */
+  const avtoMozhno = vvod.avtoDostupen && kOplate > 0;
+  const avtoVybran = avtoMozhno && avto;
+  const avtoTekst = vvod.avtoDostupen
+    ? tekstSoglasiyaAvto({
+        cenaKop: cena,
+        tarif: tarif?.name ?? vvod.planName,
+        period,
+        mest,
+        promo: Boolean(promo),
+      })
+    : '';
 
   return (
     /* ⚠️ ЦЕЛЬ ШЛЁТСЯ НА ОТПРАВКЕ ФОРМЫ, А НЕ ПОСЛЕ ОТВЕТА СЕРВЕРА:
@@ -642,9 +668,39 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
           </>
         ) : null}
         <p className="sum sum--total">
-          <span>{kOplate > 0 ? 'Картой или через СБП' : 'К доплате'}</span>
+          {/* При автоплатеже — только «Картой»: со СБП он не включится. */}
+          <span>{kOplate > 0 ? (avtoVybran ? 'Картой' : 'Картой или через СБП') : 'К доплате'}</span>
           <span key={kOplate} className="tnum summa">{rubli(kOplate)}</span>
         </p>
+
+        {/* ⚠️ ГАЛОЧКА АВТОПЛАТЕЖА — ВНУТРИ ФОРМЫ ЗАКАЗА И НЕ ВНУТРИ `.field`,
+            и оба условия — про сторожей: отдельная форма или вторая кнопка
+            отправки сдвинули бы «первую форму» и «первую кнопку», по которым
+            ходит verify-shop, а `.field input` меряется на радиус.
+            Текст согласия — с подстановками, и тот же текст сервер
+            соберёт сам и положит в историю согласий. */}
+        {vvod.avtoDostupen ? (
+          <div className="avto-galochka" data-off={avtoMozhno ? undefined : ''}>
+            <label className="check">
+              <input
+                type="checkbox"
+                name="avto"
+                checked={avtoVybran}
+                disabled={!avtoMozhno}
+                aria-describedby="avto-tekst"
+                onChange={(e) => setAvto(e.target.checked)}
+              />
+              <span>Продлевать автоматически</span>
+            </label>
+            <p className="panel__note avto-galochka__t" id="avto-tekst">
+              {avtoMozhno
+                ? avtoTekst
+                : sBalansa > 0
+                  ? 'Автоплатёж включается только при оплате картой — снимите «Списать с баланса».'
+                  : 'Автоплатёж включается только при оплате картой, а этот заказ оплачивать картой не нужно.'}
+            </p>
+          </div>
+        ) : null}
 
         <Soglasie beda={bedaSoglasiya} />
 

@@ -66,6 +66,7 @@ import {
 import { kodPromo } from '@/lib/promokod';
 import { nastoyashchayaData } from '../data';
 import { dobavitOtzyv, sdvinut, smenitStatus, udalitOtzyv, type OshibkaOtzyva } from './otzyvy';
+import { AVTO_NASTROYKA, AVTO_STOP } from '@/lib/avtoplatezh';
 
 export type OtvetA = {
   error?: Klyuch;
@@ -672,6 +673,29 @@ export async function adminSetRazdachaMinut(_p: OtvetA, fd: FormData): Promise<O
   await zadatNastroyku(RAZDACHA_MINUT, String(n));
   revalidatePath('/admin/settings');
   return { ok: 'rz.minut_saved', polya: { n } };
+}
+
+/**
+ * ВЫКЛЮЧАТЕЛЬ АВТОПЛАТЕЖА (пятьдесят четвёртая итерация). Только
+ * администратору.
+ *
+ * ⚠️ ВКЛЮЧЕНИЕ СНИМАЕТ ГЛОБАЛЬНУЮ ОСТАНОВКУ СПИСАНИЙ (`avto_stop`):
+ * её ставят три подряд ответа Робокассы «не OK», и снимается она тем
+ * же выключателем — выключить и включить (поправка money-3). Человек,
+ * включающий автоплатёж, этим и говорит «разобрались, можно снова».
+ *
+ * Поле названо `avto`, а не `on`: сторожа находят формы этой страницы
+ * по именам полей (`on`, `until`, `price`, `plan`, `period`).
+ */
+export async function adminSetAvtoplatezh(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+  const s = await ktoSotrudnik();
+  if (!s || s.role !== 'admin') return { error: 'o.only_admin' };
+  const vkl = fd.get('avto') === 'on';
+  await zadatNastroyku(AVTO_NASTROYKA, vkl ? '1' : '0');
+  if (vkl) await zadatNastroyku(AVTO_STOP, '0');
+  log.info('выключатель автоплатежа', { vkl, kto: pochtaVZhurnal(s.email) });
+  revalidatePath('/admin/settings');
+  return { ok: vkl ? 'av.saved_on' : 'av.saved_off' };
 }
 
 /**

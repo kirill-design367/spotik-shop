@@ -19,6 +19,8 @@ import { deystvieOtmenitSvoy, deystvieVyyti } from '@/lib/server/actions-client'
 import type { Status } from '@/lib/server/orders';
 import { NE_PEREVODIT, frazaSDannymi } from '@/components/Bukvalno';
 import { dopisatAdres } from '@/lib/admin/prichiny';
+import AvtoBlok from '@/components/shop/AvtoBlok';
+import { avtoplatezhVklyuchen } from '@/lib/server/settings';
 
 export const metadata: Metadata = { title: 'Личный кабинет — Spotik Shop', robots: { index: false, follow: false } };
 export const dynamic = 'force-dynamic';
@@ -118,12 +120,16 @@ export default async function Cabinet({
     );
   }
 
-  const [zakazy, sert, bal, istoriya, spisok] = await Promise.all([
+  const [zakazy, sert, bal, istoriya, spisok, avtoVkl] = await Promise.all([
     moiZakazy(kto.userId),
     moiSertifikaty(kto.userId),
     balans(kto.userId),
     istoriyaBalansa(kto.userId),
     katalog(),
+    /* ⚠️ ПОКА ВЫКЛЮЧАТЕЛЬ ВЫКЛЮЧЕН, ПРО АВТОПЛАТЁЖ В КАБИНЕТЕ НЕТ НИ СЛОВА
+       (постановка пятьдесят четвёртой итерации): ни блока у заказа,
+       ни скрытой кнопки «Продлить». */
+    avtoplatezhVklyuchen(),
   ]);
   /* Быстрые суммы — ТЕКУЩИЕ цены тарифов, то есть уже со скидкой,
      если она действует: пополняют, чтобы оплатить подписку, и сумма
@@ -304,6 +310,10 @@ export default async function Cabinet({
                     тот же срок, режим «продлить существующий» и почта
                     аккаунта — её страница читает по номеру заказа сама
                     (закон 44). */}
+                {/* ⚠️ ПРИ ВКЛЮЧЁННОМ АВТОПЛАТЕЖЕ КНОПКИ «ПРОДЛИТЬ» НЕТ:
+                    продление уже заказано, и вторая оплата руками дала бы
+                    два продления одного срока (поправка product-4). Вместо
+                    неё — блок автоплатежа с «Отключить». */}
                 {z.konchaetsya && z.status === 'done' ? (
                   <div className="srok">
                     <p className="srok__t">
@@ -313,13 +323,19 @@ export default async function Cabinet({
                         : ''}
                       .
                     </p>
-                    <a
-                      className="btn btn--sm"
-                      href={`/checkout/?plan=${encodeURIComponent(z.planId)}&period=${z.period}&renew=${z.id}&mode=renew`}
-                    >
-                      Продлить
-                    </a>
+                    {avtoVkl && z.avto?.status === 'vklyuchen' ? null : (
+                      <a
+                        className="btn btn--sm"
+                        href={`/checkout/?plan=${encodeURIComponent(z.planId)}&period=${z.period}&renew=${z.id}&mode=renew`}
+                      >
+                        Продлить
+                      </a>
+                    )}
                   </div>
+                ) : null}
+
+                {avtoVkl && z.avto ? (
+                  <AvtoBlok avto={z.avto} konchaetsya={z.konchaetsya} zakazGotov={z.status === 'done'} />
                 ) : null}
 
                 {/* ⚠️ ЧТО ПОКАЗАНО ПО НОВОМУ АККАУНТУ — ПОЧТА, А НЕ ЛОГИН

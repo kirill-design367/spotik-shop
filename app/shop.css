@@ -916,3 +916,22 @@
 .cab__dv-kogda { font-size: 12px; color: var(--dim-2); }
 .cab__dv-summa { white-space: nowrap; }
 .cab__dv-summa--plus { color: var(--green); }
+
+/* ── АВТОПЛАТЁЖ НА ОФОРМЛЕНИИ (пятьдесят четвёртая итерация) ─────────
+   Галочка тем же набором, что «Списать с баланса» и согласие, а текст
+   согласия под ней — мелкой строкой, отбитой на ширину самой галочки:
+   так видно, что строка относится к ней, а не ко всей панели.
+   ⚠️ Своих радиусов здесь нет ни одного: сторож раздела требует, чтобы
+   каждый измеренный радиус совпал с одним из трёх токенов. */
+.avto-galochka { margin: var(--ritm) 0; }
+.avto-galochka .check { margin: 0; color: #fff; }
+.avto-galochka__t { margin: 6px 0 0 32px; font-size: 13px; line-height: 1.5; }
+.avto-galochka[data-off] .check { color: var(--dim-2); cursor: not-allowed; }
+
+/* ── АВТОПЛАТЁЖ В КАБИНЕТЕ ───────────────────────────────────────────
+   Строка состояния подписки у карточки заказа и одна кнопка рядом.
+   Кнопка — `btn--ghost btn--sm`, как «Отменить» у неоплаченного заказа:
+   отключение не главное действие карточки. */
+.avto-sost { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: var(--ritm) 0 0; }
+.avto-sost .panel__note { margin: 0; flex: 1 1 260px; }
+.avto-sost form { margin: 0; }

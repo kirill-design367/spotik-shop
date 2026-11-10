@@ -26,6 +26,7 @@ import { katalog, naytiTarif, srokKratko } from './catalog';
 import { usloviyeVidimosti, usloviyeVidimostiOtmeny, usloviyeVidimostiSZadachey, type Dostup } from './dostup';
 import { METKI } from './utm';
 import { rabocheeVremya } from '@/lib/chasy';
+import type { PrichinaAvto, StatusAvto } from '@/lib/avtoplatezh';
 
 export type SlotKlientu = {
   idx: number;
@@ -47,6 +48,25 @@ export type SlotKlientu = {
   login: string | null;
   mailPass: string | null;
   spotifyPass: string | null;
+};
+
+/**
+ * Подписка автоплатежа на карточке заказа — ВЛАДЕЛЬЦУ (пятьдесят
+ * четвёртая итерация). Номер подписки нужен ровно одному месту —
+ * скрытому полю формы «Отключить»; почты аккаунта и номера заказа
+ * здесь нет.
+ */
+export type AvtoKlientu = {
+  id: number;
+  status: StatusAvto;
+  prichina: PrichinaAvto | null;
+  neudach: number;
+  sleduyushchayaPopytka: Date | null;
+  /** Есть дочерний счёт, ждущий подтверждения банка. */
+  vPuti: boolean;
+  otpravlenAt: Date | null;
+  /** Сумма, названная в письме о списании этого цикла. */
+  napomnilSummaKop: number | null;
 };
 
 export type ZakazKlientu = {
@@ -87,6 +107,12 @@ export type ZakazKlientu = {
    * у выполненного заказа тарифа (`kind = 'plan'`) без отзыва.
    */
   otzyv: 'moderaciya' | 'opublikovan' | 'skryt' | null;
+  /**
+   * Подписка автоплатежа, которая СЕЙЧАС стоит на этом заказе; `null` —
+   * нет. Показывает её кабинет только при включённом выключателе
+   * (постановка: «пока выключен, клиент ничего про автоплатёж не видит»).
+   */
+  avto: AvtoKlientu | null;
   slots: SlotKlientu[];
 };
 
@@ -108,19 +134,31 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
     expires_at: Date | null;
     otmena_podpiski: boolean;
     otzyv: 'moderaciya' | 'opublikovan' | 'skryt' | null;
+    a_id: string | null;
+    a_status: StatusAvto | null;
+    a_prichina: PrichinaAvto | null;
+    a_neudach: number | null;
+    a_sleduyushchaya: Date | null;
+    a_v_puti: string | null;
+    a_otpravlen: Date | null;
+    a_summa: string | null;
   }>(
     /* ⚠️ ОТМЕНЁННЫЕ САМИМ ПОКУПАТЕЛЕМ СЮДА НЕ ПОПАДАЮТ ВОВСЕ —
        постановка тридцать шестой итерации: «карточка плавно
        схлопывается и больше не показывается, причину не пишем».
        Отменённые ОПЕРАТОРОМ остаются: там есть что сказать —
        причина и деньги на балансе. */
-    `select id, kind, plan_id, period, status, total_kop, balance_kop, money_kop, source,
-            created_at, cancel_reason, cancel_slot_idx, secrets_wiped_at, expires_at,
+    `select shop_order.id, kind, shop_order.plan_id, shop_order.period, shop_order.status, total_kop, balance_kop,
+            money_kop, source, shop_order.created_at, cancel_reason, cancel_slot_idx, secrets_wiped_at, expires_at,
             exists (select 1 from sub_cancel t where t.order_id = shop_order.id) as otmena_podpiski,
-            (select z.status from otzyv z where z.order_id = shop_order.id) as otzyv
+            (select z.status from otzyv z where z.order_id = shop_order.id) as otzyv,
+            a.id as a_id, a.status as a_status, a.prichina as a_prichina, a.neudach as a_neudach,
+            a.sleduyushchaya_popytka as a_sleduyushchaya, a.platezh_v_puti as a_v_puti,
+            a.otpravlen_at as a_otpravlen, a.napomnil_summa_kop as a_summa
        from shop_order
-      where user_id = $1 and not cancelled_by_client
-      order by created_at desc limit 100`,
+       left join avtoplatezh a on a.order_id = shop_order.id
+      where shop_order.user_id = $1 and not cancelled_by_client
+      order by shop_order.created_at desc limit 100`,
     [userId],
   );
   if (!rows.length) return [];
@@ -189,6 +227,19 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
       otmenaPodpiski: r.otmena_podpiski,
       sekretyStyorty: Boolean(r.secrets_wiped_at),
       otzyv: r.otzyv,
+      avto:
+        r.a_id && r.a_status
+          ? {
+              id: Number(r.a_id),
+              status: r.a_status,
+              prichina: r.a_prichina,
+              neudach: Number(r.a_neudach ?? 0),
+              sleduyushchayaPopytka: r.a_sleduyushchaya ? new Date(r.a_sleduyushchaya) : null,
+              vPuti: r.a_v_puti !== null,
+              otpravlenAt: r.a_otpravlen ? new Date(r.a_otpravlen) : null,
+              napomnilSummaKop: r.a_summa === null ? null : Number(r.a_summa),
+            }
+          : null,
       slots: svoi.map((s) => ({
         idx: s.idx,
         mode: s.mode,

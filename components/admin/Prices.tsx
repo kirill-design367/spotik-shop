@@ -6,6 +6,7 @@ import {
   adminSetDiscount,
   adminSetPlanName,
   adminSetPrice,
+  adminSetAvtoplatezh,
   adminSetRazdachaMinut,
   adminToggleCell,
   adminToggleEgipet,
@@ -52,6 +53,8 @@ export default function Prices({
   plany,
   days,
   minut,
+  avto,
+  avtoStop,
   y,
 }: {
   rows: Stroka[];
@@ -60,6 +63,9 @@ export default function Prices({
   days: number;
   /** Время на взятие предложенного заказа, минут (раздача). */
   minut: number;
+  /** Выключатель автоплатежа и глобальная остановка списаний. */
+  avto: boolean;
+  avtoStop: boolean;
   y: Yazyk;
 }) {
   const t = slovar(y);
@@ -70,6 +76,7 @@ export default function Prices({
   const [im, setImya, busy5] = useActionState<OtvetA, FormData>(adminSetPlanName, {});
   const [eg, setEgipet, busy6] = useActionState<OtvetA, FormData>(adminToggleEgipet, {});
   const [rz, setMinut, busy7] = useActionState<OtvetA, FormData>(adminSetRazdachaMinut, {});
+  const [av, setAvto, busy8] = useActionState<OtvetA, FormData>(adminSetAvtoplatezh, {});
   const otkuda: Record<Stroka['iz'], Klyuch | null> = { baza: 'c.from_db', umolchanie: 'c.from_default', net: null };
 
   return (
@@ -322,6 +329,29 @@ export default function Prices({
         </label>
         <div className="ad__actions">
           <button type="submit" className="btn btn--sm" disabled={busy7}>
+            {t('o.save')}
+          </button>
+        </div>
+      </form>
+
+      {/* ⚠️ АВТОПЛАТЁЖ — САМЫЙ НИЗ СТРАНИЦЫ, СВОЕЙ ФОРМОЙ, И ПОЛЕ НАЗВАНО
+          `avto`, а не `on`: сторожа считают формы этой страницы по полям
+          `on` и `until` (см. выше). Галочка, а не поле ввода: у галочек
+          этой страницы радиус не меряется. По умолчанию выключено —
+          постановка: Робокасса включает периодические платежи только
+          по согласованию. */}
+      <h2>{t('av.h')}</h2>
+      <p className="hint">{t('av.hint')}</p>
+      {avto && avtoStop ? <p className="err">{t('av.stop')}</p> : null}
+      {av.error ? <p className="err">{t(av.error, av.polya)}</p> : null}
+      {av.ok ? <p className="ok">{nadpis(t, av.ok, av.polya)}</p> : null}
+      <form action={setAvto} className="ad__form">
+        <label className="ad__check">
+          <input type="checkbox" name="avto" defaultChecked={avto} />
+          {t('av.vkl')}
+        </label>
+        <div className="ad__actions">
+          <button type="submit" className="btn btn--sm" disabled={busy8}>
             {t('o.save')}
           </button>
         </div>

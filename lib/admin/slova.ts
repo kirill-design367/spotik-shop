@@ -496,6 +496,23 @@ const S = {
   'rz.minut_saved': ['Время на взятие заказа сохранено: {n} мин.', 'Time to take an order saved: {n} min.'],
   'rz.e_minut': ['Укажите целое число минут от {ot} до {do}.', 'Enter a whole number of minutes from {ot} to {do}.'],
 
+  /* ── Автоплатёж: выключатель в «Ценах» ─────────────────────────
+     ⚠️ ПОЯСНЕНИЕ НАЗЫВАЕТ ОШИБКУ 34 ПРЯМО (поправка product-7): включённый
+     до одобрения Робокассы выключатель ломает саму оплату у всех, кто
+     отметил галочку, — материнский счёт с `Recurring=true` она не примет. */
+  'av.h': ['Автоплатёж', 'Auto-renewal'],
+  'av.hint': [
+    'Робокасса включает периодические платежи только по согласованию с магазином. Включайте только после ответа Робокассы «Рекуррентные платежи включены для вашего магазина» — иначе оплата с отмеченной галочкой не пройдёт (ошибка 34). Пока выключено, клиент ничего про автоплатёж не видит: галочки на оформлении нет, новые списания не идут. Уже включённые подписки хранятся и после повторного включения работают дальше.',
+    'Robokassa enables recurring payments only by agreement with the shop. Switch this on only after Robokassa replies “Recurring payments are enabled for your shop” — otherwise payment with the box ticked will fail (error 34). While it is off, clients see nothing about auto-renewal: there is no tick box at checkout and no new charges are made. Subscriptions already switched on are kept and keep working once it is switched on again.',
+  ],
+  'av.vkl': ['Автоплатёж включён', 'Auto-renewal is on'],
+  'av.saved_on': ['Автоплатёж включён.', 'Auto-renewal switched on.'],
+  'av.saved_off': ['Автоплатёж выключен.', 'Auto-renewal switched off.'],
+  'av.stop': [
+    'Списания остановлены: Робокасса три раза подряд ответила ошибкой. Разберитесь с причиной, затем выключите и снова включите автоплатёж — списания возобновятся.',
+    'Charges are stopped: Robokassa answered with an error three times in a row. Find the cause, then switch auto-renewal off and on again to resume charges.',
+  ],
+
   /* ── Раздача: очередь и карточка заказа ───────────────────────
      ⚠️ ПОЧТА ОПЕРАТОРА ВЕЗДЕ ЗДЕСЬ — `{kto}`, и рисует её `nadpis`
      отдельным узлом: переводчик браузера не перепишет адрес (закон 54).

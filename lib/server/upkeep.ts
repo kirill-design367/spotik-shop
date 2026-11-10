@@ -66,6 +66,9 @@ export async function ubrat(): Promise<void> {
     // Номера принятых обновлений бота: Telegram не держит обновления
     // дольше суток, так что двое суток — с запасом против повтора.
     await zapros(`delete from tg_obnovlenie where created_at < now() - interval '2 days'`);
+    // Ссылки «Отключить автоплатёж» из писем: живут тридцать дней,
+    // дальше отключают из кабинета (пятьдесят четвёртая итерация).
+    await zapros('delete from avto_token where expires_at < now()');
   } catch (e) {
     log.error('уборка не прошла', { text: String((e as Error).message) });
   }

@@ -42,9 +42,28 @@ async function obrabotat(pary: Record<string, string>): Promise<Response> {
     log.error('уведомление Робокассы не принято', { why: r.pochemu, words: POCHEMU_SLOVAMI[r.pochemu], fields: r.imena.join(',') });
     return new Response('bad sign', { status: 400 });
   }
-  await otmetitOplachennym(r.nomer, r.summaKop);
-  log.info('уведомление Робокассы принято', { payment: r.nomer, amount_kop: r.summaKop });
+  /* ⚠️ СПОСОБ ОПЛАТЫ ЕДЕТ В ДВЕРЬ ОТДЕЛЬНО ОТ ПОДПИСИ (пятьдесят
+     четвёртая итерация). `PaymentMethod` и `IncCurrLabel` в подпись
+     уведомления не входят; по ним решается одно — включается ли
+     автоплатёж: он работает только с картой. Значения короткие
+     и служебные (`BankCard`, `BankCardPSR`, `SBPPSR`), но приходят
+     извне — поэтому обрезаются и чистятся от управляющих знаков. */
+  const sposob = {
+    paymentMethod: pole(pary, 'PaymentMethod'),
+    incCurrLabel: pole(pary, 'IncCurrLabel'),
+  };
+  await otmetitOplachennym(r.nomer, r.summaKop, sposob);
+  log.info('уведомление Робокассы принято', {
+    payment: r.nomer,
+    amount_kop: r.summaKop,
+    sposob: sposob.paymentMethod || sposob.incCurrLabel ? `${sposob.paymentMethod}/${sposob.incCurrLabel}` : '—',
+  });
   return new Response(otvetPrinyato(r.nomer), { status: 200, headers: { 'content-type': 'text/plain' } });
+}
+
+function pole(pary: Record<string, string>, imya: string): string {
+  const v = pary[imya] ?? pary[imya.charAt(0).toLowerCase() + imya.slice(1)] ?? '';
+  return v.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 64);
 }
 
 function izURL(u: URL): Record<string, string> {

@@ -57,6 +57,8 @@ export async function otpechatokKabineta(userId: number): Promise<OtpechatokKabi
     balans: string;
     serty: string;
     otzyvy: string;
+    avto: string;
+    avto_vkl: string;
   }>(
     `select
        (select coalesce(string_agg(
@@ -94,10 +96,26 @@ export async function otpechatokKabineta(userId: number): Promise<OtpechatokKabi
           итерация). */
        (select coalesce(string_agg(z.order_id || ':' || z.status, ',' order by z.order_id), '')
           from otzyv z join shop_order o on o.id = z.order_id
-         where o.user_id = $1) as otzyvy`,
+         where o.user_id = $1) as otzyvy,
+       /* ⚠️ АВТОПЛАТЁЖ МЕНЯЕТСЯ БЕЗ ЕДИНОГО НАЖАТИЯ ЧЕЛОВЕКА: его
+          включает уведомление Робокассы, отключает неудача списания
+          или администратор, а списание идёт «в пути» и подтверждается
+          банком. Кабинет обязан показать это сам (пятьдесят четвёртая
+          итерация). И ВЫКЛЮЧАТЕЛЬ ТОЖЕ: включили его в админке —
+          у заказа появляется блок, выключили — пропадает. */
+       (select coalesce(string_agg(
+                 a.id || ':' || a.order_id || ':' || a.status || ':' || coalesce(a.prichina, '')
+                      || ':' || a.neudach || ':' || coalesce(a.sleduyushchaya_popytka::text, '')
+                      || ':' || coalesce(a.platezh_v_puti::text, '') || ':' || coalesce(a.otpravlen_at::text, '')
+                      || ':' || coalesce(a.napomnil_summa_kop::text, ''),
+                 ',' order by a.id), '')
+          from avtoplatezh a where a.user_id = $1) as avto,
+       (select coalesce((select value from setting where key = 'avtoplatezh'), '0')) as avto_vkl`,
     [userId],
   );
-  const sostoyanie = `${r?.zakazy ?? ''}|${r?.sloty ?? ''}|${r?.balans ?? '0'}|${r?.serty ?? ''}|${r?.otzyvy ?? ''}`;
+  const sostoyanie =
+    `${r?.zakazy ?? ''}|${r?.sloty ?? ''}|${r?.balans ?? '0'}|${r?.serty ?? ''}|${r?.otzyvy ?? ''}` +
+    `|${r?.avto ?? ''}|${r?.avto_vkl ?? '0'}`;
   return {
     otpechatok: createHash('sha256').update(sostoyanie).digest('hex').slice(0, 32),
     /* Число выданных доступов уходит отдельным полем: по нему видно

@@ -28,6 +28,7 @@ import { nayti, POCHEMU_KOD } from './certificates';
 import { katalog, naytiTarif } from './catalog';
 import { prinyatObrashchenie } from './podderzhka';
 import { ostavitOtzyv } from './otzyvy';
+import { otklyuchitPodpisku } from './avtoplatezh';
 
 export type Otvet = {
   oshibka?: string;
@@ -214,6 +215,9 @@ export async function deystvieOformit(_prosh: Otvet, fd: FormData): Promise<Otve
     /* Промокод проверяется ЗАНОВО внутри транзакции заказа: ответ
        кнопки «Применить» был предварительным (Р-167). */
     promo: String(fd.get('promo') ?? ''),
+    /* Галочка «Продлевать автоматически». Выключатель и вид заказа
+       проверяет `sozdatZakaz` сам: поле правится в браузере. */
+    avto: fd.get('avto') === 'on',
   });
   if (!itog.ok) return { oshibka: itog.pochemu };
   /* Заказ с кодом из промо-ссылки оформлен — кука больше не нужна:
@@ -303,6 +307,25 @@ export async function deystvieOtmenitSvoy(fd: FormData): Promise<void> {
     kto.userId,
   ]);
   if (r) await otmenitZakaz(zakaz, 'Отменён покупателем до оплаты', null, 'obychno', 'klient');
+  revalidatePath('/cabinet');
+  redirect('/cabinet/');
+}
+
+/**
+ * ОТКЛЮЧИТЬ АВТОПЛАТЁЖ из кабинета — одним нажатием, без подтверждения
+ * (постановка: «Отключается одним нажатием»). Та же кнопка до первого
+ * платежа зовётся «Не включать автоплатёж»: после неё «Оплатить»
+ * выставляет счёт без `Recurring` (поправка money-8).
+ *
+ * ⚠️ РАБОТАЕТ ПРИ ЛЮБОМ ПОЛОЖЕНИИ ВЫКЛЮЧАТЕЛЯ (поправка money-7):
+ * отказ от подписки закон велит принимать всегда. Владельца проверяет
+ * `otklyuchitPodpisku` — номер подписки пришёл из скрытого поля.
+ */
+export async function deystvieOtklyuchitAvto(fd: FormData): Promise<void> {
+  const kto = await ktoKlient();
+  if (!kto) redirect('/cabinet/');
+  const id = Number(fd.get('avto') ?? 0);
+  if (Number.isInteger(id) && id > 0) await otklyuchitPodpisku(id, kto.userId, 'klient');
   revalidatePath('/cabinet');
   redirect('/cabinet/');
 }

@@ -15,6 +15,7 @@ import { katalog, naytiTarif } from './catalog';
 import { nastroyki, robokassaRabotaet, ssylkaOplaty } from './robokassa';
 import { log } from './log';
 import { rubli } from './money';
+import { avtoplatezhVklyuchen } from './settings';
 
 export type Schet =
   | { ok: true; platyozh: number; adres: string; test: boolean }
@@ -48,9 +49,27 @@ export async function vystavitSchet(zakaz: number, userId: number): Promise<Sche
     };
   }
 
+  /* ⚠️ МАТЕРИНСКИЙ СЧЁТ АВТОПЛАТЕЖА — ТОЛЬКО ПРИ ПОДПИСКЕ, ЖДУЩЕЙ ОПЛАТЫ,
+     И ВКЛЮЧЁННОМ ВЫКЛЮЧАТЕЛЕ (пятьдесят четвёртая итерация). Нажали
+     «Не включать автоплатёж» — подписка отключена, и следующий счёт
+     уходит прежней ссылкой: иначе человек, передумавший до оплаты,
+     не смог бы заплатить без подписки (поправка money-8). Выключатель
+     выключили — то же самое: пока он выключен, новых подписок нет.
+     У имитатора `Recurring` не бывает вовсе: это не Робокасса.
+     Подписка при оплате таким счётом не включится — см. `podtverditMat`. */
+  const recurring =
+    !imitator &&
+    (await odna<{ id: string }>(`select id from avtoplatezh where order_id = $1 and status = 'zhdyot_oplaty'`, [zakaz])) !==
+      null &&
+    (await avtoplatezhVklyuchen());
+  const n = nastroyki();
+  /* ⚠️ РЕЖИМ РОБОКАССЫ ЗАПОМИНАЕТСЯ В СЧЁТЕ: тестовая мать в боевом
+     режиме цепочку не начнёт — тестовые операции Робокасса не помнит
+     по номеру (поправка money-17). */
   const p = await odna<{ id: string }>(
-    `insert into payment (order_id, provider, amount_kop, status) values ($1, 'robokassa', $2, 'new') returning id`,
-    [zakaz, ostatok],
+    `insert into payment (order_id, provider, amount_kop, status, recurring, test)
+     values ($1, 'robokassa', $2, 'new', $3, $4) returning id`,
+    [zakaz, ostatok, recurring, imitator ? true : n.test],
   );
   const platyozh = Number(p!.id);
 
@@ -65,12 +84,16 @@ export async function vystavitSchet(zakaz: number, userId: number): Promise<Sche
   const spisok = await katalog();
   const tarif = naytiTarif(spisok, z.plan_id);
   const nazvanie = nazvanieZakaza(tarif?.name ?? z.plan_id, z.period, z.kind);
-  const n = nastroyki();
-  const adres = ssylkaOplaty(n, platyozh, ostatok, `Spotik Shop, заказ № ${zakaz}`, [
-    { name: nazvanie, sumKop: ostatok },
-  ]);
+  const adres = ssylkaOplaty(
+    n,
+    platyozh,
+    ostatok,
+    `Spotik Shop, заказ № ${zakaz}`,
+    [{ name: nazvanie, sumKop: ostatok }],
+    { recurring },
+  );
   await zapros('update payment set external_id = $2 where id = $1', [platyozh, String(platyozh)]);
-  log.info('счёт выставлен', { order: zakaz, payment: platyozh, amount_kop: ostatok, test: n.test });
+  log.info('счёт выставлен', { order: zakaz, payment: platyozh, amount_kop: ostatok, test: n.test, recurring });
   return { ok: true, platyozh, adres, test: n.test };
 }
 
@@ -112,9 +135,9 @@ export async function vystavitSchetPopolneniya(userId: number, summaKop: number)
     return { ok: false, pochemu: 'Оплата картой ещё не подключена: магазин Робокассы не настроен.' };
   }
   const p = await odna<{ id: string }>(
-    `insert into payment (kind, user_id, order_id, provider, amount_kop, status)
-     values ('topup', $1, null, 'robokassa', $2, 'new') returning id`,
-    [userId, summaKop],
+    `insert into payment (kind, user_id, order_id, provider, amount_kop, status, test)
+     values ('topup', $1, null, 'robokassa', $2, 'new', $3) returning id`,
+    [userId, summaKop, imitator ? true : nastroyki().test],
   );
   const platyozh = Number(p!.id);
   if (imitator) {

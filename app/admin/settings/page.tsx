@@ -3,7 +3,8 @@ import Prices, { type Stroka } from '@/components/admin/Prices';
 import { ktoSotrudnik } from '@/lib/server/auth';
 import { bazaEst, zapros } from '@/lib/server/db';
 import { egipetskiePary, katalogPoUmolchaniyu, skidkiIVyklyuchennye, SROKI } from '@/lib/server/catalog';
-import { srokSertifikataDney, vremyaNaVzyatieMinut } from '@/lib/server/settings';
+import { avtoplatezhVklyuchen, nastroyka, srokSertifikataDney, vremyaNaVzyatieMinut } from '@/lib/server/settings';
+import { AVTO_STOP } from '@/lib/avtoplatezh';
 import { DARIMYE, imyaTarifaIz, srokDlyaSotrudnika } from '@/lib/plans';
 import { imenaSyrye, imenaTarifov } from '@/lib/server/imena';
 import { yazykSotrudnika } from '@/lib/server/yazyk';
@@ -96,6 +97,8 @@ export default async function AdminSettings() {
       plany={plany}
       days={await srokSertifikataDney()}
       minut={await vremyaNaVzyatieMinut()}
+      avto={await avtoplatezhVklyuchen()}
+      avtoStop={(await nastroyka(AVTO_STOP, '0')) === '1'}
       y={y}
     />
   );

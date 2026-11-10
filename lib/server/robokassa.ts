@@ -202,6 +202,14 @@ export function ssylkaOplaty(
   summaKop: number,
   opisanie: string,
   pozicii: { name: string; sumKop: number; sposob?: SposobRaschyota }[],
+  /**
+   * `recurring` — материнский счёт автоплатежа (пятьдесят четвёртая
+   * итерация): в ссылку добавляется `Recurring=true`. В подпись он НЕ
+   * входит — так считают официальные SDK Робокассы (PHP и .NET),
+   * и тестовый вектор PHP SDK это подтверждает. Без него ссылка ровно
+   * прежняя, байт в байт: `verify-pay` сверяет и состав, и подпись.
+   */
+  opcii: { recurring?: boolean } = {},
 ): string {
   const outSum = rubliStrokoy(summaKop);
   const chekJson = JSON.stringify(chek(n, pozicii));
@@ -220,6 +228,7 @@ export function ssylkaOplaty(
     'Culture=ru',
     'Encoding=utf-8',
   ];
+  if (opcii.recurring) pary.push('Recurring=true');
   if (n.test) pary.push('IsTest=1');
   return `${ADRES_OPLATY}?${pary.join('&')}`;
 }

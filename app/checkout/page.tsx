@@ -11,6 +11,7 @@ import { bazaEst } from '@/lib/server/db';
 import { rabocheeVremya } from '@/lib/chasy';
 import { kodPromo } from '@/lib/promokod';
 import { promoIzKuki } from '@/lib/server/promokody';
+import { avtoplatezhVklyuchen } from '@/lib/server/settings';
 import Bukvalno from '@/components/Bukvalno';
 
 export const metadata: Metadata = { title: 'Оформление — Spotik Shop', robots: { index: false, follow: false } };
@@ -164,6 +165,12 @@ export default async function Checkout({
        переведя часы на телефоне, её не подменить. */
     vneRabochego: !rabocheeVremya(),
     promoIzSsylki,
+    /* ⚠️ ГАЛОЧКА АВТОПЛАТЕЖА — ТОЛЬКО ПРИ ВКЛЮЧЁННОМ ВЫКЛЮЧАТЕЛЕ И ТОЛЬКО
+       У ЗАКАЗА ТАРИФА (пятьдесят четвёртая итерация). Пока выключатель
+       выключен, клиент про автоплатёж не видит ничего — постановка.
+       Покупатель сертификата аккаунт не продлевает вовсе: продлевать
+       будет получатель, и согласие давать ему. */
+    avtoDostupen: !podarok && (await avtoplatezhVklyuchen()),
   };
 
   return (
