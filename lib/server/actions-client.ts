@@ -228,7 +228,7 @@ export async function deystvieOformit(_prosh: Otvet, fd: FormData): Promise<Otve
 
   if (itog.kDoplate === 0) redirect(`/cabinet/?order=${itog.zakaz}`);
   const schet = await vystavitSchet(itog.zakaz, kto.userId);
-  if (!schet.ok) return { oshibka: `${schet.pochemu} Заказ № ${itog.zakaz} сохранён и ждёт оплаты в кабинете.` };
+  if (!schet.ok) return { oshibka: `${schet.pochemu} Заказ сохранён и ждёт оплаты в личном кабинете.` };
   /* ⚠️ АДРЕС ОТДАЁТСЯ НАРУЖУ, А НЕ `redirect(schet.adres)`: уходить
      на чужой домен обязан сам браузер — см. `kuda` выше и Р-143. */
   return { kuda: schet.adres };

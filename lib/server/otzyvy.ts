@@ -342,6 +342,9 @@ export async function ostavitOtzyv(v: {
   const bt = bedaTeksta(v.tekst);
   if (bt) return { oshibka: bt };
   if (!v.soglasie) return { oshibka: 'Отметьте согласие на публикацию — без него отзыв не отправить' };
+  // Номер приходит скрытым полем формы: подменённый на «abc» или «1.5»
+  // уронил бы запрос ошибкой базы вместо словесного отказа.
+  if (!Number.isSafeInteger(v.orderId) || v.orderId <= 0) return { oshibka: 'Отзыв можно оставить только к своему выполненному заказу' };
   try {
     const itog = await vTranzakcii(async (c) => {
       const z = await c.query<{ plan_id: string }>(

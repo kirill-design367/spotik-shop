@@ -59,9 +59,26 @@ export function vyzovMetoda(
   telo: Record<string, unknown>,
   srokMs: number = SROK_ZAPROSA,
 ): Promise<Itog> {
-  return new Promise((gotovo) => {
+  return new Promise((razreshit) => {
     const dannye = Buffer.from(JSON.stringify(telo), 'utf8');
     let adres = '—';
+    /* ⚠️ ПРЕДЕЛЬНЫЙ СРОК ВСЕГО ВЫЗОВА, А НЕ ТОЛЬКО ПРОСТОЯ СОКЕТА.
+       Если ответ начался и соединение закрыли до конца тела (FIN после
+       заголовков), Node не выдаёт ни 'end', ни 'error' — обещание
+       не разрешилось бы никогда, а за ним стоят флажки «уже идёт»
+       у бота, тика раздачи и очереди уведомлений: они встали бы
+       до перезапуска службы. */
+    let byl = false;
+    const gotovo = (x: Itog) => {
+      if (byl) return;
+      byl = true;
+      clearTimeout(predel);
+      razreshit(x);
+    };
+    const predel = setTimeout(() => {
+      req.destroy();
+      gotovo({ ok: false, pochemu: `предельный срок ${Math.round(srokMs / 1000) + 5} с`, adres, kod: 0, opisanie: '', povtorCherez: null });
+    }, srokMs + 5000);
     const req = request(
       `${env.telegramApi}/bot${env.telegramToken}/${metod}`,
       /* ⚠️ `autoSelectFamily` В ТИПАХ NODE ЕЩЁ НЕТ, А В САМОМ NODE
@@ -87,6 +104,12 @@ export function vyzovMetoda(
         let telo2 = '';
         res.setEncoding('utf8');
         res.on('data', (k) => (telo2 += k));
+        res.on('error', (e) =>
+          gotovo({ ok: false, pochemu: String(e.message), adres, kod: 0, opisanie: '', povtorCherez: null }),
+        );
+        res.on('close', () => {
+          if (!res.complete) gotovo({ ok: false, pochemu: 'ответ оборван', adres, kod: 0, opisanie: '', povtorCherez: null });
+        });
         res.on('end', () => {
           if (res.statusCode === 200) {
             let rezultat: unknown = null;

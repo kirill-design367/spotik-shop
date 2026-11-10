@@ -273,10 +273,12 @@ export default function OtzyvyPleer({ treki }: { treki: TrekOtzyva[] }) {
               <i />
               <i />
             </span>
-            {pauzaVidna ? 'На паузе' : 'Сейчас играет'}
+            {/* Меняющийся текст — свой элемент: голый узел рядом с элементом
+                переводчик браузера подменяет, и React писал бы в снятый (Р-166). */}
+            <span>{pauzaVidna ? 'На паузе' : 'Сейчас играет'}</span>
           </span>
           <span className="pl__schet tnum" aria-hidden="true">
-            {dvaZnaka(tek + 1)} / {dvaZnaka(n)}
+            {`${dvaZnaka(tek + 1)} / ${dvaZnaka(n)}`}
           </span>
         </div>
 
@@ -398,7 +400,7 @@ export default function OtzyvyPleer({ treki }: { treki: TrekOtzyva[] }) {
                         <i />
                       </span>
                     ) : (
-                      i + 1
+                      <span>{i + 1}</span>
                     )}
                   </span>
                   <span className="pl__trek-t">

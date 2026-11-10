@@ -2729,6 +2729,14 @@
 .pl__upr { display: none; align-items: center; gap: 10px; margin-top: 18px; }
 .pl__kn { width: 52px; padding: 0; flex: none; }
 .pl__kn svg { display: block; }
+/* Общее `.btn:hover` красит фон светло-зелёным, а значок у ghost-кнопки
+   белый — 2.3:1. У кнопок плеера фон на наведении берётся из самой
+   ghost-кнопки; подъём — только на точном указателе, на касаниях
+   :hover залипает до следующего тапа. */
+.pl__kn.btn--ghost:hover { background: var(--btn-bg); transform: none; }
+@media (hover: hover) and (pointer: fine) {
+  .pl__kn.btn--ghost:hover { transform: translateY(-1px); }
+}
 
 /* ── ОЧЕРЕДЬ ─────────────────────────────────────────────────────────── */
 .pl__ochered { display: none; min-width: 0; }

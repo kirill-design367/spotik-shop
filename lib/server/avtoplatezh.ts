@@ -900,15 +900,21 @@ async function spisatOdnu(id: number, spisok: TarifSCenami[], n: Nastroyki, neKa
  */
 async function prezhnieSchetaChisty(id: number, n: Nastroyki): Promise<boolean> {
   if (!robokassaRabotaet() || (n.test && !env.rkOpStateZadan)) return true;
-  const r = await zapros<{ id: string; zakaz: string }>(
-    `select p.id, p.avto_cikl_order_id as zakaz from payment p join avtoplatezh a on a.id = p.avtoplatezh_id
+  const r = await zapros<{ id: string; zakaz: string; svezhiy: boolean }>(
+    `select p.id, p.avto_cikl_order_id as zakaz, p.created_at > now() - interval '24 hours' as svezhiy
+       from payment p join avtoplatezh a on a.id = p.avtoplatezh_id
       where p.avtoplatezh_id = $1 and p.kind = 'avto' and p.status = 'failed'
         and p.avto_cikl_order_id = a.order_id`,
     [id],
   );
   for (const p of r) {
     const s = await sprositSostoyanie(n, Number(p.id));
-    if (s.kak === 'otvet' && s.result === 0 && s.state !== null && [5, 50, 100].includes(s.state)) {
+    // State 5 старше суток уже объявлен неудачей клиента (razobratVPuti) —
+    // письмо с обещанием повтора ушло, и держать повтор этим же состоянием
+    // значило бы не повторить никогда. Держат только 50 и 100 и свежий 5.
+    if (s.kak !== 'otvet' || s.result !== 0 || s.state === null) continue;
+    const zhiv = s.state === 50 || s.state === 100 || (s.state === 5 && p.svezhiy);
+    if (zhiv) {
       await zapros(`update avtoplatezh set sleduyushchaya_popytka = now() + interval '1 hour', updated_at = now() where id = $1`, [
         id,
       ]);
