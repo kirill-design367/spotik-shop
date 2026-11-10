@@ -27,6 +27,7 @@ import { kodPromo, otkazSlovami } from '@/lib/promokod';
 import { nayti, POCHEMU_KOD } from './certificates';
 import { katalog, naytiTarif } from './catalog';
 import { prinyatObrashchenie } from './podderzhka';
+import { ostavitOtzyv } from './otzyvy';
 
 export type Otvet = {
   oshibka?: string;
@@ -304,6 +305,36 @@ export async function deystvieOtmenitSvoy(fd: FormData): Promise<void> {
   if (r) await otmenitZakaz(zakaz, 'Отменён покупателем до оплаты', null, 'obychno', 'klient');
   revalidatePath('/cabinet');
   redirect('/cabinet/');
+}
+
+/**
+ * ОТЗЫВ К ВЫПОЛНЕННОМУ ЗАКАЗУ (пятьдесят четвёртая итерация).
+ *
+ * ⚠️ ВСЕ ПРОВЕРКИ — В `ostavitOtzyv`, А НЕ ЗДЕСЬ И НЕ В ФОРМЕ: номер
+ * заказа и галочка согласия приходят из браузера. Здесь только сессия:
+ * отзыв оставляет вошедший, и заказ обязан быть его.
+ *
+ * ⚠️ ГЛАВНАЯ НЕ ПЕРЕСОБИРАЕТСЯ: отзыв клиента уходит на модерацию
+ * и на сайте не виден, пока его не опубликует администратор, —
+ * а уж тот зовёт `revalidatePath('/')` сам.
+ */
+export async function deystvieOtzyv(_prosh: Otvet, fd: FormData): Promise<Otvet> {
+  if (!bazaEst()) return { oshibka: NET_BAZY };
+  const kto = await ktoKlient();
+  if (!kto) return { oshibka: 'Сессия закончилась — войдите снова по коду из письма.' };
+  const itog = await ostavitOtzyv({
+    userId: kto.userId,
+    orderId: Number(fd.get('order') ?? 0),
+    /* ⚠️ ПОЛЯ НАЗВАНЫ `otzyv_*`, А НЕ `imya`/`tekst`: `tekst` — поле
+       формы поддержки, которая стоит в том же кабинете, и сторож
+       находит её по имени. */
+    imya: String(fd.get('otzyv_imya') ?? ''),
+    tekst: String(fd.get('otzyv_tekst') ?? ''),
+    soglasie: fd.get('soglasie_otzyv') === 'on',
+  });
+  if ('oshibka' in itog) return { oshibka: itog.oshibka };
+  revalidatePath('/cabinet');
+  return { ladno: 'otzyv' };
 }
 
 /* ── Сертификат ────────────────────────────────────────────────── */

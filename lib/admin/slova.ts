@@ -42,6 +42,11 @@ const S = {
   'nav.stats': ['Статистика', 'Stats'],
   'nav.sales': ['Продажи', 'Sales'],
   'nav.promo': ['Промокоды', 'Promo codes'],
+  'nav.reviews': ['Отзывы', 'Reviews'],
+  /* Число отзывов на модерации в самом пункте меню (поправка после
+     рецензии): сообщения в чат о новом отзыве не шлём, и без счётчика
+     Лев узнал бы о нём, только зайдя в раздел сам. */
+  'nav.reviews_n': ['Отзывы ({n})', 'Reviews ({n})'],
   'nav.site': ['Сайт', 'Site'],
   'nav.logout': ['Выйти', 'Log out'],
   'nav.lang': ['Язык интерфейса', 'Interface language'],
@@ -711,6 +716,60 @@ const S = {
   'k.sub_marked': ['Отмечено. Дальше — следующий аккаунт.', 'Marked. Next account.'],
   'k.sub_done': ['Подписка отменена, задача закрыта.', 'Subscription cancelled, task closed.'],
   'k.sub_released': ['Задача вернулась в общую очередь.', 'The task is back in the general queue.'],
+
+  /* ── Отзывы (пятьдесят четвёртая итерация) ──────────────────────
+     Префикс `rv.` — свободный: ни с одним из прежних не сталкивается. */
+  'rv.h': ['Отзывы', 'Reviews'],
+  'rv.hint': [
+    'На главной отзывы идут плейлистом перед «Вопросами» — первые 12 опубликованных в этом порядке. Отзыв клиента приходит сюда на модерацию и на сайте не виден, пока его не опубликуют.',
+    'On the home page reviews play as a playlist before the FAQ — the first 12 published ones in this order. A client review arrives here for moderation and is not on the site until it is published.',
+  ],
+  'rv.porog': [
+    'Блок на главной появится, когда опубликованных станет три. Сейчас: {n}',
+    'The block appears on the home page once three reviews are published. Now: {n}',
+  ],
+  'rv.pokazan': [
+    'Блок на главной показан. Опубликовано: {n}, на главной — первые 12.',
+    'The block is on the home page. Published: {n}; the first 12 are shown.',
+  ],
+  'rv.mod_h': ['На модерации', 'Awaiting moderation'],
+  'rv.mod_none': ['Новых отзывов от клиентов нет.', 'No new reviews from clients.'],
+  'rv.new_h': ['Добавить отзыв', 'Add a review'],
+  'rv.imya': ['Имя или ник', 'Name or nickname'],
+  'rv.tekst': ['Текст', 'Text'],
+  'rv.data': ['Дата', 'Date'],
+  'rv.tarif': ['Тариф (по желанию)', 'Plan (optional)'],
+  'rv.bez_tarifa': ['— без тарифа —', '— no plan —'],
+  'rv.srazu': ['Опубликовать сразу', 'Publish right away'],
+  'rv.dobavit': ['Добавить отзыв', 'Add review'],
+  'rv.pub_h': ['Опубликованные', 'Published'],
+  'rv.pub_none': ['Опубликованных пока нет.', 'Nothing published yet.'],
+  'rv.skr_h': ['Скрытые', 'Hidden'],
+  'rv.skr_none': ['Скрытых нет.', 'Nothing hidden.'],
+  'rv.opublikovat': ['Опубликовать', 'Publish'],
+  'rv.skryt': ['Скрыть', 'Hide'],
+  'rv.vyshe': ['Выше', 'Up'],
+  'rv.nizhe': ['Ниже', 'Down'],
+  'rv.udalit': ['Удалить', 'Delete'],
+  'rv.udalit_sure': ['Удалить этот отзыв? Вернуть его будет нельзя.', 'Delete this review? It cannot be restored.'],
+  'rv.ot_klienta': ['от клиента', 'from a client'],
+  'rv.vruchnuyu': ['добавлен вручную', 'added manually'],
+  'rv.soglasie': ['Согласие на публикацию: {kogda}', 'Consent to publish: {kogda}'],
+  'rv.dobavlen': ['Отзыв добавлен.', 'Review added.'],
+  'rv.dobavlen_skryt': ['Отзыв добавлен в скрытые.', 'Review added to hidden.'],
+  'rv.opublikovan': ['Отзыв опубликован.', 'Review published.'],
+  'rv.skryt_ok': ['Отзыв скрыт.', 'Review hidden.'],
+  'rv.sdvinut': ['Порядок сохранён.', 'Order saved.'],
+  'rv.udalen': ['Отзыв удалён.', 'Review deleted.'],
+  'rv.e_imya': ['Укажите имя или ник.', 'Enter a name or nickname.'],
+  'rv.e_imya_dlinno': ['Имя — не длиннее 60 знаков.', 'The name can be at most 60 characters.'],
+  'rv.e_tekst': ['Напишите текст отзыва.', 'Enter the review text.'],
+  'rv.e_tekst_dlinno': ['Текст — не длиннее 600 знаков.', 'The text can be at most 600 characters.'],
+  'rv.e_data': ['Укажите настоящую дату.', 'Enter a real date.'],
+  'rv.e_data_pozzhe': ['Дата не может быть позже сегодняшней по Москве.', 'The date cannot be later than today in Moscow.'],
+  'rv.e_tarif': ['Такого тарифа нет.', 'There is no such plan.'],
+  'rv.e_net': ['Такого отзыва нет.', 'There is no such review.'],
+  'rv.e_nelzya': ['Отзыв клиента не удаляется — его можно скрыть.', 'A client review cannot be deleted — hide it instead.'],
 } as const satisfies Record<string, readonly [string, string]>;
 
 export type Klyuch = keyof typeof S;

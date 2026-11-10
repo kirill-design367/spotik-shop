@@ -6,6 +6,7 @@ import { yazykSotrudnika } from '@/lib/server/yazyk';
 import { slovar } from '@/lib/admin/slova';
 import VyborYazyka from '@/components/admin/VyborYazyka';
 import Bukvalno from '@/components/Bukvalno';
+import { chisloNaModeracii } from '@/lib/server/otzyvy';
 
 /**
  * ⚠️ ЗАГОЛОВОК ВКЛАДКИ ТОЖЕ НАДПИСЬ, И ОН ТОЖЕ ПЕРЕВОДИТСЯ. Статичный
@@ -35,6 +36,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const s = await ktoSotrudnik();
   const y = await yazykSotrudnika(s);
   const t = slovar(y);
+  /* Число отзывов на модерации — только администратору: исполнителю
+     раздела «Отзывы» не видно вовсе, и запрос за ним не делается. */
+  const naModeracii = s?.role === 'admin' ? await chisloNaModeracii() : 0;
   return (
     <main id="main" className="ad" lang={y} tabIndex={-1}>
       <div className="ad__bar">
@@ -51,6 +55,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             меню только не зовёт туда того, кого не пустят. */}
         {s.role === 'admin' ? <a href="/admin/sales/">{t('nav.sales')}</a> : null}
         {s.role === 'admin' ? <a href="/admin/promo/">{t('nav.promo')}</a> : null}
+        {s.role === 'admin' ? (
+          <a href="/admin/otzyvy/">{naModeracii ? t('nav.reviews_n', { n: naModeracii }) : t('nav.reviews')}</a>
+        ) : null}
               {/* ⚠️ СТАТИСТИКА ОТКРЫТА И ИСПОЛНИТЕЛЮ с сорок второй
                   итерации — постановка. Без ссылки в шапке «открыта»
                   означало бы «доступна тому, кто знает адрес». */}

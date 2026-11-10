@@ -80,6 +80,12 @@ export type ZakazKlientu = {
    */
   otmenaPodpiski: boolean;
   sekretyStyorty: boolean;
+  /**
+   * Отзыв к заказу и его статус (пятьдесят четвёртая итерация);
+   * `null` — отзыва нет. Кнопка «Оставить отзыв» стоит только
+   * у выполненного заказа тарифа (`kind = 'plan'`) без отзыва.
+   */
+  otzyv: 'moderaciya' | 'opublikovan' | 'skryt' | null;
   slots: SlotKlientu[];
 };
 
@@ -100,6 +106,7 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
     secrets_wiped_at: Date | null;
     expires_at: Date | null;
     otmena_podpiski: boolean;
+    otzyv: 'moderaciya' | 'opublikovan' | 'skryt' | null;
   }>(
     /* ⚠️ ОТМЕНЁННЫЕ САМИМ ПОКУПАТЕЛЕМ СЮДА НЕ ПОПАДАЮТ ВОВСЕ —
        постановка тридцать шестой итерации: «карточка плавно
@@ -108,7 +115,8 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
        причина и деньги на балансе. */
     `select id, kind, plan_id, period, status, total_kop, balance_kop, money_kop, source,
             created_at, cancel_reason, cancel_slot_idx, secrets_wiped_at, expires_at,
-            exists (select 1 from sub_cancel t where t.order_id = shop_order.id) as otmena_podpiski
+            exists (select 1 from sub_cancel t where t.order_id = shop_order.id) as otmena_podpiski,
+            (select z.status from otzyv z where z.order_id = shop_order.id) as otzyv
        from shop_order
       where user_id = $1 and not cancelled_by_client
       order by created_at desc limit 100`,
@@ -179,6 +187,7 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
       })(),
       otmenaPodpiski: r.otmena_podpiski,
       sekretyStyorty: Boolean(r.secrets_wiped_at),
+      otzyv: r.otzyv,
       slots: svoi.map((s) => ({
         idx: s.idx,
         mode: s.mode,

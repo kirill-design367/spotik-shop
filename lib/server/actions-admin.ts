@@ -61,6 +61,7 @@ import {
 } from './promokody';
 import { kodPromo } from '@/lib/promokod';
 import { nastoyashchayaData } from '../data';
+import { dobavitOtzyv, sdvinut, smenitStatus, udalitOtzyv, type OshibkaOtzyva } from './otzyvy';
 
 export type OtvetA = {
   error?: Klyuch;
@@ -764,4 +765,80 @@ export async function adminPromoOtklyuchit(_p: OtvetA, fd: FormData): Promise<Ot
   if (!(await otklyuchitPromo(kod, vykl))) return { error: 'pr.e_net' };
   revalidatePath('/admin/promo/');
   return { ok: vykl ? 'pr.otklyuchen' : 'pr.vklyuchen', polya: { kod: kodPromo(kod) } };
+}
+
+// ── отзывы (пятьдесят четвёртая итерация) ──────────────────────────
+
+const OSHIBKA_OTZYVA: Record<OshibkaOtzyva, Klyuch> = {
+  imya: 'rv.e_imya',
+  imya_dlinno: 'rv.e_imya_dlinno',
+  tekst: 'rv.e_tekst',
+  tekst_dlinno: 'rv.e_tekst_dlinno',
+  data: 'rv.e_data',
+  data_pozzhe: 'rv.e_data_pozzhe',
+  tarif: 'rv.e_tarif',
+  net: 'rv.e_net',
+  nelzya: 'rv.e_nelzya',
+};
+
+/**
+ * ВСЕ ДЕЙСТВИЯ С ОТЗЫВАМИ — ОДНО ДЕЙСТВИЕ С ПОЛЕМ `op`, и сообщение
+ * на экране одно по построению (то же устройство, что у шагов заказа,
+ * закон 52). `step` говорит странице, где его показать: у формы
+ * добавления или над списками.
+ *
+ * ⚠️ ТОЛЬКО АДМИНИСТРАТОРУ, и проверка стоит здесь: серверное действие —
+ * обычная точка входа.
+ *
+ * ⚠️ КАЖДОЕ ДЕЙСТВИЕ ПЕРЕСОБИРАЕТ ГЛАВНУЮ. Лендинг статический
+ * (закон 36), и без `revalidatePath('/')` опубликованный отзыв доехал бы
+ * до него через пять минут — то есть выглядел бы как «не сработало».
+ * Пересобирать и тогда, когда видимое на главной не изменилось
+ * (порядок скрытых), дешевле, чем выяснять это каждый раз. Раскладка
+ * админки — ради счётчика «Отзывы (N)» в меню.
+ */
+export async function adminOtzyv(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+  const s = await ktoSotrudnik();
+  if (!s || s.role !== 'admin') return { error: 'o.only_admin' };
+  const op = String(fd.get('op') ?? '');
+  const gotovo = (ok: Klyuch, step: string): OtvetA => {
+    revalidatePath('/');
+    revalidatePath('/admin', 'layout');
+    return { ok, step };
+  };
+
+  if (op === 'dobavit') {
+    const srazu = fd.get('srazu') === 'on';
+    const r = await dobavitOtzyv(
+      {
+        imya: String(fd.get('imya') ?? ''),
+        tekst: String(fd.get('tekst') ?? ''),
+        data: String(fd.get('data') ?? '').trim(),
+        planId: String(fd.get('plan') ?? ''),
+        srazu,
+      },
+      s.id,
+    );
+    if ('oshibka' in r) return { error: OSHIBKA_OTZYVA[r.oshibka], step: 'dobavit' };
+    return gotovo(srazu ? 'rv.dobavlen' : 'rv.dobavlen_skryt', 'dobavit');
+  }
+
+  const id = Number(fd.get('id') ?? 0);
+  if (!Number.isSafeInteger(id) || id <= 0) return { error: 'rv.e_net', step: 'spisok' };
+  if (op === 'opublikovat' || op === 'skryt') {
+    const r = await smenitStatus(id, op === 'opublikovat' ? 'opublikovan' : 'skryt', s.id);
+    if ('oshibka' in r) return { error: OSHIBKA_OTZYVA[r.oshibka], step: 'spisok' };
+    return gotovo(op === 'opublikovat' ? 'rv.opublikovan' : 'rv.skryt_ok', 'spisok');
+  }
+  if (op === 'vyshe' || op === 'nizhe') {
+    const r = await sdvinut(id, op === 'vyshe' ? -1 : 1);
+    if ('oshibka' in r) return { error: OSHIBKA_OTZYVA[r.oshibka], step: 'spisok' };
+    return gotovo('rv.sdvinut', 'spisok');
+  }
+  if (op === 'udalit') {
+    const r = await udalitOtzyv(id);
+    if ('oshibka' in r) return { error: OSHIBKA_OTZYVA[r.oshibka], step: 'spisok' };
+    return gotovo('rv.udalen', 'spisok');
+  }
+  return { error: 'rv.e_net', step: 'spisok' };
 }

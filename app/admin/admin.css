@@ -298,3 +298,33 @@ label.ad__check input { margin: 0; }
 .ad__knopki { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 @media (min-width: 900px) { .ad__row-shire { grid-column: span 3; } }
 .ad__stranicy { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 16px 0; }
+
+/* ── Отзывы (пятьдесят четвёртая итерация) ──────────────────────────
+   Текст отзыва бывает до 600 знаков и с абзацами — это не таблица,
+   а список блоков. Радиусы — только токенами (поле) и пилюлей (кнопки). */
+.ad textarea.ad__textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--ui-r);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.34);
+  background: var(--ink);
+  color: #fff;
+  font: inherit;
+  font-size: 15px;
+  resize: vertical;
+}
+.ad__schet { justify-self: end; font-size: 12px; color: var(--dim-2); }
+.ad__schet--mnogo { color: #ff8f8f; }
+.ad__otzyv { padding: 14px 0; border-top: 1px solid var(--hair); }
+.ad__otzyv:first-of-type { border-top: 0; padding-top: 4px; }
+.ad__otzyv-kto { margin: 0 0 6px; overflow-wrap: anywhere; }
+.ad__otzyv-n { display: inline-block; min-width: 2ch; margin-right: 8px; color: var(--dim-2); }
+/* Опубликованный, но за пределами первых двенадцати: на главной
+   его нет, и номер это показывает тише. */
+.ad__otzyv:not([data-glavnaya]) .ad__otzyv-n { opacity: 0.55; }
+.ad__otzyv-meta { color: var(--dim); font-size: 13px; }
+.ad__otzyv-tekst { margin: 0 0 10px; white-space: pre-line; overflow-wrap: anywhere; line-height: 1.5; }
+.ad__otzyv-knopki { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ad__otzyv-knopki form { margin: 0; }

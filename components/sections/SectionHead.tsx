@@ -17,6 +17,7 @@ export default function SectionHead({
   lead,
   quiet = false,
   center = false,
+  id,
 }: {
   title: string;
   lead?: string;
@@ -24,10 +25,12 @@ export default function SectionHead({
   quiet?: boolean;
   /** Выключка по центру — для блоков, у которых тело центровано. */
   center?: boolean;
+  /** Для `aria-labelledby` секции. */
+  id?: string;
 }) {
   return (
     <header className={`shead${quiet ? ' shead--quiet' : ''}${center ? ' shead--center' : ''}`}>
-      <h2 className={quiet ? 'shead__title' : 'h-section shead__title'}>{title}</h2>
+      <h2 id={id} className={quiet ? 'shead__title' : 'h-section shead__title'}>{title}</h2>
       {lead ? <p className="lead shead__lead">{lead}</p> : null}
     </header>
   );

@@ -3,13 +3,17 @@ import Pricing, { type CenyTarifov, type EgipetPary, type ImenaKart, type Skidki
 import Marquee from '@/components/mid/Marquee';
 import HowItWorks from '@/components/sections/HowItWorks';
 import Faq from '@/components/sections/Faq';
+import Otzyvy from '@/components/sections/Otzyvy';
+import type { TrekOtzyva } from '@/components/sections/OtzyvyPleer';
 import Footer from '@/components/sections/Footer';
 import RevealRoot from '@/components/chrome/RevealRoot';
 import { PERKS, type PeriodKey } from '@/lib/plans';
 import { katalog } from '@/lib/server/catalog';
+import { otzyvyNaGlavnuyu } from '@/lib/server/otzyvy';
+import { POROG_POKAZA } from '@/lib/otzyv';
 
 /**
- * ХИРО · ТАРИФЫ · БЕГУЩАЯ СТРОКА · КАК ЭТО РАБОТАЕТ · ВОПРОСЫ · ФУТЕР.
+ * ХИРО · ТАРИФЫ · БЕГУЩАЯ СТРОКА · КАК ЭТО РАБОТАЕТ · ОТЗЫВЫ · ВОПРОСЫ · ФУТЕР.
  *
  * Надзаголовков и номеров у блоков больше нет (девятнадцатая итерация):
  * блок понятен по своему заголовку. Бегущая строка — не часть тарифов,
@@ -57,6 +61,23 @@ export default async function Page() {
     if (Object.keys(sk).length) skidki[t.id] = sk;
   }
 
+  /* ⚠️ ОТЗЫВЫ ЕДУТ ПРОПОМ ТАК ЖЕ, КАК ЦЕНЫ, И СТРАНИЦА ОСТАЁТСЯ
+     СТАТИЧЕСКОЙ (закон 36): правка в админке зовёт `revalidatePath('/')`.
+     Базы нет (раннер) — пустой список, и блока нет вовсе. Пока
+     опубликовано меньше трёх, блок не рисуется — ни разметки,
+     ни заголовка. Тариф — полным русским именем ИЗ КАТАЛОГА (имена —
+     данные, Р-142); тарифа в каталоге нет — строки тарифа нет. */
+  const treki: TrekOtzyva[] = (await otzyvyNaGlavnuyu()).map((o) => ({
+    id: o.id,
+    imya: o.imya,
+    tekst: o.tekst,
+    nazvanie: o.nazvanie,
+    data: o.data,
+    dataIso: o.dataIso,
+    tarif: o.planId ? (spisok.find((t) => t.id === o.planId)?.name ?? null) : null,
+    inicial: Array.from(o.imya).find((z) => /[\p{L}\p{N}]/u.test(z))?.toUpperCase() ?? Array.from(o.imya.trim())[0] ?? '',
+  }));
+
   return (
     <>
       <main id="main" tabIndex={-1}>
@@ -64,6 +85,7 @@ export default async function Page() {
         <Pricing ceny={ceny} skidki={skidki} imena={imena} egipet={egipet} />
         <Marquee items={PERKS} />
         <HowItWorks />
+        {treki.length >= POROG_POKAZA ? <Otzyvy treki={treki} /> : null}
         <Faq />
       </main>
       <Footer />

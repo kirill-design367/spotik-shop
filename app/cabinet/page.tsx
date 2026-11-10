@@ -5,6 +5,7 @@ import LoginBox from '@/components/shop/LoginBox';
 import KabinetZhivoy from '@/components/shop/KabinetZhivoy';
 import Kopirovat from '@/components/shop/Kopirovat';
 import Svorachivanie from '@/components/shop/Svorachivanie';
+import OtzyvForma from '@/components/shop/OtzyvForma';
 import { ktoKlient } from '@/lib/server/auth';
 import { balans, istoriyaBalansa, moiZakazy } from '@/lib/server/views';
 import { katalog, srokKratko } from '@/lib/server/catalog';
@@ -373,6 +374,16 @@ export default async function Cabinet({
                       ))}
                   </div>
                 ) : null}
+
+                {/* ⚠️ ОТЗЫВ — ТОЛЬКО К ВЫПОЛНЕННОМУ ЗАКАЗУ ТАРИФА (пятьдесят
+                    четвёртая итерация): покупатель подарка услугой
+                    не пользовался, а на главной у его отзыва встал бы
+                    подаренный тариф. То же условие стоит в действии —
+                    форма правится в браузере. Отзыв один на заказ:
+                    оставленный показывается строкой, а форма — больше
+                    нет; строку рисует сама форма, чтобы её «Спасибо»
+                    пережило перерисовку страницы после отправки. */}
+                {z.status === 'done' && z.kind === 'plan' ? <OtzyvForma zakaz={z.id} status={z.otzyv} /> : null}
 
                 {z.sekretyStyorty && z.status === 'done' ? (
                   <p className="panel__note">

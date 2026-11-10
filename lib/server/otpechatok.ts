@@ -56,6 +56,7 @@ export async function otpechatokKabineta(userId: number): Promise<OtpechatokKabi
     dostupov: string;
     balans: string;
     serty: string;
+    otzyvy: string;
   }>(
     `select
        (select coalesce(string_agg(
@@ -85,10 +86,18 @@ export async function otpechatokKabineta(userId: number): Promise<OtpechatokKabi
          where o.user_id = $1 and s.done_at is not null) as dostupov,
        (select balance_kop::text from app_user where id = $1) as balans,
        (select coalesce(string_agg(c.id || ':' || (c.used_at is not null)::int, ',' order by c.id), '')
-          from certificate c where c.buyer_id = $1) as serty`,
+          from certificate c where c.buyer_id = $1) as serty,
+       /* ⚠️ СТАТУС ОТЗЫВА — ТОЖЕ ТО, ЧТО КАБИНЕТ ПОКАЗЫВАЕТ: «На проверке»
+          сменяется на «Опубликован», когда отзыв опубликует
+          администратор, и человек ничего для этого не делает. Без этой
+          строки кабинет не обновился бы сам (пятьдесят четвёртая
+          итерация). */
+       (select coalesce(string_agg(z.order_id || ':' || z.status, ',' order by z.order_id), '')
+          from otzyv z join shop_order o on o.id = z.order_id
+         where o.user_id = $1) as otzyvy`,
     [userId],
   );
-  const sostoyanie = `${r?.zakazy ?? ''}|${r?.sloty ?? ''}|${r?.balans ?? '0'}|${r?.serty ?? ''}`;
+  const sostoyanie = `${r?.zakazy ?? ''}|${r?.sloty ?? ''}|${r?.balans ?? '0'}|${r?.serty ?? ''}|${r?.otzyvy ?? ''}`;
   return {
     otpechatok: createHash('sha256').update(sostoyanie).digest('hex').slice(0, 32),
     /* Число выданных доступов уходит отдельным полем: по нему видно
