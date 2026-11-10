@@ -50,6 +50,7 @@ export default async function AdminSales({
     if (f.plan) q.set('plan', f.plan);
     if (f.period) q.set('srok', String(f.period));
     if (f.status) q.set('st', f.status);
+    if (f.avto) q.set('ap', f.avto);
     if (f.q) q.set('q', f.q);
     if (stranica > 1) q.set('s', String(stranica));
     const str = q.toString();
@@ -108,6 +109,17 @@ export default async function AdminSales({
                 <option value="podpiska">{t('sc.tag')}</option>
               </select>
             </label>
+            {/* Автопродление (пятьдесят четвёртая итерация): кладётся в адрес,
+                как остальные фильтры. ⚠️ ПОЛЕ НАЗВАНО `ap`, А НЕ `on`/`avto`:
+                селекторы сторожей считают формы по именам полей. */}
+            <label>
+              {t('sl.avto')}
+              <select name="ap" defaultValue={f.avto ?? ''}>
+                <option value="">{t('sl.all')}</option>
+                <option value="sozdan">{t('sl.avto_sozdan')}</option>
+                <option value="vkl">{t('sl.avto_vkl')}</option>
+              </select>
+            </label>
             <label className="ad__row-shire">
               {t('sl.q')}
               <input
@@ -163,6 +175,12 @@ export default async function AdminSales({
                     {imyaTarifaIz(imena, r.planId, en)}
                     {r.kind === 'certificate' ? <span className="ad__tag ad__tag--gift">{t('sl.cert')}</span> : null}
                     {r.bySertificate ? <span className="ad__tag ad__tag--gift">{t('q.gift')}</span> : null}
+                    {r.avtoProdlenie ? (
+                      <span className="ad__tag ad__tag--avto" title={t('av.tag_t')}>
+                        {t('av.tag')}
+                      </span>
+                    ) : null}
+                    {r.avtoVklyuchen ? <span className="ad__tag ad__tag--avto-vkl">{t('av.tag_vkl')}</span> : null}
                   </td>
                   <td>{srokKratkoDlyaSotrudnika(r.period, en)}</td>
                   <td {...NE_PEREVODIT}>{r.client}</td>

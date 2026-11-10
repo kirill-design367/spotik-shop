@@ -40,6 +40,12 @@ export type FiltrProdazh = {
   period: number | null;
   /** `podpiska` — заказы, у которых отменяли подписку (Р-160). */
   status: Status | 'podpiska' | null;
+  /**
+   * Автопродление (пятьдесят четвёртая итерация): `sozdan` — заказы,
+   * которые создал сам автоплатёж; `vkl` — заказы, на которых сейчас
+   * стоит включённый автоплатёж; `null` — все.
+   */
+  avto: 'sozdan' | 'vkl' | null;
   q: string;
   stranica: number;
 };
@@ -58,6 +64,10 @@ export type StrokaProdazhi = {
   staff: string | null;
   totalKop: number;
   promoKod: string | null;
+  /** Заказ создан автоплатежом. */
+  avtoProdlenie: boolean;
+  /** На заказе сейчас стоит включённый автоплатёж. */
+  avtoVklyuchen: boolean;
 };
 
 /** Предел номера страницы: дальше страниц не бывает, а `1e300` ушло бы в SQL строкой «1e+302». */
@@ -76,6 +86,7 @@ export function ponyatFiltr(sp: Record<string, string>): FiltrProdazh {
     plan: /^[a-z0-9_-]{1,32}$/.test(sp.plan ?? '') ? sp.plan! : null,
     period: [1, 3, 6, 12].includes(period) ? period : null,
     status: STATUSY.includes(sp.st ?? '') ? (sp.st as FiltrProdazh['status']) : null,
+    avto: sp.ap === 'sozdan' || sp.ap === 'vkl' ? sp.ap : null,
     q: (sp.q ?? '').trim().slice(0, 200),
     stranica: Math.min(PREDEL_STRANIC, Math.max(1, Math.floor(Number(sp.s) || 1))),
   };
@@ -95,6 +106,13 @@ function uslovie(f: FiltrProdazh): { sql: string; params: unknown[] } {
   if (f.period) chasti.push('o.period = ' + p(f.period));
   if (f.status === 'podpiska') chasti.push('t.order_id is not null');
   else if (f.status) chasti.push('o.status = ' + p(f.status));
+  /* ⚠️ «С ВКЛЮЧЁННЫМ» — ПОДЗАПРОСОМ, А НЕ СОЕДИНЕНИЕМ: подсчёт берёт
+     только `IZ`, и таблица, подключённая к одному основному запросу,
+     развела бы число найденных со строками. */
+  if (f.avto === 'sozdan') chasti.push("o.source = 'avto'");
+  if (f.avto === 'vkl') {
+    chasti.push("exists (select 1 from avtoplatezh ap where ap.order_id = o.id and ap.status = 'vklyuchen')");
+  }
   if (f.q) {
     const ili: string[] = [];
     const nomer = f.q.replace(/^[№#\s]+/, '');
@@ -152,9 +170,11 @@ export async function prodazhi(f: FiltrProdazh): Promise<{ vsego: number; stroki
     staff: string | null;
     total_kop: string;
     promo_kod: string | null;
+    avto_vkl: boolean;
   }>(
     `select o.id, o.paid_at, o.created_at, o.plan_id, o.period, o.kind, o.source, u.email, o.status,
-            (t.order_id is not null) as otmena, fs.email as staff, o.total_kop, o.promo_kod
+            (t.order_id is not null) as otmena, fs.email as staff, o.total_kop, o.promo_kod,
+            exists (select 1 from avtoplatezh ap where ap.order_id = o.id and ap.status = 'vklyuchen') as avto_vkl
        ${IZ}
        ${SOTRUDNIK}
        ${u.sql}
@@ -178,6 +198,8 @@ export async function prodazhi(f: FiltrProdazh): Promise<{ vsego: number; stroki
       staff: r.staff,
       totalKop: Number(r.total_kop),
       promoKod: r.promo_kod,
+      avtoProdlenie: r.source === 'avto',
+      avtoVklyuchen: r.avto_vkl,
     })),
   };
 }

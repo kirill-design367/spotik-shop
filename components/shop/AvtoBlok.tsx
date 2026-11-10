@@ -21,11 +21,13 @@
 import { deystvieOtklyuchitAvto } from '@/lib/server/actions-client';
 import type { AvtoKlientu } from '@/lib/server/views';
 import type { PrichinaAvto } from '@/lib/avtoplatezh';
+import { ZONA_MSK } from '@/lib/chasy';
+import { rubli } from '@/lib/server/money';
 
 /** Почему отключён — словами клиенту. `zakaz_otmenyon` не говорится:
     карточка отменённого заказа уже сказала всё сама. */
 const POCHEMU: Partial<Record<PrichinaAvto, string>> = {
-  klient: 'Автоплатёж отключён.',
+  klient: 'Автоплатёж отключён по вашей просьбе.',
   admin: 'Автоплатёж отключён администратором.',
   dve_neudachi: 'Автоплатёж отключён: два раза не удалось списать оплату.',
   ne_prodayotsya: 'Автоплатёж отключён: этот тариф на этот срок больше не продаётся.',
@@ -36,14 +38,24 @@ const POCHEMU: Partial<Record<PrichinaAvto, string>> = {
 
 const SNOVA = 'Включить снова можно при следующем продлении: отметьте галочку и оплатите картой.';
 
+/**
+ * ⚠️ ДАТЫ — ПО МОСКВЕ ЯВНОЙ ЗОНОЙ, как в письмах (`dataMsk`): сервер
+ * стоит в UTC, и окончание в 01:00 по Москве иначе вышло бы вчерашним
+ * днём — человек прочёл бы в кабинете одну дату, а в письме другую.
+ */
+function data(d: Date): string {
+  return d.toLocaleDateString('ru-RU', { timeZone: ZONA_MSK });
+}
+
 export default function AvtoBlok({
   avto,
-  konchaetsya,
   zakazGotov,
+  balansKop,
 }: {
   avto: AvtoKlientu;
-  konchaetsya: Date | null;
   zakazGotov: boolean;
+  /** Баланс сейчас: «с баланса», если на нём уже хватает на списание. */
+  balansKop: number;
 }) {
   if (avto.status === 'zhdyot_oplaty') {
     return (
@@ -54,15 +66,11 @@ export default function AvtoBlok({
     );
   }
   if (avto.status === 'vklyuchen') {
-    // Сумму и состояние «списание в пути» показывает часть списаний —
-    // здесь только то, что известно без неё: включён и когда.
-    const kogda =
-      zakazGotov && konchaetsya
-        ? `Следующее списание — в день окончания подписки, ${konchaetsya.toLocaleDateString('ru-RU')}.`
-        : 'Следующее списание — в день окончания подписки.';
     return (
       <div className="avto-sost">
-        <p className="panel__note">Автоплатёж включён. {kogda}</p>
+        <p className="panel__note">
+          Автоплатёж включён. <Vklyuchen avto={avto} zakazGotov={zakazGotov} balansKop={balansKop} />
+        </p>
         <OtklyuchitForma id={avto.id} podpis="Отключить автоплатёж" />
       </div>
     );
@@ -92,6 +100,51 @@ export default function AvtoBlok({
       </p>
     </div>
   );
+}
+
+/**
+ * Включённый автоплатёж — что с ним сейчас, одной фразой.
+ *
+ * Порядок проверок — порядок важности для человека:
+ *   1. счёт «в пути»: деньги, возможно, уже ушли с карты, и дата
+ *      «следующего списания» была бы прошедшей (поправка product-5);
+ *   2. заказ ещё не выполнен: дня окончания нет, и дата была бы
+ *      выдуманной;
+ *   3. была неудача, ждём повтора;
+ *   4. обычное: когда, сколько и откуда.
+ *
+ * ⚠️ СУММА И ДЕНЬ — ТЕ ЖЕ, ЧТО ВОЗЬМЁТ ЧАСОВОЙ ХОД (`avtoKlientu`
+ * во `views.ts`), и «с баланса» говорится, только если на балансе
+ * хватает уже сейчас: баланс списывается первым (постановка).
+ */
+function Vklyuchen({
+  avto,
+  zakazGotov,
+  balansKop,
+}: {
+  avto: AvtoKlientu;
+  zakazGotov: boolean;
+  balansKop: number;
+}) {
+  if (avto.vPuti) {
+    const skolko = avto.vPutiSummaKop !== null ? ` ${rubli(avto.vPutiSummaKop)}` : '';
+    const kogda = avto.vPutiKogda ? ` ${data(avto.vPutiKogda)}` : '';
+    return <>{`Списание${skolko} отправлено${kogda}, ждём подтверждения банка.`}</>;
+  }
+  if (!zakazGotov || !avto.sleduyushcheeSpisanie) return <>Следующее списание — в день окончания подписки.</>;
+  const hvataet = avto.summaKop !== null && balansKop >= avto.summaKop;
+  const skolko =
+    avto.summaKop !== null ? `, ${rubli(avto.summaKop)} ${hvataet ? 'с баланса' : 'с карты'}` : '';
+  if (avto.neudach > 0 && avto.sleduyushchayaPopytka) {
+    const kogdaNe = avto.neudachaKogda ? ` ${data(avto.neudachaKogda)}` : '';
+    return (
+      <>
+        {`Не удалось списать оплату${kogdaNe}, повторим ${data(avto.sleduyushcheeSpisanie)}${skolko}.`}
+        {hvataet ? null : ' Пополните баланс — спишем с него.'}
+      </>
+    );
+  }
+  return <>{`Следующее списание — ${data(avto.sleduyushcheeSpisanie)}${skolko}.`}</>;
 }
 
 function OtklyuchitForma({ id, podpis }: { id: number; podpis: string }) {

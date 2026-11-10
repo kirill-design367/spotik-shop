@@ -935,3 +935,6 @@
 .avto-sost { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: var(--ritm) 0 0; }
 .avto-sost .panel__note { margin: 0; flex: 1 1 260px; }
 .avto-sost form { margin: 0; }
+/* Оформление по «Продлить» у заказа с включённым автоплатежом: строка
+   над формой, чтобы продление не оплатили дважды (поправка money-10). */
+.avto-uzhe { margin: var(--ritm) 0; }

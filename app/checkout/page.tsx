@@ -6,9 +6,9 @@ import { CELI } from '@/lib/metrika';
 import LoginBox from '@/components/shop/LoginBox';
 import { ktoKlient } from '@/lib/server/auth';
 import { katalog, naytiTarif, srokPolno } from '@/lib/server/catalog';
-import { balans, pochtyKlienta, pochtyZakaza } from '@/lib/server/views';
+import { avtoNaProdlevaemom, balans, pochtyKlienta, pochtyZakaza } from '@/lib/server/views';
 import { bazaEst } from '@/lib/server/db';
-import { rabocheeVremya } from '@/lib/chasy';
+import { rabocheeVremya, ZONA_MSK } from '@/lib/chasy';
 import { kodPromo } from '@/lib/promokod';
 import { promoIzKuki } from '@/lib/server/promokody';
 import { avtoplatezhVklyuchen } from '@/lib/server/settings';
@@ -102,6 +102,15 @@ export default async function Checkout({
      список и не подставляет ничего. */
   const prodlit = Number(odin('renew'));
   const pochty = kto && prodlit > 0 ? await pochtyZakaza(kto.userId, prodlit) : [];
+  /* ⚠️ ПРОДЛЕВАЕМЫЙ ЗАКАЗ С ВКЛЮЧЁННЫМ АВТОПЛАТЕЖОМ ГОВОРИТ ОБ ЭТОМ
+     (поправка money-10): иначе человек оплатил бы руками то, что
+     и так спишется само. Как и всё про автоплатёж, — только при
+     включённом выключателе. «Тот же тариф и срок» в тексте —
+     не оговорка: ручным продлением цикла ход считает заказ ТЕХ ЖЕ
+     тарифа, срока и аккаунтов (`ruchnoeProdlenie`), а «Изменить»
+     на оформлении меняет и тариф, и срок. */
+  const avtoVkl = await avtoplatezhVklyuchen();
+  const avtoSpishet = kto && prodlit > 0 && avtoVkl ? await avtoNaProdlevaemom(kto.userId, prodlit) : null;
 
   /* ⚠️ ПОДСКАЗКА ПОЧТ — ТОТ ЖЕ ЧИТАТЕЛЬ, ЧТО У КАБИНЕТА: владелец
      и его собственные адреса (закон 35). Ни новой двери, ни второго
@@ -170,7 +179,7 @@ export default async function Checkout({
        выключен, клиент про автоплатёж не видит ничего — постановка.
        Покупатель сертификата аккаунт не продлевает вовсе: продлевать
        будет получатель, и согласие давать ему. */
-    avtoDostupen: !podarok && (await avtoplatezhVklyuchen()),
+    avtoDostupen: !podarok && avtoVkl,
   };
 
   return (
@@ -189,6 +198,14 @@ export default async function Checkout({
           <p className="cab__mail">
             Информация о заказе придёт на <Bukvalno>{kto.email}</Bukvalno>. <a href="/cabinet/">Личный кабинет</a>
           </p>
+          {avtoSpishet ? (
+            <p className="panel__note avto-uzhe">
+              У этого заказа включён автоплатёж: продление спишется само в день окончания подписки,{' '}
+              {avtoSpishet.toLocaleDateString('ru-RU', { timeZone: ZONA_MSK })}. Если всё же оплатить
+              продление вручную на тот же тариф и срок, автоплатёж перейдёт на новый заказ и в этом
+              цикле ничего не спишет.
+            </p>
+          ) : null}
           <CheckoutForm vvod={vvod} />
         </>
       ) : (

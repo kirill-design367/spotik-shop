@@ -67,6 +67,7 @@ import { kodPromo } from '@/lib/promokod';
 import { nastoyashchayaData } from '../data';
 import { dobavitOtzyv, sdvinut, smenitStatus, udalitOtzyv, type OshibkaOtzyva } from './otzyvy';
 import { AVTO_NASTROYKA, AVTO_STOP } from '@/lib/avtoplatezh';
+import { otklyuchitPodpisku } from './avtoplatezh';
 
 export type OtvetA = {
   error?: Klyuch;
@@ -696,6 +697,33 @@ export async function adminSetAvtoplatezh(_p: OtvetA, fd: FormData): Promise<Otv
   log.info('выключатель автоплатежа', { vkl, kto: pochtaVZhurnal(s.email) });
   revalidatePath('/admin/settings');
   return { ok: vkl ? 'av.saved_on' : 'av.saved_off' };
+}
+
+/**
+ * ОТКЛЮЧИТЬ АВТОПЛАТЁЖ ИЗ КАРТОЧКИ ЗАКАЗА — администратору (пятьдесят
+ * четвёртая итерация, поправка product-5): просьбы об отказе приходят
+ * и через поддержку, и исполнять их надо так же, как нажатие в кабинете.
+ *
+ * ⚠️ ТА ЖЕ ФУНКЦИЯ, ЧТО У КЛИЕНТА (`otklyuchitPodpisku`), только без
+ * проверки владельца и с причиной `admin` — клиент видит «отключён
+ * администратором». Блокировка подписки та же `for update`: отправка
+ * списания в эту секунду либо успела раньше (запрос ушёл по ещё
+ * действующему согласию), либо не уйдёт вовсе (поправка money-9).
+ * Работает при любом положении выключателя (поправка money-7).
+ */
+export async function adminOtklyuchitAvto(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+  const s = await ktoSotrudnik();
+  if (!s) return { error: 'e.session' };
+  if (s.role !== 'admin') return { error: 'o.only_admin' };
+  const id = Number(fd.get('avto') ?? 0);
+  const zakaz = Number(fd.get('order') ?? 0);
+  if (!Number.isSafeInteger(id) || id <= 0) return { error: 'av.k_e_net' };
+  const vyshlo = await otklyuchitPodpisku(id, null, 'admin');
+  log.info('автоплатёж отключён администратором', { avto: id, kto: pochtaVZhurnal(s.email), vyshlo });
+  revalidatePath('/admin');
+  if (Number.isSafeInteger(zakaz) && zakaz > 0) revalidatePath(`/admin/orders/${zakaz}/`);
+  revalidatePath('/cabinet');
+  return vyshlo ? { ok: 'av.k_otklyuchen' } : { error: 'av.k_e_net' };
 }
 
 /**

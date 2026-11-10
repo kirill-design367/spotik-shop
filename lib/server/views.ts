@@ -29,7 +29,7 @@ import {
   type Rezhim,
   type Status,
 } from './orders';
-import { katalog, naytiTarif, srokKratko } from './catalog';
+import { cenaTarifa, katalog, naytiTarif, srokKratko } from './catalog';
 import { usloviyeVidimosti, usloviyeVidimostiOtmeny, usloviyeVidimostiSZadachey, type Dostup } from './dostup';
 import { METKI } from './utm';
 import { rabocheeVremya } from '@/lib/chasy';
@@ -74,6 +74,26 @@ export type AvtoKlientu = {
   otpravlenAt: Date | null;
   /** Сумма, названная в письме о списании этого цикла. */
   napomnilSummaKop: number | null;
+  /**
+   * Сколько спишется в следующий раз: та же величина, что спишет
+   * часовой ход, — `min(названная в письме этого цикла, текущая цена)`,
+   * а без письма — текущая цена пары со скидкой тарифа, без промокода
+   * (поправка money-4: «кабинет показывает то же число»). `null` —
+   * пара больше не продаётся, и подписку отключит ближайший ход.
+   */
+  summaKop: number | null;
+  /**
+   * Когда спишется — не раньше дня окончания, не раньше суток после
+   * письма о списании (ворота, поправки money-4…6) и не раньше
+   * назначенного повтора. `null` — заказ ещё не выполнен, и дня
+   * окончания нет.
+   */
+  sleduyushcheeSpisanie: Date | null;
+  /** Сумма и время дочернего счёта «в пути». */
+  vPutiSummaKop: number | null;
+  vPutiKogda: Date | null;
+  /** Последняя неудачная попытка списания в этом цикле. */
+  neudachaKogda: Date | null;
 };
 
 export type ZakazKlientu = {
@@ -115,6 +135,12 @@ export type ZakazKlientu = {
    */
   otzyv: 'moderaciya' | 'opublikovan' | 'skryt' | null;
   /**
+   * Заказ создан автоплатежом — «Продлён автоплатежом» (пятьдесят
+   * четвёртая итерация). Показывает её кабинет, как и всё про
+   * автоплатёж, только при включённом выключателе.
+   */
+  avtoProdlenie: boolean;
+  /**
    * Подписка автоплатежа, которая СЕЙЧАС стоит на этом заказе; `null` —
    * нет. Показывает её кабинет только при включённом выключателе
    * (постановка: «пока выключен, клиент ничего про автоплатёж не видит»).
@@ -122,6 +148,72 @@ export type ZakazKlientu = {
   avto: AvtoKlientu | null;
   slots: SlotKlientu[];
 };
+
+/**
+ * Подписка на карточке заказа — те же числа, что возьмёт часовой ход
+ * (`lib/server/avtoplatezh.ts`): сумма — `min(названная в письме этого
+ * цикла, текущая цена)`, день — не раньше окончания, не раньше суток
+ * после письма и не раньше назначенного повтора. Посчитай кабинет их
+ * по-своему — человек прочёл бы одну сумму и одну дату, а списали бы
+ * другие.
+ *
+ * ⚠️ «СУТКИ ПОСЛЕ ПИСЬМА» БЕЗ ПИСЬМА — ЭТО СУТКИ ОТ СЕЙЧАС: письма
+ * этого цикла ещё нет, значит оно уйдёт не раньше ближайшего хода,
+ * а списание — не раньше суток после него. У далёкого окончания
+ * это ничего не меняет: побеждает сам день окончания.
+ */
+function avtoKlientu(
+  r: {
+    a_id: string | null;
+    a_status: StatusAvto | null;
+    a_prichina: PrichinaAvto | null;
+    a_neudach: number | null;
+    a_sleduyushchaya: Date | null;
+    a_v_puti: string | null;
+    a_otpravlen: Date | null;
+    a_summa: string | null;
+    a_est_pismo: boolean | null;
+    a_napomnil_at: Date | null;
+    a_v_puti_kop: string | null;
+    a_v_puti_sozdan: Date | null;
+    a_neudacha_at: Date | null;
+    status: Status;
+    expires_at: Date | null;
+  },
+  cena: number | null,
+): AvtoKlientu {
+  const estPismo = r.a_est_pismo === true;
+  const nazvana = estPismo && r.a_summa !== null ? Number(r.a_summa) : null;
+  const summaKop = nazvana !== null ? (cena !== null ? Math.min(nazvana, cena) : nazvana) : cena;
+  const SUTKI = 24 * 60 * 60 * 1000;
+  let kogda: Date | null = null;
+  if (r.status === 'done' && r.expires_at) {
+    const vorota =
+      estPismo && r.a_napomnil_at ? new Date(r.a_napomnil_at).getTime() + SUTKI : Date.now() + SUTKI;
+    kogda = new Date(
+      Math.max(
+        new Date(r.expires_at).getTime(),
+        vorota,
+        r.a_sleduyushchaya ? new Date(r.a_sleduyushchaya).getTime() : 0,
+      ),
+    );
+  }
+  return {
+    id: Number(r.a_id),
+    status: r.a_status!,
+    prichina: r.a_prichina,
+    neudach: Number(r.a_neudach ?? 0),
+    sleduyushchayaPopytka: r.a_sleduyushchaya ? new Date(r.a_sleduyushchaya) : null,
+    vPuti: r.a_v_puti !== null,
+    otpravlenAt: r.a_otpravlen ? new Date(r.a_otpravlen) : null,
+    napomnilSummaKop: r.a_summa === null ? null : Number(r.a_summa),
+    summaKop,
+    sleduyushcheeSpisanie: kogda,
+    vPutiSummaKop: r.a_v_puti_kop === null ? null : Number(r.a_v_puti_kop),
+    vPutiKogda: r.a_otpravlen ? new Date(r.a_otpravlen) : r.a_v_puti_sozdan ? new Date(r.a_v_puti_sozdan) : null,
+    neudachaKogda: r.a_neudacha_at ? new Date(r.a_neudacha_at) : null,
+  };
+}
 
 export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
   const rows = await zapros<{
@@ -149,21 +241,35 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
     a_v_puti: string | null;
     a_otpravlen: Date | null;
     a_summa: string | null;
+    a_est_pismo: boolean | null;
+    a_napomnil_at: Date | null;
+    a_v_puti_kop: string | null;
+    a_v_puti_sozdan: Date | null;
+    a_neudacha_at: Date | null;
   }>(
     /* ⚠️ ОТМЕНЁННЫЕ САМИМ ПОКУПАТЕЛЕМ СЮДА НЕ ПОПАДАЮТ ВОВСЕ —
        постановка тридцать шестой итерации: «карточка плавно
        схлопывается и больше не показывается, причину не пишем».
        Отменённые ОПЕРАТОРОМ остаются: там есть что сказать —
        причина и деньги на балансе. */
-    `select shop_order.id, kind, shop_order.plan_id, shop_order.period, shop_order.status, total_kop, balance_kop,
+    `select shop_order.id, shop_order.kind, shop_order.plan_id, shop_order.period, shop_order.status, total_kop, balance_kop,
             money_kop, source, shop_order.created_at, cancel_reason, cancel_slot_idx, secrets_wiped_at, expires_at,
             exists (select 1 from sub_cancel t where t.order_id = shop_order.id) as otmena_podpiski,
             (select z.status from otzyv z where z.order_id = shop_order.id) as otzyv,
             a.id as a_id, a.status as a_status, a.prichina as a_prichina, a.neudach as a_neudach,
             a.sleduyushchaya_popytka as a_sleduyushchaya, a.platezh_v_puti as a_v_puti,
-            a.otpravlen_at as a_otpravlen, a.napomnil_summa_kop as a_summa
+            a.otpravlen_at as a_otpravlen, a.napomnil_summa_kop as a_summa,
+            /* Письмо о списании ушло ЗА ЭТОТ ЦИКЛ: защёлка хранит
+               московскую дату окончания, о которой напомнили. */
+            a.napomnil_za_cikl = (shop_order.expires_at at time zone 'Europe/Moscow')::date as a_est_pismo,
+            a.napomnil_at as a_napomnil_at,
+            vp.amount_kop as a_v_puti_kop, vp.created_at as a_v_puti_sozdan,
+            (select max(f.created_at) from payment f
+              where f.avtoplatezh_id = a.id and f.kind = 'avto' and f.status = 'failed'
+                and f.avto_cikl_order_id = a.order_id) as a_neudacha_at
        from shop_order
        left join avtoplatezh a on a.order_id = shop_order.id
+       left join payment vp on vp.id = a.platezh_v_puti
       where shop_order.user_id = $1 and not cancelled_by_client
       order by shop_order.created_at desc limit 100`,
     [userId],
@@ -234,19 +340,8 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
       otmenaPodpiski: r.otmena_podpiski,
       sekretyStyorty: Boolean(r.secrets_wiped_at),
       otzyv: r.otzyv,
-      avto:
-        r.a_id && r.a_status
-          ? {
-              id: Number(r.a_id),
-              status: r.a_status,
-              prichina: r.a_prichina,
-              neudach: Number(r.a_neudach ?? 0),
-              sleduyushchayaPopytka: r.a_sleduyushchaya ? new Date(r.a_sleduyushchaya) : null,
-              vPuti: r.a_v_puti !== null,
-              otpravlenAt: r.a_otpravlen ? new Date(r.a_otpravlen) : null,
-              napomnilSummaKop: r.a_summa === null ? null : Number(r.a_summa),
-            }
-          : null,
+      avtoProdlenie: r.source === 'avto',
+      avto: r.a_id && r.a_status ? avtoKlientu(r, tarif ? cenaTarifa(tarif, r.period) : null) : null,
       slots: svoi.map((s) => ({
         idx: s.idx,
         mode: s.mode,
@@ -277,6 +372,24 @@ export async function pochtyZakaza(userId: number, zakaz: number): Promise<strin
     [zakaz, userId],
   );
   return rows.map((r) => poprobovatRasshifrovat(r.in_login_enc) ?? '');
+}
+
+/**
+ * У продлеваемого заказа включён автоплатёж — день окончания, от
+ * которого он спишет; `null` — не включён или заказ чужой (пятьдесят
+ * четвёртая итерация, поправка money-10).
+ *
+ * Оформление по ссылке «Продлить» (`renew=`) называет это прямо:
+ * иначе человек оплатил бы руками то, что и так спишется само.
+ */
+export async function avtoNaProdlevaemom(userId: number, zakaz: number): Promise<Date | null> {
+  const r = await odna<{ expires_at: Date | null }>(
+    `select o.expires_at
+       from avtoplatezh a join shop_order o on o.id = a.order_id
+      where a.order_id = $1 and a.user_id = $2 and a.status = 'vklyuchen' and o.status = 'done'`,
+    [zakaz, userId],
+  );
+  return r?.expires_at ? new Date(r.expires_at) : null;
 }
 
 /**
@@ -426,6 +539,12 @@ export type StrokaOcheredi = {
   moy: boolean;
   bySertificate: boolean;
   /**
+   * Заказ создан автоплатежом — «Автопродление» (пятьдесят четвёртая
+   * итерация). ⚠️ ВИДНО И ОПЕРАТОРУ: ему важно, что это продление,
+   * которое клиент в этот раз руками не заказывал.
+   */
+  avtoProdlenie: boolean;
+  /**
    * Это не заказ, а задача «Отмена подписки» (сорок девятая итерация).
    * Номер — номер того же заказа: задача одна на заказ и открывается
    * его же карточкой. `paidAt` у неё — время, когда её поставили.
@@ -516,6 +635,7 @@ export async function ochered(d: Dostup): Promise<StrokaOcheredi[]> {
       operator: d.admin ? r.operator : null,
       moy: r.operator_id !== null && Number(r.operator_id) === d.staffId,
       bySertificate: r.source === 'certificate',
+      avtoProdlenie: r.source === 'avto',
       otmena: false,
       predlozhenVam,
       offerUntil: predlozhenVam ? doKogda : null,
@@ -569,6 +689,7 @@ export async function ochered(d: Dostup): Promise<StrokaOcheredi[]> {
     operator: d.admin ? r.operator : null,
     moy: r.operator_id !== null && Number(r.operator_id) === d.staffId,
     bySertificate: false,
+    avtoProdlenie: false,
     otmena: true,
     predlozhenVam: false,
     offerUntil: null,
@@ -743,6 +864,18 @@ export type ZakazOperatoru = {
   operatorEmail: string | null;
   bySertificate: boolean;
   /**
+   * Заказ создан автоплатежом — «Автопродление». Видно и оператору
+   * (пятьдесят четвёртая итерация): работа та же, что у продления,
+   * но клиент её в этот раз руками не заказывал.
+   */
+  avtoProdlenie: boolean;
+  /**
+   * Подписка автоплатежа этого заказа. `null` — подписки нет ИЛИ
+   * СПРАШИВАЛ НЕ АДМИНИСТРАТОР: исполнителю этот блок не нужен
+   * (SPEC, раздел 4), и, как с деньгами, наружу не уходит само число.
+   */
+  avto: AvtoAdminu | null;
+  /**
    * Деньги. `null` — СПРАШИВАЛ НЕ АДМИНИСТРАТОР.
    *
    * ⚠️ ИСПОЛНИТЕЛЮ ИХ НЕ ВИДНО ВОВСЕ с сорок второй итерации
@@ -811,6 +944,40 @@ export type ZakazOperatoru = {
    */
   utm: { imya: string; znachenie: string }[];
   slots: SlotOperatoru[];
+};
+
+/**
+ * Подписка автоплатежа в карточке заказа — АДМИНИСТРАТОРУ (пятьдесят
+ * четвёртая итерация): статус, способ первой оплаты, следующее
+ * списание, неудачи, платёж в пути.
+ *
+ * ⚠️ ПОДПИСКА ЕЗДИТ ПО ЦЕПОЧКЕ ЗАКАЗОВ: после удачного продления она
+ * стоит уже на новом заказе. Поэтому в карточке старого заказа — та же
+ * подписка с пометкой, на каком заказе она сейчас (`naZakaze`), а
+ * кнопка «Отключить» работает с подпиской, где бы она ни стояла.
+ */
+export type AvtoAdminu = {
+  id: number;
+  status: StatusAvto;
+  prichina: PrichinaAvto | null;
+  /** Способ первой оплаты как пришёл: «<PaymentMethod>/<IncCurrLabel>». */
+  sposob: string | null;
+  /** Материнский счёт (PreviousInvoiceID). */
+  matPaymentId: number | null;
+  /** Заказ, на котором подписка стоит сейчас. */
+  naZakaze: number;
+  neudach: number;
+  /** Назначенный повтор, ISO. */
+  sleduyushchayaPopytka: string | null;
+  /** Когда и сколько спишется — те же числа, что у кабинета. */
+  sleduyushcheeSpisanie: string | null;
+  summaKop: number | null;
+  /** Дочерний счёт «в пути»: номер, сумма, когда ушёл запрос. */
+  vPuti: number | null;
+  vPutiSummaKop: number | null;
+  vPutiOtpravlen: string | null;
+  soglasieAt: string;
+  otklyuchenAt: string | null;
 };
 
 /**
@@ -951,6 +1118,8 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
        своим — по `operatorId`, а не по адресу. */
     operatorEmail: admin ? r.operator_email : null,
     bySertificate: r.source === 'certificate',
+    avtoProdlenie: r.source === 'avto',
+    avto: admin ? await avtoDlyaAdminki(id) : null,
     utm: METKI.flatMap((m) => (r[m] ? [{ imya: m as string, znachenie: r[m] as string }] : [])),
     totalKop: admin ? Number(r.total_kop) : null,
     balanceKop: admin ? Number(r.balance_kop) : null,
@@ -984,6 +1153,82 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
       outPassword: vidit ? poprobovatRasshifrovat(s.out_password_enc) : null,
       podpiskaOtmenena: Boolean(s.sub_cancelled_at),
     })),
+  };
+}
+
+/**
+ * Подписка этого заказа — та, что стоит на нём сейчас, иначе та, что
+ * через него прошла: заказ создан ею (`shop_order.avtoplatezh_id`) или
+ * им оплачен её материнский счёт. Чисел здесь своих нет — сумму и день
+ * считает тот же `avtoKlientu`, что и кабинету: администратор,
+ * отвечающий клиенту в поддержке, обязан видеть то же, что тот.
+ */
+async function avtoDlyaAdminki(zakaz: number): Promise<AvtoAdminu | null> {
+  const r = await odna<{
+    a_id: string;
+    a_status: StatusAvto;
+    a_prichina: PrichinaAvto | null;
+    a_neudach: number;
+    a_sleduyushchaya: Date | null;
+    a_v_puti: string | null;
+    a_otpravlen: Date | null;
+    a_summa: string | null;
+    a_est_pismo: boolean | null;
+    a_napomnil_at: Date | null;
+    a_v_puti_kop: string | null;
+    a_v_puti_sozdan: Date | null;
+    a_neudacha_at: Date | null;
+    status: Status;
+    expires_at: Date | null;
+    order_id: string;
+    plan_id: string;
+    period: number;
+    sposob: string | null;
+    mat_payment_id: string | null;
+    soglasie_at: Date;
+    otklyuchen_at: Date | null;
+  }>(
+    `select a.id as a_id, a.status as a_status, a.prichina as a_prichina, a.neudach as a_neudach,
+            a.sleduyushchaya_popytka as a_sleduyushchaya, a.platezh_v_puti as a_v_puti,
+            a.otpravlen_at as a_otpravlen, a.napomnil_summa_kop as a_summa,
+            a.napomnil_za_cikl = (o.expires_at at time zone 'Europe/Moscow')::date as a_est_pismo,
+            a.napomnil_at as a_napomnil_at,
+            vp.amount_kop as a_v_puti_kop, vp.created_at as a_v_puti_sozdan,
+            (select max(f.created_at) from payment f
+              where f.avtoplatezh_id = a.id and f.kind = 'avto' and f.status = 'failed'
+                and f.avto_cikl_order_id = a.order_id) as a_neudacha_at,
+            o.status, o.expires_at, a.order_id, a.plan_id, a.period, a.sposob, a.mat_payment_id,
+            a.soglasie_at, a.otklyuchen_at
+       from avtoplatezh a
+       join shop_order o on o.id = a.order_id
+       left join payment vp on vp.id = a.platezh_v_puti
+      where a.order_id = $1
+         or a.id = (select z.avtoplatezh_id from shop_order z where z.id = $1)
+         or a.mat_payment_id in (select p.id from payment p where p.order_id = $1)
+      order by (a.order_id = $1) desc, a.id desc
+      limit 1`,
+    [zakaz],
+  );
+  if (!r) return null;
+  const tarif = naytiTarif(await katalog(), r.plan_id);
+  const k = avtoKlientu(r, tarif ? cenaTarifa(tarif, r.period) : null);
+  return {
+    id: k.id,
+    status: k.status,
+    prichina: k.prichina,
+    sposob: r.sposob,
+    matPaymentId: r.mat_payment_id === null ? null : Number(r.mat_payment_id),
+    naZakaze: Number(r.order_id),
+    neudach: k.neudach,
+    sleduyushchayaPopytka: k.sleduyushchayaPopytka ? k.sleduyushchayaPopytka.toISOString() : null,
+    sleduyushcheeSpisanie:
+      k.status === 'vklyuchen' && k.sleduyushcheeSpisanie ? k.sleduyushcheeSpisanie.toISOString() : null,
+    summaKop: k.status === 'vklyuchen' ? k.summaKop : null,
+    vPuti: r.a_v_puti === null ? null : Number(r.a_v_puti),
+    vPutiSummaKop: k.vPutiSummaKop,
+    vPutiOtpravlen: r.a_otpravlen ? new Date(r.a_otpravlen).toISOString() : null,
+    soglasieAt: new Date(r.soglasie_at).toISOString(),
+    otklyuchenAt: r.otklyuchen_at ? new Date(r.otklyuchen_at).toISOString() : null,
   };
 }
 

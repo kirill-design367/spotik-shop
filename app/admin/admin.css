@@ -312,12 +312,24 @@ label.ad__check input { margin: 0; }
    зелёное в админке значит «деньги и работа идут», а здесь их
    снимают. Радиус тот же токен, своих чисел нет (Р-111). */
 .ad__tag--otmena { background: transparent; color: #fff; box-shadow: inset 0 0 0 1px #fff; margin-left: 8px; }
+/* Заказ создан автоплатежом — «Автопродление» (пятьдесят четвёртая
+   итерация). Видит и оператор: работа та же, что у продления, но клиент
+   её в этот раз руками не заказывал. Кайма тише белой «Отмены подписки»:
+   это пометка, а не тревога. Радиус — тот же токен (Р-111). */
+.ad__tag--avto { background: transparent; color: var(--dim); box-shadow: inset 0 0 0 1px var(--dim); margin-left: 8px; }
+/* На заказе сейчас стоит включённый автоплатёж — только в «Продажах». */
+.ad__tag--avto-vkl { margin-left: 8px; }
+/* Блок «Автоплатёж» в карточке заказа: кнопка «Отключить» и пояснение. */
+.ad__avto-otkl { margin: 12px 0 0; }
+.ad__avto-otkl form { margin: 0 0 6px; }
 
 /* ── ПРОМОКОДЫ И ПРОДАЖИ (Р-167, Р-171) ───────────────────────────── */
 @media (min-width: 900px) { .ad__row--4 { grid-template-columns: repeat(4, 1fr); } }
 .ad__sub { margin: 16px 0 6px; font-size: 13px; color: var(--dim); font-variation-settings: 'wght' 600; }
 .ad__knopki { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-@media (min-width: 900px) { .ad__row-shire { grid-column: span 3; } }
+/* Поиск — на две колонки: во втором ряду рядом с ним стоят состояние
+   и автопродление (пятьдесят четвёртая итерация). */
+@media (min-width: 900px) { .ad__row-shire { grid-column: span 2; } }
 .ad__stranicy { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 16px 0; }
 
 /* ── Отзывы (пятьдесят четвёртая итерация) ──────────────────────────

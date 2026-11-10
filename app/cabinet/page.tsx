@@ -244,6 +244,11 @@ export default async function Cabinet({
                     <div className="order-card__name">
                       {z.nazvanie} · {z.srok}
                       {z.poSertifikatu ? ' · по сертификату' : ''}
+                      {/* Заказ, который создал сам автоплатёж, — продление,
+                          заказанное не руками: человек обязан видеть, откуда
+                          он взялся. Как и всё про автоплатёж — только при
+                          включённом выключателе. */}
+                      {avtoVkl && z.avtoProdlenie ? ' · продлён автоплатежом' : ''}
                     </div>
                     <div className="order-card__id">{z.sozdan.toLocaleDateString('ru-RU')}</div>
                   </div>
@@ -335,7 +340,7 @@ export default async function Cabinet({
                 ) : null}
 
                 {avtoVkl && z.avto ? (
-                  <AvtoBlok avto={z.avto} konchaetsya={z.konchaetsya} zakazGotov={z.status === 'done'} />
+                  <AvtoBlok avto={z.avto} zakazGotov={z.status === 'done'} balansKop={bal} />
                 ) : null}
 
                 {/* ⚠️ ЧТО ПОКАЗАНО ПО НОВОМУ АККАУНТУ — ПОЧТА, А НЕ ЛОГИН

@@ -102,12 +102,15 @@ export async function otpechatokKabineta(userId: number): Promise<OtpechatokKabi
           или администратор, а списание идёт «в пути» и подтверждается
           банком. Кабинет обязан показать это сам (пятьдесят четвёртая
           итерация). И ВЫКЛЮЧАТЕЛЬ ТОЖЕ: включили его в админке —
-          у заказа появляется блок, выключили — пропадает. */
+          у заказа появляется блок, выключили — пропадает. Время письма
+          о списании входит сюда же: от него считается день списания,
+          который кабинет показывает («не раньше суток после письма»). */
        (select coalesce(string_agg(
                  a.id || ':' || a.order_id || ':' || a.status || ':' || coalesce(a.prichina, '')
                       || ':' || a.neudach || ':' || coalesce(a.sleduyushchaya_popytka::text, '')
                       || ':' || coalesce(a.platezh_v_puti::text, '') || ':' || coalesce(a.otpravlen_at::text, '')
-                      || ':' || coalesce(a.napomnil_summa_kop::text, ''),
+                      || ':' || coalesce(a.napomnil_summa_kop::text, '')
+                      || ':' || coalesce(a.napomnil_za_cikl::text, '') || ':' || coalesce(a.napomnil_at::text, ''),
                  ',' order by a.id), '')
           from avtoplatezh a where a.user_id = $1) as avto,
        (select coalesce((select value from setting where key = 'avtoplatezh'), '0')) as avto_vkl`,

@@ -1,9 +1,17 @@
 'use client';
 
 import { useActionState, useState } from 'react';
-import type { Predlozhenie, RazdachaKartochki, ZakazOperatoru, SlotOperatoru, Sobytie } from '@/lib/server/views';
+import type {
+  AvtoAdminu,
+  Predlozhenie,
+  RazdachaKartochki,
+  ZakazOperatoru,
+  SlotOperatoru,
+  Sobytie,
+} from '@/lib/server/views';
 import {
   adminNaznachit,
+  adminOtklyuchitAvto,
   adminOtmenaShag,
   adminOtmenaVzyat,
   adminRelease,
@@ -48,11 +56,14 @@ export default function OrderWork({
   staffId,
   y,
   imena,
+  avtoVkl = false,
 }: {
   z: ZakazOperatoru;
   staffId: number;
   y: Yazyk;
   imena: ImenaTarifov;
+  /** Выключатель автоплатежа: при выключенном блок подписки об этом говорит. */
+  avtoVkl?: boolean;
 }) {
   const t = slovar(y);
   const moy = z.operatorId === staffId;
@@ -77,6 +88,13 @@ export default function OrderWork({
           <dd>
             {imyaTarifaIz(imena, z.planId, y === 'en')} · {srokKratkoDlyaSotrudnika(z.period, y === 'en')}
             {z.bySertificate ? <span className="ad__tag ad__tag--gift">{t('q.gift')}</span> : null}
+            {/* ⚠️ «АВТОПРОДЛЕНИЕ» — И ОПЕРАТОРУ: заказ создал сам автоплатёж,
+                работа та же, что у продления (пятьдесят четвёртая итерация). */}
+            {z.avtoProdlenie ? (
+              <span className="ad__tag ad__tag--avto" title={t('av.tag_t')}>
+                {t('av.tag')}
+              </span>
+            ) : null}
           </dd>
           <dt>{t('t.client')}</dt>
           <dd {...NE_PEREVODIT}>{z.clientEmail}</dd>
@@ -206,6 +224,11 @@ export default function OrderWork({
           исполнителю сервер блок не отдаёт вовсе (`razdacha === null`). */}
       {z.razdacha ? <Razdacha z={z} r={z.razdacha} t={t} en={y === 'en'} /> : null}
 
+      {/* ⚠️ АВТОПЛАТЁЖ — ТОЛЬКО АДМИНИСТРАТОРУ, и решает это сервер:
+          исполнителю `avto` не отдаётся вовсе (пятьдесят четвёртая
+          итерация). Своё действие и своё сообщение — как у раздачи. */}
+      {z.avto ? <AvtoBlokAdmin z={z} a={z.avto} t={t} en={y === 'en'} avtoVkl={avtoVkl} /> : null}
+
       {z.istoriya ? <Istoriya spisok={z.istoriya} t={t} en={y === 'en'} /> : null}
 
       {!moy && !zakryt ? <p className="hint">{t('z.take_first')}</p> : null}
@@ -305,6 +328,153 @@ function Istoriya({ spisok, t, en }: { spisok: Sobytie[]; t: Perevod; en: boolea
           <p className="hint">{t('h.note')}</p>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * АВТОПЛАТЁЖ ЗАКАЗА — администратору (пятьдесят четвёртая итерация):
+ * статус, способ первой оплаты, следующее списание, неудачи, платёж
+ * в пути и «Отключить» (поправка product-5: просьбы через поддержку
+ * исполняются отсюда, клиент видит «отключён администратором»).
+ *
+ * ⚠️ СУММА И ДЕНЬ — ТЕ ЖЕ, ЧТО ВИДИТ КЛИЕНТ В КАБИНЕТЕ, и считает их
+ * сервер одной функцией (`avtoKlientu`): администратор, отвечающий
+ * в поддержке, обязан видеть ровно то, что видит клиент.
+ *
+ * ⚠️ СОСТОЯНИЕ У БЛОКА СВОЁ, КАК У РАЗДАЧИ: отключение подписки —
+ * не шаг выполнения и работу над заказом не трогает, поэтому через
+ * `adminShag` оно не идёт, а ответ стоит в своей карточке, рядом
+ * с кнопкой, которая его вызвала.
+ */
+function AvtoBlokAdmin({
+  z,
+  a,
+  t,
+  en,
+  avtoVkl,
+}: {
+  z: ZakazOperatoru;
+  a: AvtoAdminu;
+  t: Perevod;
+  en: boolean;
+  avtoVkl: boolean;
+}) {
+  const [otvet, otklyuchit, idyot] = useActionState<OtvetA, FormData>(adminOtklyuchitAvto, {});
+  const rub = (kop: number) => (kop / 100).toFixed(2);
+  const status: Record<AvtoAdminu['status'], Klyuch> = {
+    zhdyot_oplaty: 'av.s_zhdyot_oplaty',
+    vklyuchen: 'av.s_vklyuchen',
+    ne_karta: 'av.s_ne_karta',
+    otklyuchen: 'av.s_otklyuchen',
+  };
+  const prichina: Record<NonNullable<AvtoAdminu['prichina']>, Klyuch> = {
+    klient: 'av.p_klient',
+    admin: 'av.p_admin',
+    dve_neudachi: 'av.p_dve_neudachi',
+    zakaz_otmenyon: 'av.p_zakaz_otmenyon',
+    ne_prodayotsya: 'av.p_ne_prodayotsya',
+    prosrochen: 'av.p_prosrochen',
+    testovaya: 'av.p_testovaya',
+    zamenena: 'av.p_zamenena',
+    bez_recurring: 'av.p_bez_recurring',
+  };
+  const mozhno = a.status === 'vklyuchen' || a.status === 'zhdyot_oplaty';
+  return (
+    <div className="ad__card">
+      <h3>{t('av.h')}</h3>
+      {!avtoVkl ? <p className="hint">{t('av.k_vykl')}</p> : null}
+      <dl className="ad__kv">
+        <dt>{t('av.k_status')}</dt>
+        <dd>
+          {t(status[a.status])}
+          {a.status === 'otklyuchen' && a.prichina ? ` · ${t(prichina[a.prichina])}` : ''}
+        </dd>
+        {a.naZakaze !== z.id ? (
+          <>
+            <dt>{t('av.k_na_zakaze')}</dt>
+            <dd>
+              <a href={`/admin/orders/${a.naZakaze}/`}>№ {a.naZakaze}</a>
+            </dd>
+          </>
+        ) : null}
+        <dt>{t('av.k_soglasie')}</dt>
+        <dd className="tnum">{poMoskve(a.soglasieAt, en)}</dd>
+        {/* Способ оплаты — как пришёл из уведомления Робокассы: это ДАННЫЕ,
+            а не надпись, и переводу они не подлежат (закон 54). */}
+        {a.sposob ? (
+          <>
+            <dt>{t('av.k_sposob')}</dt>
+            <dd>
+              <Bukvalno>{a.sposob}</Bukvalno>
+            </dd>
+          </>
+        ) : null}
+        {a.matPaymentId !== null ? (
+          <>
+            <dt>{t('av.k_mat')}</dt>
+            <dd className="tnum">№ {a.matPaymentId}</dd>
+          </>
+        ) : null}
+        {a.status === 'vklyuchen' ? (
+          <>
+            <dt>{t('av.k_sled')}</dt>
+            <dd className="tnum">
+              {a.sleduyushcheeSpisanie
+                ? a.summaKop !== null
+                  ? t('av.k_sled_v', { kogda: poMoskve(a.sleduyushcheeSpisanie, en), summa: rub(a.summaKop) })
+                  : poMoskve(a.sleduyushcheeSpisanie, en)
+                : t('av.k_sled_okonchanie')}
+            </dd>
+          </>
+        ) : null}
+        {a.neudach > 0 || a.sleduyushchayaPopytka ? (
+          <>
+            <dt>{t('av.k_neudach')}</dt>
+            <dd className="tnum">
+              {a.sleduyushchayaPopytka && a.status === 'vklyuchen'
+                ? t('av.k_povtor', { n: a.neudach, kogda: poMoskve(a.sleduyushchayaPopytka, en) })
+                : a.neudach}
+            </dd>
+          </>
+        ) : null}
+        {a.vPuti !== null ? (
+          <>
+            <dt>{t('av.k_v_puti')}</dt>
+            <dd className="tnum">
+              {a.vPutiOtpravlen
+                ? t('av.k_v_puti_v', {
+                    n: a.vPuti,
+                    summa: rub(a.vPutiSummaKop ?? 0),
+                    kogda: poMoskve(a.vPutiOtpravlen, en),
+                  })
+                : t('av.k_v_puti_ne', { n: a.vPuti, summa: rub(a.vPutiSummaKop ?? 0) })}
+            </dd>
+          </>
+        ) : null}
+        {a.otklyuchenAt ? (
+          <>
+            <dt>{t('av.k_otklyuchen_at')}</dt>
+            <dd className="tnum">{poMoskve(a.otklyuchenAt, en)}</dd>
+          </>
+        ) : null}
+      </dl>
+      {otvet.error ? <p className="err">{nadpis(t, otvet.error, otvet.polya)}</p> : null}
+      {otvet.ok ? <p className="ok">{nadpis(t, otvet.ok, otvet.polya)}</p> : null}
+      {mozhno ? (
+        <div className="ad__avto-otkl">
+          {/* ⚠️ ПОЛЕ НАЗВАНО `avto`, А НЕ `on`: селекторы сторожей
+              считают формы по именам полей (SPEC, раздел 0). */}
+          <form action={otklyuchit}>
+            <input type="hidden" name="avto" value={a.id} />
+            <input type="hidden" name="order" value={z.id} />
+            <button type="submit" className="btn btn--ghost btn--sm" disabled={idyot}>
+              {t('av.k_otklyuchit')}
+            </button>
+          </form>
+          <p className="hint">{t('av.k_otklyuchit_hint')}</p>
+        </div>
+      ) : null}
     </div>
   );
 }
