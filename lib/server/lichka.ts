@@ -38,6 +38,31 @@ export function knopkaVzyat(zakaz: number): Klaviatura {
   return { inline_keyboard: [[{ text: 'Take', callback_data: dannyeVzyat(zakaz) }]] };
 }
 
+/**
+ * Предложение заказа: номер, тариф, срок, что делать с каждым аккаунтом
+ * и сколько минут оно открыто. Тариф и срок — английские надписи
+ * (Р-139), данных клиента нет вовсе: почты и пароли оператор увидит
+ * в админке, когда возьмёт заказ.
+ */
+export function tekstPredlozheniya(p: {
+  zakaz: number;
+  tarif: string;
+  srok: string;
+  akkaunty: ('new' | 'renew')[];
+  avto: boolean;
+  minut: number;
+}): string {
+  const akk = p.akkaunty.map((m) => (m === 'renew' ? 'renewal' : 'new account')).join(', ');
+  return [
+    `New order #${p.zakaz}`,
+    `Plan: ${p.tarif}, ${p.srok}`,
+    ...(akk ? [`Accounts: ${akk}`] : []),
+    ...(p.avto ? ['Auto-renewal'] : []),
+    `The offer is open for ${p.minut} ${p.minut === 1 ? 'minute' : 'minutes'}.`,
+    ssylka(p.zakaz),
+  ].join('\n');
+}
+
 /** Заказ теперь у этого оператора. */
 export function tekstTvoy(zakaz: number): string {
   return `Order #${zakaz} is yours.\n${ssylka(zakaz)}`;

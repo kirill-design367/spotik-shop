@@ -32,6 +32,7 @@ import {
   zaprositOtmenuPodpiski,
 } from './orders';
 import { soobshchitKomande } from './notify';
+import { naznachit } from './razdacha';
 import { pismoParolNePodoshyol } from './letters';
 import { zavestiSsylku } from './vosstanovlenie';
 import {
@@ -167,6 +168,34 @@ export async function adminRelease(fd: FormData): Promise<void> {
   await vernutVOchered(id, s.id);
   revalidatePath('/admin');
   redirect('/admin/');
+}
+
+/**
+ * НАЗНАЧИТЬ ЗАКАЗ ОПЕРАТОРУ — только администратор, из карточки заказа
+ * (пятьдесят четвёртая итерация, поправка concurrency-16).
+ *
+ * ⚠️ «ДЕЙСТВУЮЩИЙ ОПЕРАТОР» ПРОВЕРЯЕТ `naznachit` ПОД ЗАМКОМ, а не эта
+ * функция: страница могла пролежать открытой, пока его отключали.
+ * Здесь — только кто зовёт и что пришло из формы.
+ */
+export async function adminNaznachit(_p: OtvetA, fd: FormData): Promise<OtvetA> {
+  const s = await ktoSotrudnik();
+  if (!s) return { error: 'e.session' };
+  if (s.role !== 'admin') return { error: 'o.only_admin' };
+  const zakaz = Number(fd.get('order') ?? 0);
+  const komu = Number(fd.get('komu') ?? 0);
+  if (!Number.isSafeInteger(zakaz) || zakaz <= 0) return { error: 'rz.e_net_zakaza' };
+  if (!Number.isSafeInteger(komu) || komu <= 0) return { error: 'rz.e_ne_operator' };
+  const itog = await naznachit(zakaz, s.id, komu);
+  if (!itog.ok) {
+    return {
+      error: itog.pochemu === 'ne_operator' ? 'rz.e_ne_operator' : itog.pochemu === 'uzhe' ? 'rz.e_uzhe' : 'rz.e_net_zakaza',
+    };
+  }
+  const f = await odna<{ email: string }>('select email from staff where id = $1', [komu]);
+  revalidatePath('/admin');
+  revalidatePath(`/admin/orders/${zakaz}/`);
+  return { ok: 'rz.n_ok', polya: { kto: f?.email ?? '—' } };
 }
 
 /**

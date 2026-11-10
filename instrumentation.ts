@@ -11,6 +11,7 @@ export async function register() {
   const { zavestiUborku } = await import('./lib/server/upkeep');
   const { zavestiOchered } = await import('./lib/server/notify');
   const { zavestiBota } = await import('./lib/server/tgbot');
+  const { zavestiRazdachu } = await import('./lib/server/razdacha');
   const { bazaEst } = await import('./lib/server/db');
   const { zavestiPervyhAdminov } = await import('./lib/server/auth');
   const { log } = await import('./lib/server/log');
@@ -30,4 +31,9 @@ export async function register() {
   /* Бот принимает обновления (привязка оператора, кнопка «Take») —
      только при заданном токене: без него спрашивать некого. */
   zavestiBota();
+  /* Раздача заказов операторам: минутный будильник — истечение
+     предложений, раздача накопленного в 10:00, сторож «ждёт». Заводится
+     и без токена: снятый токен выпускает живые предложения в общую
+     очередь именно на этом тике. */
+  zavestiRazdachu();
 }

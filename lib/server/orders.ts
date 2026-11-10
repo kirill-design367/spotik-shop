@@ -17,6 +17,7 @@ import { odna, vTranzakcii, zapros } from './db';
 import { otpechatokPochty, shifrGotov, zashifrovat } from './crypto';
 import { log } from './log';
 import { soobshchitKomande } from './notify';
+import { nachatRazdachu, popravitZakrytoe, razdatNovyyPervym, snyatRazdachu } from './razdacha';
 import { utmVRyad, type Utm } from './utm';
 import { pismoPochtaZanyata, pismoZakazGotov, pismoZakazOplachen, pismoZakazOtmenyon } from './letters';
 import { vydatSertifikat } from './certificates';
@@ -292,6 +293,13 @@ async function oplatitVnutri(c: PoolClient, zakaz: number, dengiKop: number): Pr
     `update shop_order set status = 'paid', paid_at = now(), money_kop = money_kop + $2 where id = $1`,
     [zakaz, dengiKop],
   );
+  /* ⚠️ НАЧАЛЬНОЕ СОСТОЯНИЕ РАЗДАЧИ — В ЭТОЙ ЖЕ ТРАНЗАКЦИИ (пятьдесят
+     четвёртая итерация, поправка concurrency-1). После коммита
+     с пустым состоянием заказ на время письма и сообщения в группу
+     стал бы виден всем разрешённым операторам — а предложен он должен
+     быть одному. Здесь проходят все оплаты: ResultURL, баланс целиком
+     и заказ автопродления. */
+  await nachatRazdachu(c, zakaz);
   return true;
 }
 
@@ -429,21 +437,46 @@ async function posleOplaty(zakaz: number): Promise<void> {
     return;
   }
 
-  await pismoZakazOplachen(z.email, nazvanie);
-  /* ⚠️ В ЧАТ УХОДЯТ АНГЛИЙСКИЕ НАЗВАНИЯ, И ЭТО НЕ ПЕРЕВОД ДАННЫХ.
-     Сообщения бота — надписи интерфейса для двух сотрудников
-     (закон 40); с тридцать девятой итерации к ним отнесены и тариф
-     со сроком: «Plan: Индивидуальный, месяц» читалось как недоделка.
-     Почта клиента, его пароль и причина отмены переводу не подлежат
-     по-прежнему — их не выбирали мы. */
-  await soobshchitKomande({
-    vid: 'zakaz_oplachen',
-    zakaz,
-    tarif: imyaTarifaIz(await imenaTarifov(), z.plan_id, true),
-    srok: srokDlyaSotrudnika(z.period, true),
-    mest: tarif?.people ?? 1,
-    podarok: false,
+  /* ⚠️ РАЗДАЧА — ПЕРВОЙ, ДО ПИСЬМА И СООБЩЕНИЯ В ГРУППУ (поправка
+     concurrency-1): предложение оператору не ждёт почты. Ждём её
+     С ПОТОЛКОМ: при лежащем Telegram ход раздачи тянется таймаутами,
+     а ResultURL Робокассы ждёт ответа. Свои сообщения в группу раздача
+     шлёт ПОСЛЕ «New paid order» — для этого ей передаётся `gotovo`.
+     Не вышло вовсе — минутный тик подхватит заказ в «ждёт». */
+  const gotovo = otpuskanie();
+  await razdatNovyyPervym(zakaz, gotovo.zhdat);
+  try {
+    await pismoZakazOplachen(z.email, nazvanie);
+    /* ⚠️ В ЧАТ УХОДЯТ АНГЛИЙСКИЕ НАЗВАНИЯ, И ЭТО НЕ ПЕРЕВОД ДАННЫХ.
+       Сообщения бота — надписи интерфейса для двух сотрудников
+       (закон 40); с тридцать девятой итерации к ним отнесены и тариф
+       со сроком: «Plan: Индивидуальный, месяц» читалось как недоделка.
+       Почта клиента, его пароль и причина отмены переводу не подлежат
+       по-прежнему — их не выбирали мы. */
+    await soobshchitKomande({
+      vid: 'zakaz_oplachen',
+      zakaz,
+      tarif: imyaTarifaIz(await imenaTarifov(), z.plan_id, true),
+      srok: srokDlyaSotrudnika(z.period, true),
+      mest: tarif?.people ?? 1,
+      podarok: false,
+    });
+  } finally {
+    gotovo.otpustit();
+  }
+}
+
+/**
+ * Обещание «сообщение о новом заказе ушло»: раздача ждёт его, прежде
+ * чем писать в ту же группу своё. Отпускается в `finally` — упавшее
+ * письмо не должно навсегда задержать «предложить некому».
+ */
+function otpuskanie(): { zhdat: Promise<void>; otpustit: () => void } {
+  let otpustit: () => void = () => {};
+  const zhdat = new Promise<void>((r) => {
+    otpustit = r;
   });
+  return { zhdat, otpustit };
 }
 
 /**
@@ -494,6 +527,9 @@ export async function zakazPoSertifikatu(opts: {
       );
     }
     await c.query('update certificate set used_order_id = $2 where id = $1', [opts.certificateId, zakaz]);
+    /* Заказ сразу оплачен — значит и начальное состояние раздачи
+       ставится здесь, в той же транзакции (поправка concurrency-1). */
+    await nachatRazdachu(c, zakaz);
     log.info('заказ по сертификату', { order: zakaz, plan: opts.planId, period: opts.period, mest: opts.uchastniki.length });
     return zakaz;
   });
@@ -504,15 +540,22 @@ export async function zakazPoSertifikatu(opts: {
 
      И такой заказ уходит оператору ТАК ЖЕ, как обычный оплаченный:
      работа по нему та же, разница только в том, что денег за ним нет
-     вовсе — их взяли при покупке сертификата (Р-93). */
-  await soobshchitKomande({
-    vid: 'zakaz_oplachen',
-    zakaz,
-    tarif: imyaTarifaIz(await imenaTarifov(), opts.planId, true),
-    srok: srokDlyaSotrudnika(opts.period, true),
-    mest: opts.uchastniki.length,
-    podarok: true,
-  });
+     вовсе — их взяли при покупке сертификата (Р-93). Раздача —
+     первой и тем же порядком, что в `posleOplaty`. */
+  const gotovo = otpuskanie();
+  await razdatNovyyPervym(zakaz, gotovo.zhdat);
+  try {
+    await soobshchitKomande({
+      vid: 'zakaz_oplachen',
+      zakaz,
+      tarif: imyaTarifaIz(await imenaTarifov(), opts.planId, true),
+      srok: srokDlyaSotrudnika(opts.period, true),
+      mest: opts.uchastniki.length,
+      podarok: true,
+    });
+  } finally {
+    gotovo.otpustit();
+  }
   return zakaz;
 }
 
@@ -575,25 +618,49 @@ export async function vzyatZakaz(
   staffId: number,
   zapreshcheno: Para[] | null,
 ): Promise<boolean> {
-  return vTranzakcii(async (c) => {
-    const r = await c.query<{ status: Status; operator_id: string | null; plan_id: string; period: number }>(
-      'select status, operator_id, plan_id, period from shop_order where id = $1 for update',
+  const itog = await vTranzakcii(async (c) => {
+    const r = await c.query<{
+      status: Status;
+      operator_id: string | null;
+      plan_id: string;
+      period: number;
+      razdacha: string | null;
+      offer_staff_id: string | null;
+    }>(
+      'select status, operator_id, plan_id, period, razdacha, offer_staff_id from shop_order where id = $1 for update',
       [zakaz],
     );
     const row = r.rows[0];
-    if (!row) return false;
-    if (row.status !== 'paid' || row.operator_id) return false;
+    if (!row) return null;
+    if (row.status !== 'paid' || row.operator_id) return null;
     /* ⚠️ СРАВНИВАЕТСЯ ПАРА ЦЕЛИКОМ (сорок седьмая итерация): тариф
        оператору может быть разрешён, а этот его срок — нет. */
     if (zapreshcheno && zapreshcheno.some((z) => z.planId === row.plan_id && z.period === Number(row.period)))
-      return false;
+      return null;
+    /* ⚠️ И ТЕ ЖЕ ПРАВИЛА РАЗДАЧИ, ЧТО У ОЧЕРЕДИ (`dostup.ts`), — ЗДЕСЬ,
+       ПОД `for update` (пятьдесят четвёртая итерация). Ждущий заказ
+       и чужое предложение оператор не видит, и со старой страницы
+       или старого сообщения взять их тоже не может. Администратору
+       можно всё — `zapreshcheno = null`. */
+    if (zapreshcheno) {
+      if (row.razdacha === 'zhdyot') return null;
+      if (row.razdacha === 'predlozhen' && Number(row.offer_staff_id) !== staffId) return null;
+    }
     await c.query(`update shop_order set status = 'in_work', operator_id = $2, taken_at = now() where id = $1`, [
       zakaz,
       staffId,
     ]);
     await zapisatSobytie(c, zakaz, staffId, 'vzyal');
-    return true;
+    /* Взятие любым путём снимает предложение: `vzyal`, если взял тот,
+       кому предлагали, иначе `snyat`. */
+    const zp = row.razdacha === null ? null : await snyatRazdachu(c, zakaz, { ishod: 'snyat', vzyal: staffId, stanet: null });
+    return { zp };
   });
+  if (!itog) return false;
+  /* После коммита и не дожидаясь: правка личного сообщения — лучшим
+     усилием, а взятие из Telegram ждёт ответа на нажатие. */
+  void popravitZakrytoe(itog.zp, staffId);
+  return true;
 }
 
 /**
@@ -606,9 +673,15 @@ export async function vzyatZakaz(
  * ни потом. Запись идёт В ТОЙ ЖЕ транзакции, что и обнуление.
  */
 export async function vernutVOchered(zakaz: number, staffId: number): Promise<boolean> {
-  return vTranzakcii(async (c) => {
+  const vernul = await vTranzakcii(async (c) => {
+    /* ⚠️ ПОСЛЕ «ВЕРНУТЬ» ЗАКАЗ В ОБЩЕЙ ОЧЕРЕДИ И ЗАНОВО НЕ РАЗДАЁТСЯ
+       (пятьдесят четвёртая итерация): `obshchaya`, а не пусто и не «ждёт».
+       Открытого предложения у взятого заказа нет — взятие его сняло. */
     const r = await c.query(
-      `update shop_order set status = 'paid', operator_id = null, taken_at = null
+      `update shop_order
+          set status = 'paid', operator_id = null, taken_at = null,
+              razdacha = case when kind = 'plan' then 'obshchaya' else razdacha end,
+              offer_staff_id = null, offer_until = null, razdacha_at = now()
         where id = $1 and status = 'in_work' and operator_id = $2 returning id`,
       [zakaz, staffId],
     );
@@ -616,6 +689,9 @@ export async function vernutVOchered(zakaz: number, staffId: number): Promise<bo
     await zapisatSobytie(c, zakaz, staffId, 'vernul');
     return true;
   });
+  /* Поправка concurrency-16: Лев узнаёт, что заказ снова ничей. */
+  if (vernul) await soobshchitKomande({ vid: 'zakaz_vozvrashchyon', zakaz });
+  return vernul;
 }
 
 /**
@@ -838,8 +914,9 @@ export async function otmenitZakaz(
       plan_id: string;
       period: number;
       kind: 'plan' | 'certificate';
+      razdacha: string | null;
     }>(
-      `select status, user_id, balance_kop, money_kop, certificate_id, plan_id, period, kind
+      `select status, user_id, balance_kop, money_kop, certificate_id, plan_id, period, kind, razdacha
          from shop_order where id = $1 for update`,
       [zakaz],
     );
@@ -877,8 +954,11 @@ export async function otmenitZakaz(
        единственный путь сюда без сотрудника лежит из кабинета
        (`deystvieOtmenitSvoy`, kem = 'klient'). */
     await zapisatSobytie(c, zakaz, staffId, 'otmenil');
+    /* Отмена снимает предложение раздачи той же транзакцией. */
+    const zp = row.razdacha === null ? null : await snyatRazdachu(c, zakaz, { ishod: 'snyat', stanet: null });
     return {
       ok: true as const,
+      zp,
       vernut,
       userId: Number(row.user_id),
       planId: row.plan_id,
@@ -888,6 +968,7 @@ export async function otmenitZakaz(
   });
 
   if (!itog.ok) return itog;
+  void popravitZakrytoe(itog.zp, null);
   const u = await odna<{ email: string }>('select email from app_user where id = $1', [itog.userId]);
   if (u) {
     const spisok = await katalog();

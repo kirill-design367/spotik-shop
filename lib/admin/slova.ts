@@ -150,6 +150,12 @@ const S = {
   'h.vernul': ['Вернул в очередь', 'Put back in the queue'],
   'h.vypolnil': ['Выполнил', 'Completed'],
   'h.otmenil': ['Отменил', 'Cancelled'],
+  /* Три глагола раздачи (пятьдесят четвёртая итерация). У «предложен»
+     и «не взял» сотрудник — тот, кому предлагали; у «назначил» —
+     администратор, а кому — в самой надписи. */
+  'h.predlozhen': ['Предложен в Telegram', 'Offered in Telegram'],
+  'h.ne_vzyal': ['Не взял предложение', 'Did not take the offer'],
+  'h.naznachil': ['Назначил: {kto}', 'Assigned to {kto}'],
   /* ⚠️ НЕ «нет данных», А ИМЕННО ПОКУПАТЕЛЬ: сотрудника в этом
      событии не было вовсе, и сказать это прямо честнее, чем оставить
      пустое место. */
@@ -489,6 +495,47 @@ const S = {
   'rz.minut': ['Время на взятие заказа, минут', 'Time to take an order, minutes'],
   'rz.minut_saved': ['Время на взятие заказа сохранено: {n} мин.', 'Time to take an order saved: {n} min.'],
   'rz.e_minut': ['Укажите целое число минут от {ot} до {do}.', 'Enter a whole number of minutes from {ot} to {do}.'],
+
+  /* ── Раздача: очередь и карточка заказа ───────────────────────
+     ⚠️ ПОЧТА ОПЕРАТОРА ВЕЗДЕ ЗДЕСЬ — `{kto}`, и рисует её `nadpis`
+     отдельным узлом: переводчик браузера не перепишет адрес (закон 54).
+     Оператору из этих надписей достаётся только «Предложен вам до …» —
+     без чужих имён (поправка concurrency-15). */
+  't.razdacha': ['Раздача', 'Distribution'],
+  'rz.sost_predlozhen': ['предложен {kto} до {do}', 'offered to {kto} until {do}'],
+  'rz.sost_zhdyot_utro': ['ждёт 10:00', 'waiting for 10:00'],
+  'rz.sost_zhdyot': ['ждёт раздачи', 'waiting to be offered'],
+  'rz.sost_obshchaya': ['общая очередь', 'general queue'],
+  'rz.vam': ['Предложен вам до {do}', 'Offered to you until {do}'],
+  'rz.k_h': ['Раздача в Telegram', 'Distribution in Telegram'],
+  'rz.k_sejchas': ['Сейчас', 'Now'],
+  'rz.k_ne_razdavalsya': ['не раздавался', 'not distributed'],
+  'rz.k_net': ['Заказ никому не предлагался.', 'The order has not been offered to anyone.'],
+  'rz.t_komu': ['Кому', 'To'],
+  'rz.t_kogda': ['Предложен', 'Offered'],
+  'rz.t_do': ['До', 'Until'],
+  'rz.t_ishod': ['Исход', 'Outcome'],
+  'rz.ishod_otkryto': ['ждёт ответа', 'awaiting an answer'],
+  'rz.ishod_vzyal': ['взял', 'took it'],
+  'rz.ishod_istyok': ['не взял вовремя', 'did not take it in time'],
+  'rz.ishod_snyat': ['снято: заказ взят или отменён', 'withdrawn: the order was taken or cancelled'],
+  'rz.ishod_perenaznachen': ['снято: назначен вручную', 'withdrawn: assigned manually'],
+  'rz.ishod_ne_dostavleno': ['не доставлено в Telegram', 'not delivered in Telegram'],
+  'rz.n_h': ['Назначить оператору', 'Assign to an operator'],
+  'rz.n_hint': [
+    'Заказ сразу станет «в работе» у выбранного оператора — даже если этот тариф ему не разрешён. Предложение в Telegram снимается; выбранному и прежнему держателю придёт сообщение, если Telegram у них привязан.',
+    'The order goes straight to "in work" with the selected operator, even if this plan is not allowed to them. The Telegram offer is withdrawn; the selected operator and the previous holder get a message if their Telegram is linked.',
+  ],
+  'rz.n_komu': ['Оператор', 'Operator'],
+  'rz.n_knopka': ['Назначить', 'Assign'],
+  'rz.n_ok': ['Заказ назначен: {kto}.', 'Order assigned: {kto}.'],
+  'rz.n_net': ['Действующих операторов нет.', 'There are no active operators.'],
+  'rz.e_ne_operator': ['Выбранный сотрудник — не действующий оператор.', 'The selected staff member is not an active operator.'],
+  'rz.e_net_zakaza': [
+    'Назначить можно только оплаченный заказ или заказ в работе.',
+    'Only a paid order or an order in work can be assigned.',
+  ],
+  'rz.e_uzhe': ['Заказ уже у этого оператора.', 'The order is already with this operator.'],
 
   /* ── Сертификаты ─────────────────────────────────────────────── */
   's.h': ['Подарочные сертификаты', 'Gift certificates'],

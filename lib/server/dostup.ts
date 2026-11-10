@@ -107,6 +107,23 @@ export async function dostupSotrudnika(s: { id: number; role: 'admin' | 'operato
 }
 
 /**
+ * РАЗДАЧА В TELEGRAM (пятьдесят четвёртая итерация): свободный заказ
+ * виден оператору, только если он ни разу не раздавался (пусто), ушёл
+ * в общую очередь — или предложен ИМЕННО ЕМУ. Ждущий (`zhdyot`) и чужое
+ * предложение не видны. `s` — номер параметра с номером сотрудника.
+ *
+ * ⚠️ ЧИТАЕТ ТОЛЬКО КОЛОНКИ `shop_order` (поправка concurrency-9):
+ * `order_offer` — история, и видимость на неё не опирается. Те же
+ * правила повторены внутри `vzyatZakaz`, под `for update`.
+ */
+function razdachaVidna(alias: string, s: number): string {
+  return (
+    `(${alias}.razdacha is null or ${alias}.razdacha = 'obshchaya'` +
+    ` or (${alias}.razdacha = 'predlozhen' and ${alias}.offer_staff_id = $${s}))`
+  );
+}
+
+/**
  * Условие видимости заказа — куском SQL и параметрами.
  *
  * `alias` — псевдоним таблицы `shop_order` в запросе; `s` — номер
@@ -138,7 +155,7 @@ export function usloviyeVidimosti(
        со вторым. */
     uslovie:
       ` and (${alias}.operator_id = $${s}` +
-      ` or (${alias}.operator_id is null and not exists (` +
+      ` or (${alias}.operator_id is null and ${razdachaVidna(alias, s)} and not exists (` +
       `select 1 from unnest($${s + 1}::text[], $${s + 2}::int[]) as z (plan_id, period)` +
       ` where z.plan_id = ${alias}.plan_id and z.period = ${alias}.period)))`,
     params: [d.staffId, d.zapreshcheno.map((z) => z.planId), d.zapreshcheno.map((z) => z.period)],
@@ -172,7 +189,7 @@ export function usloviyeVidimostiSZadachey(
   return {
     uslovie:
       ` and (${alias}.operator_id = $${s}` +
-      ` or (${alias}.operator_id is null and ${para(alias)})` +
+      ` or (${alias}.operator_id is null and ${razdachaVidna(alias, s)} and ${para(alias)})` +
       ` or exists (select 1 from sub_cancel zt where zt.order_id = ${alias}.id` +
       ` and (zt.operator_id = $${s} or (zt.operator_id is null and zt.done_at is null and ${para(alias)}))))`,
     params: [d.staffId, d.zapreshcheno.map((z) => z.planId), d.zapreshcheno.map((z) => z.period)],

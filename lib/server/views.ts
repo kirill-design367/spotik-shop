@@ -25,6 +25,7 @@ import { PRICHINA_POPOLNENIYA, STATUS_SLOVAMI, type Rezhim, type Status } from '
 import { katalog, naytiTarif, srokKratko } from './catalog';
 import { usloviyeVidimosti, usloviyeVidimostiOtmeny, usloviyeVidimostiSZadachey, type Dostup } from './dostup';
 import { METKI } from './utm';
+import { rabocheeVremya } from '@/lib/chasy';
 
 export type SlotKlientu = {
   idx: number;
@@ -368,6 +369,34 @@ export type StrokaOcheredi = {
    * его же карточкой. `paidAt` у неё — время, когда её поставили.
    */
   otmena: boolean;
+  /**
+   * Заказ ПРЕДЛОЖЕН ТОМУ, кто спрашивает, — и до какого времени
+   * (пятьдесят четвёртая итерация). Оператору это единственное, что
+   * он знает о раздаче: «Предложен вам до 12:15», без чужих имён
+   * (поправка concurrency-15).
+   */
+  predlozhenVam: boolean;
+  offerUntil: string | null;
+  /**
+   * Состояние раздачи — ТОЛЬКО АДМИНИСТРАТОРУ, оператору `null`:
+   * в нём почта того, кому предложено (поправка concurrency-15,
+   * то же правило, что у `operator`).
+   */
+  razdacha: RazdachaVOcheredi | null;
+};
+
+/** Раздача заказа глазами администратора. `null` в `sost` — заказ не раздавался. */
+export type RazdachaVOcheredi = {
+  sost: 'predlozhen' | 'zhdyot' | 'obshchaya' | null;
+  /** Кому предложено — почта (данные, `Bukvalno`). */
+  komu: string | null;
+  /** До какого времени предложено. */
+  do: string | null;
+  /**
+   * Сейчас нерабочее время — «ждёт 10:00», а не «ждёт раздачи».
+   * Час считает СЕРВЕР по Москве (закон 49), а не часы устройства.
+   */
+  noch: boolean;
 };
 
 /**
@@ -391,30 +420,55 @@ export async function ochered(d: Dostup): Promise<StrokaOcheredi[]> {
     operator: string | null;
     operator_id: string | null;
     slots: string;
+    razdacha: 'predlozhen' | 'zhdyot' | 'obshchaya' | null;
+    offer_staff_id: string | null;
+    offer_until: Date | null;
+    komu: string | null;
   }>(
     `select o.id, o.plan_id, o.period, o.status, o.source, o.paid_at, o.created_at,
             f.email as operator, o.operator_id,
-            (select count(*) from order_slot s where s.order_id = o.id)::text as slots
+            (select count(*) from order_slot s where s.order_id = o.id)::text as slots,
+            o.razdacha, o.offer_staff_id, o.offer_until, k.email as komu
        from shop_order o
        left join staff f on f.id = o.operator_id
+       left join staff k on k.id = o.offer_staff_id
       where o.status in ('paid', 'in_work')${v.uslovie}
       order by o.paid_at asc nulls last, o.id asc
       limit 200`,
     v.params,
   );
-  const zakazy: StrokaOcheredi[] = rows.map((r) => ({
-    id: Number(r.id),
-    planId: r.plan_id,
-    people: Number(r.slots),
-    period: r.period,
-    status: r.status,
-    paidAt: r.paid_at ? new Date(r.paid_at).toISOString() : null,
-    createdAt: new Date(r.created_at).toISOString(),
-    operator: d.admin ? r.operator : null,
-    moy: r.operator_id !== null && Number(r.operator_id) === d.staffId,
-    bySertificate: r.source === 'certificate',
-    otmena: false,
-  }));
+  const noch = !rabocheeVremya();
+  const zakazy: StrokaOcheredi[] = rows.map((r) => {
+    const svobodnyy = r.status === 'paid' && r.operator_id === null;
+    const predlozhen = svobodnyy && r.razdacha === 'predlozhen';
+    const predlozhenVam = predlozhen && r.offer_staff_id !== null && Number(r.offer_staff_id) === d.staffId;
+    const doKogda = r.offer_until ? new Date(r.offer_until).toISOString() : null;
+    return {
+      id: Number(r.id),
+      planId: r.plan_id,
+      people: Number(r.slots),
+      period: r.period,
+      status: r.status,
+      paidAt: r.paid_at ? new Date(r.paid_at).toISOString() : null,
+      createdAt: new Date(r.created_at).toISOString(),
+      operator: d.admin ? r.operator : null,
+      moy: r.operator_id !== null && Number(r.operator_id) === d.staffId,
+      bySertificate: r.source === 'certificate',
+      otmena: false,
+      predlozhenVam,
+      offerUntil: predlozhenVam ? doKogda : null,
+      /* У взятого заказа раздачи нет: состояние, если оно и осталось
+         (откат на старый код), тик снимет, а показывать его незачем. */
+      razdacha: d.admin
+        ? {
+            sost: svobodnyy ? r.razdacha : null,
+            komu: predlozhen ? r.komu : null,
+            do: predlozhen ? doKogda : null,
+            noch,
+          }
+        : null,
+    };
+  });
 
   /* ⚠️ ЗАДАЧИ «ОТМЕНА ПОДПИСКИ» ИДУТ В ТУ ЖЕ ОЧЕРЕДЬ (сорок девятая
      итерация): «попадает в очередь тому оператору, который выполнял
@@ -454,6 +508,9 @@ export async function ochered(d: Dostup): Promise<StrokaOcheredi[]> {
     moy: r.operator_id !== null && Number(r.operator_id) === d.staffId,
     bySertificate: false,
     otmena: true,
+    predlozhenVam: false,
+    offerUntil: null,
+    razdacha: d.admin ? { sost: null, komu: null, do: null, noch } : null,
   }));
   /* Отмена подписки стоит ПЕРВОЙ: пока она не сделана, Spotify
      продолжает списывать за подписку, которую мы уже отменили. */
@@ -475,7 +532,19 @@ export async function ochered(d: Dostup): Promise<StrokaOcheredi[]> {
  * в причине отмены, Р-151).
  */
 export type Sobytie = {
-  vid: 'vzyal' | 'vernul' | 'vypolnil' | 'otmenil' | 'otmena_zaproshena' | 'podpiska_otmenena';
+  vid:
+    | 'vzyal'
+    | 'vernul'
+    | 'vypolnil'
+    | 'otmenil'
+    | 'otmena_zaproshena'
+    | 'podpiska_otmenena'
+    /* ⚠️ ТРИ ГЛАГОЛА РАЗДАЧИ (пятьдесят четвёртая итерация, миграция 020).
+       У `predlozhen` и `ne_vzyal` сотрудник — тот, КОМУ предлагали;
+       у `naznachil` — назначивший администратор, а кому — `komu`. */
+    | 'predlozhen'
+    | 'ne_vzyal'
+    | 'naznachil';
   /**
    * Почта сотрудника. `null` значит «сотрудника не было»: так
    * выглядит отмена САМИМ ПОКУПАТЕЛЕМ, и надпись к ней своя.
@@ -483,20 +552,91 @@ export type Sobytie = {
    * вовсе, и список приходит пустым.
    */
   email: string | null;
+  /** Кому назначил администратор (`naznachil`); у прочих событий `null`. */
+  komu: string | null;
   /** Момент в ISO; по Москве его раскладывает страница. */
   kogda: string;
 };
 
 async function istoriyaZakaza(zakaz: number): Promise<Sobytie[]> {
-  const rows = await zapros<{ vid: Sobytie['vid']; email: string | null; created_at: Date }>(
-    `select e.vid, f.email, e.created_at
+  const rows = await zapros<{ vid: Sobytie['vid']; email: string | null; komu: string | null; created_at: Date }>(
+    `select e.vid, f.email, k.email as komu, e.created_at
        from order_event e
        left join staff f on f.id = e.staff_id
+       left join staff k on k.id = e.komu_staff_id
       where e.order_id = $1
       order by e.created_at, e.id`,
     [zakaz],
   );
-  return rows.map((r) => ({ vid: r.vid, email: r.email, kogda: new Date(r.created_at).toISOString() }));
+  return rows.map((r) => ({
+    vid: r.vid,
+    email: r.email,
+    komu: r.komu,
+    kogda: new Date(r.created_at).toISOString(),
+  }));
+}
+
+/** Одно предложение раздачи: кому, когда, до какого времени и чем кончилось. */
+export type Predlozhenie = {
+  komu: string | null;
+  kogda: string;
+  do: string;
+  /** `null` — предложение ещё открыто. */
+  ishod: 'vzyal' | 'istyok' | 'snyat' | 'perenaznachen' | 'ne_dostavleno' | null;
+  zakryto: string | null;
+};
+
+/**
+ * РАЗДАЧА В КАРТОЧКЕ ЗАКАЗА — только администратору (пятьдесят
+ * четвёртая итерация): текущее состояние, история предложений
+ * и список операторов для «Назначить».
+ */
+export type RazdachaKartochki = {
+  sost: 'predlozhen' | 'zhdyot' | 'obshchaya' | null;
+  komu: string | null;
+  do: string | null;
+  predlozheniya: Predlozhenie[];
+  /** Можно ли назначить: заказ на тариф, оплачен или в работе. */
+  mozhnoNaznachit: boolean;
+  /** Действующие операторы — кому вообще можно назначить. */
+  operatory: { id: number; email: string }[];
+};
+
+async function razdachaKartochki(zakaz: number, kind: string, status: Status): Promise<RazdachaKartochki> {
+  const [z, predl, oper] = await Promise.all([
+    odna<{ razdacha: RazdachaKartochki['sost']; komu: string | null; offer_until: Date | null }>(
+      `select o.razdacha, k.email as komu, o.offer_until
+         from shop_order o left join staff k on k.id = o.offer_staff_id
+        where o.id = $1`,
+      [zakaz],
+    ),
+    zapros<{ email: string | null; created_at: Date; until: Date; ishod: Predlozhenie['ishod']; closed_at: Date | null }>(
+      `select f.email, p.created_at, p.until, p.ishod, p.closed_at
+         from order_offer p left join staff f on f.id = p.staff_id
+        where p.order_id = $1
+        order by p.id`,
+      [zakaz],
+    ),
+    zapros<{ id: string; email: string }>(
+      `select id, email from staff where role = 'operator' and not disabled order by email`,
+    ),
+  ]);
+  const svobodnyy = status === 'paid';
+  const sost = svobodnyy ? (z?.razdacha ?? null) : null;
+  return {
+    sost,
+    komu: sost === 'predlozhen' ? (z?.komu ?? null) : null,
+    do: sost === 'predlozhen' && z?.offer_until ? new Date(z.offer_until).toISOString() : null,
+    predlozheniya: predl.map((p) => ({
+      komu: p.email,
+      kogda: new Date(p.created_at).toISOString(),
+      do: new Date(p.until).toISOString(),
+      ishod: p.ishod,
+      zakryto: p.closed_at ? new Date(p.closed_at).toISOString() : null,
+    })),
+    mozhnoNaznachit: kind === 'plan' && (status === 'paid' || status === 'in_work'),
+    operatory: oper.map((o) => ({ id: Number(o.id), email: o.email })),
+  };
 }
 
 export type SlotOperatoru = {
@@ -569,6 +709,11 @@ export type ZakazOperatoru = {
    * адреса всё равно лежали бы в разметке страницы.
    */
   istoriya: Sobytie[] | null;
+  /**
+   * Раздача в Telegram. `null` — СПРАШИВАЛ НЕ АДМИНИСТРАТОР: в ней
+   * почты операторов (поправка concurrency-15, как и история).
+   */
+  razdacha: RazdachaKartochki | null;
   secretsWiped: boolean;
   /** Исполнитель смотрит свой заказ, закрытый больше семи дней назад: доступы ему уже не показываются. */
   oknoIsteklo: boolean;
@@ -639,6 +784,7 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
     period: number;
     status: Status;
     source: string;
+    kind: string;
     email: string;
     operator_id: string | null;
     operator_email: string | null;
@@ -662,7 +808,7 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
     t_operator_email: string | null;
     t_done_at: Date | null;
   }>(
-    `select o.id, o.plan_id, o.period, o.status, o.source, u.email, o.expires_at,
+    `select o.id, o.plan_id, o.period, o.status, o.source, o.kind, u.email, o.expires_at,
             t.order_id as t_order, t.operator_id as t_operator_id, tf.email as t_operator_email, t.done_at as t_done_at,
             o.operator_id, f.email as operator_email,
             o.total_kop, o.balance_kop, o.money_kop, o.promo_kod, o.promo_skidka_kop,
@@ -751,6 +897,7 @@ export async function zakazDlyaAdminki(id: number, d: Dostup): Promise<ZakazOper
     promoSkidkaKop: admin && r.promo_kod ? Number(r.promo_skidka_kop) : null,
     cancelReason: r.cancel_reason,
     istoriya: admin ? await istoriyaZakaza(id) : null,
+    razdacha: admin ? await razdachaKartochki(id, r.kind, r.status) : null,
     secretsWiped: Boolean(r.secrets_wiped_at),
     oknoIsteklo: moy && !r.v_okne && !admin,
     raschyotnayaData: new Date(r.raschyot).toISOString().slice(0, 10),

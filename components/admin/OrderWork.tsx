@@ -1,8 +1,9 @@
 'use client';
 
 import { useActionState, useState } from 'react';
-import type { ZakazOperatoru, SlotOperatoru, Sobytie } from '@/lib/server/views';
+import type { Predlozhenie, RazdachaKartochki, ZakazOperatoru, SlotOperatoru, Sobytie } from '@/lib/server/views';
 import {
+  adminNaznachit,
   adminOtmenaShag,
   adminOtmenaVzyat,
   adminRelease,
@@ -13,7 +14,7 @@ import {
 import { slovar, sostoyanie, type Klyuch, type Perevod, type Yazyk } from '@/lib/admin/slova';
 import { imyaTarifaIz, srokKratkoDlyaSotrudnika, type ImenaTarifov } from '@/lib/plans';
 import { prichinaSotrudniku, prichinyDlya } from '@/lib/admin/prichiny';
-import { poMoskve } from '@/lib/admin/vremya';
+import { chasyPoMoskve, poMoskve } from '@/lib/admin/vremya';
 import Bukvalno, { NE_PEREVODIT, iliNadpis } from '@/components/Bukvalno';
 import { nadpis } from '@/components/admin/nadpis';
 
@@ -200,6 +201,11 @@ export default function OrderWork({
       {/* ⚠️ ИСТОРИЯ — ТОЛЬКО АДМИНИСТРАТОРУ, и решает это не разметка:
           исполнителю сервер список не отдаёт вовсе (`istoriya === null`,
           постановка сорок четвёртой итерации, пункт 5). */}
+      {/* ⚠️ РАЗДАЧА В TELEGRAM И «НАЗНАЧИТЬ» — ТОЛЬКО АДМИНИСТРАТОРУ
+          (пятьдесят четвёртая итерация): в них почты операторов, и
+          исполнителю сервер блок не отдаёт вовсе (`razdacha === null`). */}
+      {z.razdacha ? <Razdacha z={z} r={z.razdacha} t={t} en={y === 'en'} /> : null}
+
       {z.istoriya ? <Istoriya spisok={z.istoriya} t={t} en={y === 'en'} /> : null}
 
       {!moy && !zakryt ? <p className="hint">{t('z.take_first')}</p> : null}
@@ -261,6 +267,9 @@ function Istoriya({ spisok, t, en }: { spisok: Sobytie[]; t: Perevod; en: boolea
     otmenil: 'h.otmenil',
     otmena_zaproshena: 'h.otmena_zaproshena',
     podpiska_otmenena: 'h.podpiska_otmenena',
+    predlozhen: 'h.predlozhen',
+    ne_vzyal: 'h.ne_vzyal',
+    naznachil: 'h.naznachil',
   };
   return (
     <div className="ad__card">
@@ -281,7 +290,9 @@ function Istoriya({ spisok, t, en }: { spisok: Sobytie[]; t: Perevod; en: boolea
               <tbody>
                 {spisok.map((e, i) => (
                   <tr key={`${e.kogda}-${i}`}>
-                    <td>{t(imya[e.vid])}</td>
+                    {/* У «назначил» кому — в самой надписи, отдельным узлом:
+                        это почта сотрудника (закон 54). */}
+                    <td>{e.vid === 'naznachil' ? nadpis(t, 'h.naznachil', { kto: e.komu ?? '—' }) : t(imya[e.vid])}</td>
                     {/* ⚠️ ПУСТАЯ ПОЧТА ЗНАЧИТ «СОТРУДНИКА НЕ БЫЛО»,
                         и так выглядит отмена самим покупателем. */}
                     <td>{iliNadpis(e.email, <span className="hint">{t('h.klient')}</span>)}</td>
@@ -294,6 +305,109 @@ function Istoriya({ spisok, t, en }: { spisok: Sobytie[]; t: Perevod; en: boolea
           <p className="hint">{t('h.note')}</p>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * РАЗДАЧА ЗАКАЗА В TELEGRAM И РУЧНОЕ НАЗНАЧЕНИЕ — администратору.
+ *
+ * Постановка: «В карточке заказа администратору — блок „Раздача"
+ * (история предложений: кому, когда, исход) и форма „Назначить"».
+ *
+ * ⚠️ У БЛОКА СВОЁ СОСТОЯНИЕ ОТВЕТА, И ОНО НЕ СПОРИТ С ШАГАМИ: «Назначить»
+ * снимает заказ с того, кто его держал, — после ответа страница
+ * перечитывается, и шаги администратору больше не рисуются, если заказ
+ * ушёл другому. Сообщение на экране остаётся одно (закон 52).
+ */
+function Razdacha({ z, r, t, en }: { z: ZakazOperatoru; r: RazdachaKartochki; t: Perevod; en: boolean }) {
+  const [otvet, naznachit, idyot] = useActionState<OtvetA, FormData>(adminNaznachit, {});
+  const ishod = (p: Predlozhenie): string => {
+    if (!p.ishod) return t('rz.ishod_otkryto');
+    const k: Record<NonNullable<Predlozhenie['ishod']>, Klyuch> = {
+      vzyal: 'rz.ishod_vzyal',
+      istyok: 'rz.ishod_istyok',
+      snyat: 'rz.ishod_snyat',
+      perenaznachen: 'rz.ishod_perenaznachen',
+      ne_dostavleno: 'rz.ishod_ne_dostavleno',
+    };
+    return t(k[p.ishod]);
+  };
+  const sejchas =
+    r.sost === 'predlozhen'
+      ? nadpis(t, 'rz.sost_predlozhen', { kto: r.komu ?? '—', do: chasyPoMoskve(r.do) })
+      : r.sost === 'zhdyot'
+        ? t('rz.sost_zhdyot')
+        : r.sost === 'obshchaya'
+          ? t('rz.sost_obshchaya')
+          : t('rz.k_ne_razdavalsya');
+  return (
+    <div className="ad__card">
+      <h3>{t('rz.k_h')}</h3>
+      {z.status === 'paid' ? (
+        <p>
+          {t('rz.k_sejchas')}: {sejchas}
+        </p>
+      ) : null}
+      {!r.predlozheniya.length ? (
+        <p className="hint">{t('rz.k_net')}</p>
+      ) : (
+        <div className="ad__scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>{t('rz.t_komu')}</th>
+                <th>{t('rz.t_kogda')}</th>
+                <th>{t('rz.t_do')}</th>
+                <th>{t('rz.t_ishod')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {r.predlozheniya.map((p, i) => (
+                <tr key={`${p.kogda}-${i}`}>
+                  <td>{iliNadpis(p.komu, '—')}</td>
+                  <td className="tnum">{poMoskve(p.kogda, en)}</td>
+                  <td className="tnum">{chasyPoMoskve(p.do)}</td>
+                  <td>{ishod(p)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {r.mozhnoNaznachit ? (
+        <>
+          <h3>{t('rz.n_h')}</h3>
+          <p className="hint">{t('rz.n_hint')}</p>
+          {otvet.error ? <p className="err">{nadpis(t, otvet.error, otvet.polya)}</p> : null}
+          {otvet.ok ? <p className="ok">{nadpis(t, otvet.ok, otvet.polya)}</p> : null}
+          {!r.operatory.length ? (
+            <p className="hint">{t('rz.n_net')}</p>
+          ) : (
+            /* ⚠️ ПОЛЕ НАЗВАНО `komu`, А НЕ `on`/`plan`/`period`: селекторы
+               сторожа считают формы по этим именам (SPEC, раздел 3). */
+            <form action={naznachit} className="ad__naznachit">
+              <input type="hidden" name="order" value={z.id} />
+              <label>
+                {t('rz.n_komu')}
+                <select name="komu" required defaultValue="">
+                  <option value="" disabled>
+                    —
+                  </option>
+                  {r.operatory.map((o) => (
+                    <option key={o.id} value={o.id} {...NE_PEREVODIT}>
+                      {o.email}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button type="submit" className="btn btn--sm" disabled={idyot}>
+                {t('rz.n_knopka')}
+              </button>
+            </form>
+          )}
+        </>
+      ) : null}
     </div>
   );
 }

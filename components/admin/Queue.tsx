@@ -1,12 +1,12 @@
 'use client';
 
 import { useActionState, useEffect, useState } from 'react';
-import type { StrokaOcheredi } from '@/lib/server/views';
+import type { RazdachaVOcheredi, StrokaOcheredi } from '@/lib/server/views';
 import { adminOtmenaVzyat, adminSetQueueRate, adminTake, type OtvetA } from '@/lib/server/actions-admin';
 import { CHASTOTY_OCHEREDI } from '@/lib/admin/chastoty';
-import { slovar, type Yazyk } from '@/lib/admin/slova';
+import { slovar, type Perevod, type Yazyk } from '@/lib/admin/slova';
 import { imyaTarifaIz, srokKratkoDlyaSotrudnika, type ImenaTarifov } from '@/lib/plans';
-import { poMoskve } from '@/lib/admin/vremya';
+import { chasyPoMoskve, poMoskve } from '@/lib/admin/vremya';
 import { nadpis } from '@/components/admin/nadpis';
 import { iliNadpis } from '@/components/Bukvalno';
 
@@ -139,6 +139,10 @@ export default function Queue({
               <th>{t('t.state')}</th>
               {admin ? <th>{t('t.staff')}</th> : null}
               <th />
+              {/* ⚠️ РАЗДАЧА — НОВОЙ КОЛОНКОЙ ПОСЛЕ ВСЕХ ПРЕЖНИХ и только
+                  администратору (пятьдесят четвёртая итерация): в ней
+                  почта того, кому предложено. */}
+              {admin ? <th>{t('t.razdacha')}</th> : null}
             </tr>
           </thead>
           <tbody>
@@ -171,7 +175,14 @@ export default function Queue({
                 <td className="tnum">{r.paidAt ? poMoskve(r.paidAt, y === 'en') : '—'}</td>
                 <td>
                   {r.status === 'paid' ? (
-                    <span className="ad__tag ad__tag--paid">{t('q.new')}</span>
+                    <>
+                      <span className="ad__tag ad__tag--paid">{t('q.new')}</span>
+                      {/* Оператору о раздаче — только своё предложение и его
+                          срок, без чужих имён (поправка concurrency-15). */}
+                      {r.predlozhenVam ? (
+                        <span className="ad__tag ad__tag--vam">{t('rz.vam', { do: chasyPoMoskve(r.offerUntil) })}</span>
+                      ) : null}
+                    </>
                   ) : (
                     <span className="ad__tag ad__tag--work">
                       {/* ⚠️ «ВАШ ИЛИ ЧУЖОЙ» РЕШАЕТ СЕРВЕР, А НЕ СЛИЧЕНИЕ
@@ -198,6 +209,7 @@ export default function Queue({
                     <a className="btn btn--ghost btn--sm" href={`/admin/orders/${r.id}/`}>{t('q.open')}</a>
                   )}
                 </td>
+                {admin ? <td>{razdachaSlovami(t, r.razdacha)}</td> : null}
               </tr>
             ))}
           </tbody>
@@ -205,4 +217,15 @@ export default function Queue({
       </div>
     </>
   );
+}
+
+/**
+ * Состояние раздачи одной строкой — администратору. Почта того, кому
+ * предложено, встаёт отдельным узлом через `nadpis` (закон 54).
+ */
+function razdachaSlovami(t: Perevod, r: RazdachaVOcheredi | null) {
+  if (!r || !r.sost) return '—';
+  if (r.sost === 'predlozhen') return nadpis(t, 'rz.sost_predlozhen', { kto: r.komu ?? '—', do: chasyPoMoskve(r.do) });
+  if (r.sost === 'zhdyot') return r.noch ? t('rz.sost_zhdyot_utro') : t('rz.sost_zhdyot');
+  return t('rz.sost_obshchaya');
 }

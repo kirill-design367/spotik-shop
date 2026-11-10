@@ -67,6 +67,25 @@ export type SobytieKomande =
      ⚠️ ЕДИНСТВЕННОЕ СОБЫТИЕ С ПАРОЛЕМ ВНУТРИ, и с ним обращаются
      иначе, чем со всеми: в журнал оно идёт без почт и паролей,
      а в очередь — шифротекстом (см. `vOchered`). */
+  /* ── Раздача заказов в Telegram (пятьдесят четвёртая итерация) ──
+     ⚠️ СВОИ ВИДЫ, А НЕ `zakaz_oplachen`: сторожа ищут «новый оплаченный
+     заказ» по виду события, и сообщение о раздаче не должно за него
+     сойти. Тексты английские, как все рабочие сообщения (Р-120);
+     в сообщениях ЛЬВУ операторы названы — это служебная группа, а вот
+     в личке оператора других операторов нет нигде. */
+  /* Предложить заказ некому: пара никому не разрешена (`para`) или
+     у тех, кому разрешена, не привязан Telegram (`telegram`). */
+  | { vid: 'razdacha_nekomu'; zakaz: number; tarif: string; srok: string; prichina: 'para' | 'telegram' }
+  /* Круг пройден, никто не взял за отведённые минуты. */
+  | { vid: 'razdacha_nikto'; zakaz: number; minut: number }
+  /* Ни одному оператору круга предложение не доставилось. */
+  | { vid: 'razdacha_ne_dostavleno'; zakaz: number }
+  /* Сторож тика: заказ застрял в «ждёт» в рабочее время. */
+  | { vid: 'razdacha_zastryal'; zakaz: number }
+  /* Бот не может писать оператору (403): привязка снята. */
+  | { vid: 'razdacha_otvyazan'; kto: string }
+  /* «Вернуть в очередь»: заказ в общей очереди и заново не раздаётся. */
+  | { vid: 'zakaz_vozvrashchyon'; zakaz: number }
   | {
       vid: 'otmena_podpiski';
       zakaz: number;
@@ -134,6 +153,46 @@ function tekstDlyaChata(s: SobytieKomande, netDannyh: string = STYORT): string |
       'Cancel the subscription in Spotify. No refund to the client.',
       ssylka(s.zakaz),
     ].join('\n');
+  }
+  if (s.vid === 'razdacha_nekomu') {
+    return [
+      `Order #${s.zakaz} (${s.tarif}, ${s.srok}): nobody can be offered it in Telegram — ` +
+        (s.prichina === 'para'
+          ? 'no operator is allowed this plan and term.'
+          : 'the operators allowed this plan and term have no Telegram linked.'),
+      'It is in the general queue.',
+      ssylka(s.zakaz),
+    ].join('\n');
+  }
+  if (s.vid === 'razdacha_nikto') {
+    return [
+      `Order #${s.zakaz}: no operator took it within ${s.minut} ${s.minut === 1 ? 'minute' : 'minutes'}.`,
+      'It is in the general queue.',
+      ssylka(s.zakaz),
+    ].join('\n');
+  }
+  if (s.vid === 'razdacha_ne_dostavleno') {
+    return [
+      `Order #${s.zakaz}: the offer could not be delivered to any operator in Telegram.`,
+      'It is in the general queue.',
+      ssylka(s.zakaz),
+    ].join('\n');
+  }
+  if (s.vid === 'razdacha_zastryal') {
+    return [
+      `Order #${s.zakaz} could not be offered to operators in Telegram.`,
+      'It is in the general queue.',
+      ssylka(s.zakaz),
+    ].join('\n');
+  }
+  if (s.vid === 'razdacha_otvyazan') {
+    return [
+      `Operator ${s.kto} was unlinked from Telegram: the bot can't message them.`,
+      'Link them again in Staff.',
+    ].join('\n');
+  }
+  if (s.vid === 'zakaz_vozvrashchyon') {
+    return [`Order #${s.zakaz} was returned to the general queue.`, ssylka(s.zakaz)].join('\n');
   }
   if (s.vid === 'zakaz_zakryt') {
     return [`Order #${s.zakaz} is done`, `Operator: ${s.kto}`, ssylka(s.zakaz)].join('\n');

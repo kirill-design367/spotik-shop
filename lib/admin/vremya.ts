@@ -43,3 +43,21 @@ export function poMoskve(kogda: string | Date | null | undefined, en = false): s
     return `${dv(m.getUTCDate())}.${dv(m.getUTCMonth() + 1)}.${m.getUTCFullYear()}, ${dv(m.getUTCHours())}:${dv(m.getUTCMinutes())}`;
   }
 }
+
+/**
+ * Только часы и минуты по Москве — «12:15». Для срока предложения
+ * раздачи: оно живёт минуты, и дата рядом с ним была бы шумом.
+ * Запасной путь тот же, что у `poMoskve`.
+ */
+export function chasyPoMoskve(kogda: string | Date | null | undefined): string {
+  if (!kogda) return '';
+  const d = typeof kogda === 'string' ? new Date(kogda) : kogda;
+  if (Number.isNaN(d.getTime())) return '';
+  try {
+    return d.toLocaleTimeString('ru-RU', { timeZone: ZONA_MSK, hour: '2-digit', minute: '2-digit' });
+  } catch {
+    const m = new Date(d.getTime() + 3 * 60 * 60 * 1000);
+    const dv = (n: number) => String(n).padStart(2, '0');
+    return `${dv(m.getUTCHours())}:${dv(m.getUTCMinutes())}`;
+  }
+}
