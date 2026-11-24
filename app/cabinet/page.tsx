@@ -138,6 +138,13 @@ export default async function Cabinet({
     t.ceny.map((c) => ({ kop: c.kop, podpis: `${t.name}, ${srokKratko(c.period)}` })),
   );
 
+  const podpiski = avtoVkl ? zakazy.filter((z) =>
+    z.avto?.status === 'vklyuchen' || z.avto?.status === 'zhdyot_oplaty' ||
+    (z.kind === 'plan' && z.status === 'done' && z.konchaetsya && z.konchaetsya > new Date() &&
+      z.avto?.prichina !== 'prodlen' && z.avto?.prichina !== 'zamenena' &&
+      spisok.some((t) => t.id === z.planId && t.ceny.some((c) => c.period === z.period))),
+  ) : [];
+
   return (
     <main id="main" className="page" tabIndex={-1}>
       <a className="page__back" href="/">← На главную</a>
@@ -189,6 +196,30 @@ export default async function Cabinet({
           <span className="cab__balance tnum">{rubli(bal)}</span>
         </div>
         <Popolnenie summy={summy} />
+        {avtoVkl && (
+          <section className="cab__avto" aria-label="Автопродление подписки">
+            <h2 className="panel__h">Автопродление подписки</h2>
+            {podpiski.map((z) => (
+              <div key={z.id}>
+                <strong>{z.nazvanie} · {z.srok}</strong>
+                <p translate="no" className="panel__note notranslate">
+                  {z.slots.map((s) => s.pochta || s.login).filter(Boolean).join(', ') || poMoskveDen(z.sozdan.toISOString())}
+                </p>
+                {z.avto && (z.avto.status === 'vklyuchen' || z.avto.status === 'zhdyot_oplaty') ? (
+                  <AvtoBlok avto={z.avto} zakazGotov={z.status === 'done'} balansKop={bal} />
+                ) : (
+                  <a className="btn btn--ghost btn--sm" href={`/checkout/?plan=${encodeURIComponent(z.planId)}&period=${z.period}&renew=${z.id}&mode=renew`}>
+                    Подключить автопродление
+                  </a>
+                )}
+              </div>
+            ))}
+            {!podpiski.length && <a className="btn btn--ghost btn--sm" href="/checkout/">Подключить автопродление</a>}
+            {(!podpiski.length || podpiski.some((z) => z.avto?.status !== 'vklyuchen' && z.avto?.status !== 'zhdyot_oplaty')) && (
+              <p className="panel__note">Для подключения отметьте автопродление при оформлении и оплатите заказ картой.</p>
+            )}
+          </section>
+        )}
         {istoriya.length ? (
           <details className="cab__istoriya">
             <summary>История баланса</summary>

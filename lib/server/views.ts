@@ -356,23 +356,40 @@ export async function moiZakazy(userId: number): Promise<ZakazKlientu[]> {
   });
 }
 
-/**
- * Почты участников заказа — ВЛАДЕЛЬЦУ, для подстановки в продление.
- *
- * ⚠️ ЧИТАТЕЛЬ ТОТ ЖЕ, ЧТО У КАБИНЕТА: владелец заказа и его
- * собственные данные. Отдельной двери для этого не заводится —
- * запрос сам проверяет `user_id`, и чужой заказ отдаёт пустой список.
- * Ради этого ссылка в письме и несёт НОМЕР ЗАКАЗА, а не адрес:
- * адрес остаётся в базе шифротекстом и в письмо не попадает.
- */
-export async function pochtyZakaza(userId: number, zakaz: number): Promise<string[]> {
-  const rows = await zapros<{ in_login_enc: string | null }>(
-    `select s.in_login_enc
+export type IstochnikAkkaunta = { login: string; zakaz: number; idx: number };
+
+/** В форму передаются только адрес и ссылка на место в заказе владельца. */
+export async function akkauntyProdleniya(userId: number, zakaz?: number): Promise<IstochnikAkkaunta[]> {
+  const rows = await zapros<{ order_id: string; idx: number; login_enc: string }>(
+    `select s.order_id, s.idx, coalesce(s.out_login_enc, s.in_login_enc) as login_enc
        from order_slot s join shop_order o on o.id = s.order_id
-      where s.order_id = $1 and o.user_id = $2 order by s.idx`,
-    [zakaz, userId],
+      where o.user_id = $1 and coalesce(s.out_login_enc, s.in_login_enc) is not null
+        and ($2::bigint is null or o.id = $2)
+      order by o.created_at desc, o.id desc, s.idx limit 60`,
+    [userId, zakaz ?? null],
   );
-  return rows.map((r) => poprobovatRasshifrovat(r.in_login_enc) ?? '');
+  const result: IstochnikAkkaunta[] = [];
+  for (const row of rows) {
+    const login = poprobovatRasshifrovat(row.login_enc);
+    if (!login) continue;
+    if (zakaz === undefined && result.some((a) => a.login.toLowerCase() === login.toLowerCase())) continue;
+    result.push({ login, zakaz: Number(row.order_id), idx: row.idx });
+    if (zakaz === undefined && result.length === 8) break;
+  }
+  return result;
+}
+
+/** Старые заказы содержат выданную оператором пару, новые — введённую покупателем. */
+export async function parolAkkaunta(userId: number, zakaz: number, idx: number, login: string) {
+  const row = await odna<{ login_enc: string | null; password_enc: string | null }>(
+    `select coalesce(s.out_login_enc, s.in_login_enc) as login_enc,
+            case when s.out_login_enc is not null then s.out_password_enc else s.in_password_enc end as password_enc
+       from order_slot s join shop_order o on o.id = s.order_id
+      where o.user_id = $1 and o.id = $2 and s.idx = $3`,
+    [userId, zakaz, idx],
+  );
+  if (!row || poprobovatRasshifrovat(row.login_enc) !== login) return null;
+  return poprobovatRasshifrovat(row.password_enc);
 }
 
 /**
@@ -391,46 +408,6 @@ export async function avtoNaProdlevaemom(userId: number, zakaz: number): Promise
     [zakaz, userId],
   );
   return r?.expires_at ? new Date(r.expires_at) : null;
-}
-
-/**
- * ВСЕ ПОЧТЫ, КОТОРЫЕ ЧЕЛОВЕК УЖЕ УКАЗЫВАЛ В СВОИХ ЗАКАЗАХ.
- *
- * Постановка сорок второй итерации: на продлении под полем почты
- * выезжает список — нажатие подставляет адрес.
- *
- * ⚠️ ЧИТАТЕЛЬ ТОТ ЖЕ, ЧТО У КАБИНЕТА: владелец и его собственные
- * данные (закон 35). Ни новой двери, ни нового места расшифровки
- * не заводится — запрос сам проверяет `user_id`.
- *
- * ⚠️ ТОЛЬКО ПОЧТА. Пароли в подсказку не попадают ни при каких
- * условиях: их ценность ровно та же, что у пароля от аккаунта
- * Spotify, и выпадающий список был бы третьим местом, где открытый
- * пароль оказывается на экране.
- *
- * ⚠️ РАЗЛИЧНЫЕ СЧИТАЮТСЯ ПОСЛЕ РАСШИФРОВКИ, А НЕ `distinct` В SQL.
- * AES-GCM со случайным вектором двух одинаковых адресов одинаковыми
- * не делает (то же, что в Р-115), поэтому `distinct in_login_enc`
- * отдал бы одну и ту же почту столько раз, сколько заказов.
- */
-export async function pochtyKlienta(userId: number, skolko = 8): Promise<string[]> {
-  const rows = await zapros<{ in_login_enc: string | null }>(
-    `select s.in_login_enc
-       from order_slot s join shop_order o on o.id = s.order_id
-      where o.user_id = $1 and s.in_login_enc is not null
-      order by o.created_at desc, s.idx
-      limit 60`,
-    [userId],
-  );
-  const vidno: string[] = [];
-  for (const r of rows) {
-    const p = poprobovatRasshifrovat(r.in_login_enc);
-    if (!p) continue;
-    if (vidno.some((x) => x.toLowerCase() === p.toLowerCase())) continue;
-    vidno.push(p);
-    if (vidno.length >= skolko) break;
-  }
-  return vidno;
 }
 
 export async function balans(userId: number): Promise<number> {

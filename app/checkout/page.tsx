@@ -6,7 +6,7 @@ import { CELI } from '@/lib/metrika';
 import LoginBox from '@/components/shop/LoginBox';
 import { ktoKlient } from '@/lib/server/auth';
 import { katalog, naytiTarif, srokPolno } from '@/lib/server/catalog';
-import { avtoNaProdlevaemom, balans, pochtyKlienta, pochtyZakaza } from '@/lib/server/views';
+import { avtoNaProdlevaemom, balans, akkauntyProdleniya } from '@/lib/server/views';
 import { bazaEst } from '@/lib/server/db';
 import { rabocheeVremya, ZONA_MSK } from '@/lib/chasy';
 import { kodPromo } from '@/lib/promokod';
@@ -100,8 +100,9 @@ export default async function Checkout({
      у владельца заказа и через то же единственное место, где
      расшифровка разрешена (закон 35). Чужой номер отдаёт пустой
      список и не подставляет ничего. */
-  const prodlit = Number(odin('renew'));
-  const pochty = kto && prodlit > 0 ? await pochtyZakaza(kto.userId, prodlit) : [];
+  const nomerZakaza = Number(odin('renew'));
+  const prodlit = Number.isSafeInteger(nomerZakaza) && nomerZakaza > 0 ? nomerZakaza : 0;
+  const pochty = kto && !podarok && prodlit > 0 ? await akkauntyProdleniya(kto.userId, prodlit) : [];
   /* ⚠️ ПРОДЛЕВАЕМЫЙ ЗАКАЗ С ВКЛЮЧЁННЫМ АВТОПЛАТЕЖОМ ГОВОРИТ ОБ ЭТОМ
      (поправка money-10): иначе человек оплатил бы руками то, что
      и так спишется само. Как и всё про автоплатёж, — только при
@@ -116,7 +117,7 @@ export default async function Checkout({
      и его собственные адреса (закон 35). Ни новой двери, ни второго
      места расшифровки не завелось. Не вошёл — списка нет вовсе,
      и спрашивать базу незачем. */
-  const podskazki = kto ? await pochtyKlienta(kto.userId) : [];
+  const podskazki = kto && !podarok ? await akkauntyProdleniya(kto.userId) : [];
 
   /* ⚠️ КОД ИЗ ПРОМО-ССЫЛКИ (`spotik.shop/?promo=КОД`). Куку ставит скрипт
      в `<head>` на любой странице, а здесь параметр адреса ВАЖНЕЕ куки:
@@ -165,8 +166,10 @@ export default async function Checkout({
     zametka: tarif.note,
     periodPoUmolchaniyu: period,
     rezhimPoUmolchaniyu: odin('mode') === 'renew' || pochty.length ? 'renew' : 'new',
-    pochtyPoUmolchaniyu: pochty,
-    pochtyPodskazki: podskazki,
+    akkauntyPoUmolchaniyu: !prodlit && odin('mode') === 'renew' && tarif.people === 1 && podskazki.length === 1
+      ? [podskazki[0]]
+      : Array.from({ length: tarif.people }, (_, i) => pochty.find((a) => a.idx === i)),
+    akkauntyPodskazki: podskazki,
     balansKop: kto ? await balans(kto.userId) : 0,
     /* ⚠️ ВРЕМЯ СЧИТАЕТ СЕРВЕР, А НЕ БРАУЗЕР — постановка прямо
        требует «по Москве, а не по часам устройства клиента».

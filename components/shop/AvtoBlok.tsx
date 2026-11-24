@@ -72,7 +72,7 @@ export default function AvtoBlok({
         <p className="panel__note">
           Автоплатёж включён. <Vklyuchen avto={avto} zakazGotov={zakazGotov} balansKop={balansKop} />
         </p>
-        <OtklyuchitForma id={avto.id} podpis="Отключить автоплатёж" />
+        <OtklyuchitForma id={avto.id} podpis="Отключить автопродление" />
       </div>
     );
   }

@@ -17,12 +17,8 @@ import { sAdresami } from '@/components/Bukvalno';
  * потом сам же будет набирать в Spotify: не показать его — значит
  * почти гарантировать опечатку, а опечатка здесь стоит заказа.
  *
- * ⚠️ ПОДСКАЗКА ЕСТЬ ТОЛЬКО У ПОЧТЫ, И ЭТО НЕ НЕДОДЕЛКА. Пароли
- * не подсказываются ни при каких условиях: они лежат шифротекстом
- * ровно затем, чтобы не оказываться на экране лишний раз (закон 35),
- * и открытый пароль в выпадающем списке был бы третьим местом,
- * где он виден. Почту человек и так знает — подсказка экономит ему
- * набор, а не открывает тайну.
+ * Список показывает только адреса. При продлении выбор адреса может
+ * также заполнить отдельное поле пароля.
  */
 
 export function Pole({
@@ -36,6 +32,7 @@ export function Pole({
   avto,
   pochty,
   zagolovokPochty,
+  vybratPochtu,
 }: {
   imya: string;
   podpis: string;
@@ -48,6 +45,7 @@ export function Pole({
   /** Почты из прошлых заказов этого же кабинета. Пусто — списка нет. */
   pochty?: string[];
   zagolovokPochty?: string;
+  vybratPochtu?: (pochta: string) => void;
 }) {
   const id = useId();
   const [fokus, setFokus] = useState(false);
@@ -97,7 +95,7 @@ export function Pole({
                 translate="no"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => {
-                  menyat(p);
+                  (vybratPochtu ?? menyat)(p);
                   setFokus(false);
                 }}
               >

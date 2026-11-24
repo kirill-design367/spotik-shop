@@ -1,8 +1,8 @@
 'use client';
 
-import { useActionState, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useActionState, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Soglasie } from './Soglasie';
-import { deystvieOformit, deystvieProveritPromo, type Otvet } from '@/lib/server/actions-client';
+import { deystvieOformit, parolDlyaProdleniya, deystvieProveritPromo, type Otvet } from '@/lib/server/actions-client';
 import { rubli } from '@/lib/server/money';
 import { cel, CELI } from '@/lib/metrika';
 import { Pole, PoleParolya } from './Polya';
@@ -15,6 +15,25 @@ import { KUKA_PROMO, kodPromo, PREDEL_KODA, skidkaKop } from '@/lib/promokod';
 import CenaSoSkidkoy from './CenaSoSkidkoy';
 import Bukvalno, { frazaSDannymi } from '@/components/Bukvalno';
 import { tekstSoglasiyaAvto } from '@/lib/avtoplatezh';
+
+import type { IstochnikAkkaunta } from '@/lib/server/views';
+
+type PolyaAkkaunta = { login: string; password: string; istochnik?: IstochnikAkkaunta };
+
+function PodstanovkaParolya({ istochnik, idx, primenit }: {
+  istochnik: IstochnikAkkaunta;
+  idx: number;
+  primenit: (idx: number, a: IstochnikAkkaunta, password: string) => void;
+}) {
+  useEffect(() => {
+    let aktualen = true;
+    parolDlyaProdleniya(istochnik).then((password) => {
+      if (aktualen && password) primenit(idx, istochnik, password);
+    }).catch(() => { /* При недоступном сохранённом пароле остаётся ручной ввод. */ });
+    return () => { aktualen = false; };
+  }, [idx, istochnik, primenit]);
+  return null;
+}
 
 export type SrokVybor = {
   period: number;
@@ -46,12 +65,12 @@ export type Vvod = {
   periodPoUmolchaniyu: number;
   rezhimPoUmolchaniyu: 'new' | 'renew';
   /** Почты из заказа, который продлевают по ссылке из письма. */
-  pochtyPoUmolchaniyu: string[];
+  akkauntyPoUmolchaniyu: (IstochnikAkkaunta | undefined)[];
   /**
    * Все почты, которые человек уже указывал в своих заказах.
    * Пусто — подсказки не будет вовсе (постановка).
    */
-  pochtyPodskazki: string[];
+  akkauntyPodskazki: IstochnikAkkaunta[];
   balansKop: number;
   /** Посчитано НА СЕРВЕРЕ и по Москве — см. `lib/chasy.ts`. */
   vneRabochego: boolean;
@@ -143,9 +162,10 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
      (69-ФЗ: согласие на повторные списания не навязывается). Она
      отдельна от согласия с офертой. */
   const [avto, setAvto] = useState(false);
-  const [dannye, setDannye] = useState<{ login: string; password: string }[]>(
+  const [dannye, setDannye] = useState<PolyaAkkaunta[]>(
     Array.from({ length: vvod.sertifikat ? 0 : vvod.people }, (_, i) => ({
-      login: vvod.pochtyPoUmolchaniyu[i] ?? '',
+      login: vvod.akkauntyPoUmolchaniyu[i]?.login ?? '',
+      istochnik: vvod.akkauntyPoUmolchaniyu[i],
       password: '',
     })),
   );
@@ -255,7 +275,10 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
   const uhodim = Boolean(otvet.kuda);
 
   const pravitDannye = (i: number, klyuch: 'login' | 'password', v: string) => {
-    setDannye((s) => s.map((x, j) => (j === i ? { ...x, [klyuch]: v } : x)));
+    setDannye((s) => s.map((x, j) => j !== i ? x : {
+      ...x, ...(klyuch === 'login' && x.istochnik ? { password: '' } : {}),
+      istochnik: undefined, [klyuch]: v,
+    }));
     setBedy((s) => s.map((x, j) => (j === i ? { ...x, [klyuch]: null } : x)));
   };
 
@@ -291,12 +314,21 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
    * в отказ. Сравнение по нижнему регистру: почта от регистра
    * не зависит.
    */
-  const podskazkiDlya = (i: number): string[] => {
+  const podskazkiDlya = (i: number) => {
     const zanyaty = dannye
       .slice(0, mest)
       .map((d, j) => (j === i ? '' : d.login.trim().toLowerCase()))
       .filter(Boolean);
-    return vvod.pochtyPodskazki.filter((p) => !zanyaty.includes(p.toLowerCase()));
+    return vvod.akkauntyPodskazki.filter((a) => !zanyaty.includes(a.login.toLowerCase()));
+  };
+
+  const primenitParol = useCallback((idx: number, a: IstochnikAkkaunta, password: string) => {
+    setDannye((s) => s.map((d, i) => i === idx && d.istochnik === a ? { ...d, password } : d));
+  }, []);
+
+  const vybratAkkaunt = (idx: number, a: IstochnikAkkaunta) => {
+    setDannye((s) => s.map((d, i) => i === idx ? { login: a.login, password: '', istochnik: { ...a } } : d));
+    setBedy((s) => s.map((d, i) => i === idx ? { login: null, password: null } : d));
   };
 
   const vybrannyy = sroki.find((s) => s.period === period);
@@ -496,7 +528,19 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
                     role="radio"
                     aria-checked={r === k}
                     className="pick__btn"
-                    onClick={() => setRezhimy((s) => s.map((x, j) => (j === i ? k : x)))}
+                    onClick={() => {
+                      if (r === k) return;
+                      setRezhimy((s) => s.map((x, j) => j === i ? k : x));
+                      if (k === 'new' && dannye[i]?.istochnik) {
+                        setDannye((s) => s.map((x, j) => i === j ? { login: '', password: '' } : x));
+                      } else if (k === 'renew' && !dannye[i]?.password) {
+                        const varianty = podskazkiDlya(i);
+                        const login = dannye[i]?.login.trim().toLowerCase();
+                        const a = login ? varianty.find((v) => v.login.toLowerCase() === login)
+                          : varianty.length === 1 ? varianty[0] : undefined;
+                        if (a) vybratAkkaunt(i, a);
+                      }
+                    }}
                   >
                     {t}
                   </button>
@@ -519,13 +563,20 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
                      на которой аккаунта ЕЩЁ НЕТ: подсказывать ему
                      адреса, где Premium уже стоит, значило бы вести
                      его прямо в отказ «эта почта уже занята». */
-                  pochty={r === 'renew' ? podskazkiDlya(i) : undefined}
+                  pochty={r === 'renew' ? podskazkiDlya(i).map((a) => a.login) : undefined}
+                  vybratPochtu={(login) => {
+                    const a = podskazkiDlya(i).find((v) => v.login === login);
+                    if (a) vybratAkkaunt(i, a);
+                  }}
                   podskazka={
                     r === 'new'
                       ? 'Мы заведём аккаунт на неё и включим Premium'
                       : 'Та, на которую заведён ваш аккаунт Spotify'
                   }
                 />
+                {r === 'renew' && dannye[i]?.istochnik && (
+                  <PodstanovkaParolya idx={i} istochnik={dannye[i]!.istochnik!} primenit={primenitParol} />
+                )}
                 <PoleParolya
                   imya={`password${i}`}
                   podpis={r === 'new' ? 'Пароль, который мы поставим' : 'Пароль от аккаунта Spotify'}
@@ -544,8 +595,8 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
               дословно от заказчика (пятьдесят четвёртая итерация). */}
           <p className="panel__note">
             {rezhimy.includes('renew')
-              ? 'Пароль нужен, чтобы включить Premium на аккаунте. Пароль хранится зашифрованным и виден только исполнителю заказа и администратору.'
-              : 'Аккаунт заведём мы — на указанную почту и с указанным паролем. Пароль хранится зашифрованным и виден только исполнителю заказа и администратору.'}
+              ? 'Пароль нужен, чтобы включить Premium на аккаунте. Пароль хранится в зашифрованном виде.'
+              : 'Аккаунт заведём мы — на указанную почту и с указанным паролем. Пароль хранится в зашифрованном виде.'}
           </p>
         </div>
       ) : (
@@ -690,8 +741,13 @@ export default function CheckoutForm({ vvod }: { vvod: Vvod }) {
                 aria-describedby="avto-tekst"
                 onChange={(e) => setAvto(e.target.checked)}
               />
-              <span>Продлевать автоматически</span>
+              <span>Автопродление подписки</span>
             </label>
+            {avtoMozhno && (
+              <p className="panel__note panel__note--plate avto-podskazka">
+                Отключить автопродление можно в личном кабинете в любой момент.
+              </p>
+            )}
             <p className="panel__note avto-galochka__t" id="avto-tekst">
               {avtoMozhno
                 ? avtoTekst

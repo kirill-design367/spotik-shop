@@ -924,6 +924,9 @@
    ⚠️ Своих радиусов здесь нет ни одного: сторож раздела требует, чтобы
    каждый измеренный радиус совпал с одним из трёх токенов. */
 .avto-galochka { margin: var(--ritm) 0; }
+.avto-podskazka { background: color-mix(in srgb, var(--green) 16%, var(--surface)); color: var(--paper, #fff); margin: 8px 0; }
+.cab__avto { display: grid; gap: var(--ritm); }
+.cab__avto .btn { justify-self: start; }
 .avto-galochka .check { margin: 0; color: #fff; }
 .avto-galochka__t { margin: 6px 0 0 32px; font-size: 13px; line-height: 1.5; }
 .avto-galochka[data-off] .check { color: var(--dim-2); cursor: not-allowed; }

@@ -30,6 +30,15 @@ import { prinyatObrashchenie } from './podderzhka';
 import { ostavitOtzyv } from './otzyvy';
 import { otklyuchitPodpisku, otklyuchitPoTokenu } from './avtoplatezh';
 
+import { parolAkkaunta, type IstochnikAkkaunta } from './views';
+
+export async function parolDlyaProdleniya(a: IstochnikAkkaunta): Promise<string | null> {
+  if (!a || !Number.isSafeInteger(a.zakaz) || a.zakaz < 1 || !Number.isInteger(a.idx) || a.idx < 0 ||
+      a.idx > 2147483647 || typeof a.login !== 'string') return null;
+  const kto = await ktoKlient();
+  return kto ? parolAkkaunta(kto.userId, a.zakaz, a.idx, a.login) : null;
+}
+
 export type Otvet = {
   oshibka?: string;
   ladno?: string;
